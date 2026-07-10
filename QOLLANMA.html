@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>Gulnora Farm HR Bot — Qo'llanma</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Segoe UI Emoji", Arial, sans-serif;
+    color: #1f2933; line-height: 1.55; font-size: 12.5px; margin: 0;
+  }
+  .cover {
+    text-align: center; padding: 60px 20px 40px; margin-bottom: 24px;
+    background: linear-gradient(135deg, #1b8a5a 0%, #14663f 100%);
+    color: #fff; border-radius: 14px;
+  }
+  .cover .leaf { font-size: 54px; }
+  .cover h1 { font-size: 30px; margin: 10px 0 6px; font-weight: 700; }
+  .cover p { font-size: 14px; margin: 4px 0; opacity: .92; }
+  .cover .tag { display:inline-block; margin-top:14px; padding:5px 14px;
+    background: rgba(255,255,255,.18); border-radius: 20px; font-size: 12px; }
+  h2 {
+    font-size: 18px; color: #14663f; margin: 26px 0 10px;
+    border-bottom: 2px solid #d6e9df; padding-bottom: 6px;
+  }
+  h3 { font-size: 14px; margin: 16px 0 6px; color: #1b8a5a; }
+  p { margin: 6px 0; }
+  ul { margin: 6px 0 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+  th, td { border: 1px solid #cdd9d2; padding: 7px 9px; text-align: left; vertical-align: top; }
+  th { background: #e8f4ee; color: #14663f; font-weight: 600; }
+  code {
+    background: #f0f3f2; padding: 1px 5px; border-radius: 4px;
+    font-family: "Consolas", monospace; font-size: 11.5px; color: #b5330a;
+  }
+  pre {
+    background: #10241a; color: #d7f5e5; padding: 12px 14px; border-radius: 8px;
+    font-family: "Consolas", monospace; font-size: 11px; overflow-x: auto; line-height: 1.5;
+  }
+  .card {
+    background: #f6faf8; border: 1px solid #dcebe3; border-left: 4px solid #1b8a5a;
+    border-radius: 8px; padding: 10px 14px; margin: 10px 0;
+  }
+  .warn { border-left-color: #d9822b; background: #fdf6ec; }
+  .role { font-weight: 700; color: #14663f; }
+  .muted { color: #6b7a72; font-size: 11px; }
+  .section { page-break-inside: avoid; }
+  footer { margin-top: 30px; text-align: center; color: #8a9a92; font-size: 10.5px;
+    border-top: 1px solid #e0e8e4; padding-top: 10px; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="leaf">🌿</div>
+  <h1>Gulnora Farm HR Bot</h1>
+  <p>Ishga qabul · Davomat · Oylik · Statistika — bitta Telegram botda</p>
+  <div class="tag">To'liq qo'llanma · Python + aiogram 3.x</div>
+</div>
+
+<div class="section">
+<h2>1. Bot qaysi muammoni hal qiladi?</h2>
+<p>Bu <b>dorixona tarmog'i (Gulnora Farm)</b> uchun butun kadrlar (HR) va xodim boshqaruvini
+bitta Telegram bot ichiga jamlaydi. Ilgari qog'ozda yoki qo'lda qilinadigan ishlar
+avtomatlashtirilgan.</p>
+<table>
+  <tr><th>Muammo</th><th>Bot yechimi</th></tr>
+  <tr><td>Ishga ariza qog'ozda, tarqoq</td><td>20 savolli anketa → to'g'ridan-to'g'ri HR ga tushadi</td></tr>
+  <tr><td>Xodim haqiqatan ishga keldimi?</td><td>GPS orqali davomat — filial koordinatasidan radius ichida bo'lsagina "keldi" yoziladi</td></tr>
+  <tr><td>Kim kech qoldi / erta ketdi?</td><td>Ish vaqtiga qarab avtomatik belgilanadi</td></tr>
+  <tr><td>Oylik, jarima, to'lovlar</td><td>Buxgalter panelida yuritiladi</td></tr>
+  <tr><td>Suhbat vaqtini eslatish</td><td>Bot 1 kun oldin va 2 soat oldin avtomatik eslatma yuboradi</td></tr>
+  <tr><td>Dam olish kunini almashtirish</td><td>So'rov → filial rahbari + HR tasdiqlaydi</td></tr>
+</table>
+<p><b>Bir jumlada:</b> ishga qabul + davomat + oylik + statistika — hammasi bitta botda.</p>
+</div>
+
+<div class="section">
+<h2>2. Bot qanday ishlaydi (texnik jihatdan)</h2>
+<ul>
+  <li><b>Til / kutubxona:</b> Python 3.10+ va aiogram 3.x (Telegram Bot API)</li>
+  <li><b>Baza:</b> SQLite (<code>hrbot.db</code>) — 18 ta jadval (users, applications, attendance, salary_payments va h.k.)</li>
+  <li><b>Ishga tushishi:</b> <code>bot.py</code> → bazani tayyorlaydi → botni <b>polling</b> rejimida ishga tushiradi</li>
+  <li><b>Rollarga bo'linish:</b> menyu foydalanuvchining roliga qarab ko'rsatiladi</li>
+  <li><b>Xavfsizlik:</b> bloklangan foydalanuvchi botdan foydalana olmaydi</li>
+</ul>
+<p><b>8 ta rol:</b> Administrator, HR, Direktor, Buxgalter, Filial rahbari, Farmatsevt,
+Oddiy xodim, Nomzod (standart).</p>
+</div>
+
+<div class="section">
+<h2>3. Kim nima qila oladi</h2>
+
+<h3>🧑 Nomzod (har qanday yangi odam)</h3>
+<ul>
+  <li><code>/start</code> → majburiy obuna yoqilgan bo'lsa, avval kanalga obuna bo'ladi</li>
+  <li><b>📝 Ishga ariza topshirish</b> — 20 savolli anketa (ism, tug'ilgan sana, manzil, filial, lavozim, smena, ma'lumot, tajriba, sudlanganlik, oilaviy holat, farzandlar, maosh, Word/Excel, tillar, sabab, telefon, rezyume)</li>
+  <li>Yakunda: <b>✅ Tasdiqlash · ✏️ Tahrirlash · ❌ Bekor qilish</b> → tasdiqlansa ariza avtomatik HR va Adminlarga yuboriladi</li>
+  <li><b>💼 Vakansiyalar</b> ko'radi, <b>📄 Mening arizalarim</b> holatini kuzatadi</li>
+  <li>Suhbat taklifi kelsa — tasdiqlaydi yoki boshqa vaqt taklif qiladi</li>
+</ul>
+
+<h3>🏢 Mavjud xodim (self-registratsiya)</h3>
+<p><code>/start</code> → <b>🏢 Gulnora Farm hodimi</b> tugmasi orqali o'zini ro'yxatdan o'tkazadi
+(ism, sana, yo'nalish, filial, ish vaqti, oylik, dam kuni, forma, oxirgi 10 kundagi rasm).
+So'rov HR tasdiqlaydi → xodimga rol va davomat paneli ochiladi.</p>
+
+<h3>📍 Tasdiqlangan xodim (davomat)</h3>
+<ul>
+  <li><b>📍 Ishga keldim</b> — bot GPS so'raydi; filial radiusi (default 150 m) ichida bo'lsa ✅, uzoqda bo'lsa ❌</li>
+  <li><b>🏁 Ishdan ketdim</b> — ketish vaqti ham GPS bilan yoziladi</li>
+  <li><b>Kech qoldi / erta ketti</b> — ish vaqtiga qarab avtomatik</li>
+  <li><b>🔄 Dam olish kunini almashtirish</b> — rahbar + HR tasdiqlaydi</li>
+  <li><b>👤 Mening profilim</b> — ma'lumot va davomat tarixi</li>
+</ul>
+
+<h3>👨‍💼 HR</h3>
+<ul>
+  <li><b>Dashboard</b> — bugungi/haftalik/oylik arizalar va statistika</li>
+  <li><b>Arizalar</b> — holat bo'yicha filtr, 👁 ko'rish · 📅 suhbat · ✅ qabul · ❌ rad · 📝 izoh</li>
+  <li><b>Vakansiyalar</b> — yaratish/tahrirlash/yopish/o'chirish</li>
+  <li><b>Xabarnoma</b> — barchaga / xodimlarga / nomzodlarga / filial bo'yicha (rasm, video, fayl)</li>
+  <li><b>Qidiruv</b> — ism/telefon/filial/lavozim bo'yicha</li>
+  <li>Xodim self-registratsiyalarini tasdiqlaydi</li>
+</ul>
+
+<h3>🧮 Buxgalter</h3>
+<ul>
+  <li>Barcha filiallar davomati va kech/erta hisoboti</li>
+  <li>Oylik belgilash/oshirish, oylik berildi/berilmadi, jarima yozish, to'lovlar tarixi</li>
+  <li>Dam olish so'rovlari</li>
+</ul>
+
+<h3>👨‍💼 Filial rahbari / 👔 Direktor / 💊 Farmatsevt</h3>
+<ul>
+  <li>O'z filiali (yoki barcha filiallar) bo'yicha davomat hisobotlari</li>
+  <li>Filial rahbari — o'z filiali dam olish so'rovlarini tasdiqlaydi</li>
+</ul>
+
+<h3>👑 Administrator (bosh boshqaruv)</h3>
+<ul>
+  <li><b>Statistika</b> — foydalanuvchilar, xodimlar, arizalar, eng faol HR</li>
+  <li><b>Filiallar</b> — qo'shish/tahrirlash/o'chirish + 📍 GPS koordinatasi (davomat uchun shart)</li>
+  <li><b>Kanallar</b> (majburiy obuna) boshqaruvi</li>
+  <li><b>Adminlar va HR</b> qo'shish/o'chirish</li>
+  <li><b>Rollar</b> — istalgan foydalanuvchiga rol berish</li>
+  <li><b>Audit log</b> — barcha harakatlar sana-vaqti bilan</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>4. Ishga tushirish qoidalari</h2>
+<pre>python -m venv venv
+venv\Scripts\activate            # Windows
+pip install -r requirements.txt
+copy .env.example .env           # keyin .env ni to'ldiring
+python bot.py</pre>
+<p><code>.env</code> ichida ikkita narsa shart:</p>
+<ul>
+  <li><code>BOT_TOKEN</code> — @BotFather'dan olingan token</li>
+  <li><code>SUPER_ADMINS</code> — sizning Telegram ID (bir nechta bo'lsa vergul bilan). Bu ID lar avtomatik administrator bo'ladi.</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>5. ⚠️ Muhim qoidalar (aks holda ishlamaydi)</h2>
+
+<div class="card warn">
+  <b>1. Bot faqat BITTA joyda ishlashi kerak.</b><br>
+  Ikki joyda (masalan lokal + Railway) bir token bilan ishlatsangiz — har bir xabarga
+  2 marta javob keladi.
+</div>
+<div class="card">
+  <b>2. Majburiy obuna uchun</b> bot o'sha kanalda administrator bo'lishi shart.
+  Yopiq kanal: <code>-100...</code> ID ko'rinishida; ochiq kanal: <code>@username</code>.
+</div>
+<div class="card">
+  <b>3. Yangi HR/admin qo'shishdan oldin</b> o'sha odam avval botga <code>/start</code>
+  bosgan bo'lishi kerak (ID bazaga tushishi uchun).
+</div>
+<div class="card">
+  <b>4. Davomat ishlashi uchun</b> admin har bir filialga GPS koordinatasini kiritishi shart.
+</div>
+<div class="card warn">
+  <b>5. <code>.env</code> va <code>hrbot.db</code> ni hech qachon GitHub'ga qo'ymang.</b><br>
+  <code>.gitignore</code> allaqachon bularni chiqarib tashlagan — ular ichida token va shaxsiy ma'lumotlar bor.
+</div>
+</div>
+
+<footer>
+  🌿 Gulnora Farm HR Bot · Python 3.10+ · aiogram 3.x · SQLite<br>
+  Ushbu qo'llanma loyiha kodidan avtomatik tayyorlangan.
+</footer>
+
+</body>
+</html>

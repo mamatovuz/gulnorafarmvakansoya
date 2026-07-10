@@ -185,6 +185,14 @@ class UserManageForm(StatesGroup):
 class SettingsForm(StatesGroup):
     """Admin bot sozlamalarini o'zgartiradi."""
     welcome = State()
+    secret_channel = State()   # maxfiy kanal chat_id
+    match_threshold = State()  # moslik (tavsiya) foizi
+
+
+class ProbationForm(StatesGroup):
+    """HR ariza qabul qilganda sinov muddatini belgilaydi."""
+    branch = State()       # qaysi filialga chiqadi
+    start_date = State()   # sinov qaysi kundan boshlanadi
 
 
 class CandidateMessageForm(StatesGroup):

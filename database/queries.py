@@ -1,7 +1,7 @@
 """Ma'lumotlar bazasi bilan ishlash uchun yordamchi funksiyalar."""
 import aiosqlite
 from config import DB_PATH, SUPER_ADMINS
-from database.db import ROLE_CANDIDATE, ROLE_ADMIN
+from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER
 
 
 async def _conn():
@@ -1647,5 +1647,131 @@ async def set_dayoff_status(rid, status, handled_by=None):
             (status, handled_by, rid),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+# ---------------- SINOV MUDDATI (PROBATION) ----------------
+async def add_probation(data):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO probations
+               (application_id, user_id, branch_id, full_name, position,
+                start_date, end_date, days, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                data.get("application_id"),
+                data.get("user_id"),
+                data.get("branch_id"),
+                data.get("full_name"),
+                data.get("position"),
+                data.get("start_date"),
+                data.get("end_date"),
+                data.get("days", 15),
+                data.get("created_by"),
+            ),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_probation(pid):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg
+               FROM probations p
+               LEFT JOIN branches b ON b.id=p.branch_id
+               LEFT JOIN users u ON u.id=p.user_id
+               WHERE p.id=?""",
+            (pid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_probations(status=None, limit=30):
+    db = await _conn()
+    try:
+        sql = """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg
+                 FROM probations p
+                 LEFT JOIN branches b ON b.id=p.branch_id
+                 LEFT JOIN users u ON u.id=p.user_id"""
+        params = []
+        if status:
+            sql += " WHERE p.status=?"
+            params.append(status)
+        sql += " ORDER BY p.end_date ASC, p.id DESC"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_active_probations():
+    return await list_probations(status="active", limit=200)
+
+
+async def mark_probation_flag(pid, flag):
+    allowed = {"manager_notified", "hr_3day_sent", "hr_end_sent"}
+    if flag not in allowed:
+        raise ValueError("Ruxsat etilmagan bayroq")
+    db = await _conn()
+    try:
+        await db.execute(f"UPDATE probations SET {flag}=1 WHERE id=?", (pid,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_probation_status(pid, status):
+    db = await _conn()
+    try:
+        await db.execute("UPDATE probations SET status=? WHERE id=?", (status, pid))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def branch_manager_tg_ids(branch_id):
+    """Filial rahbarlarining tg_id lari (users.branch_id yoki profil bo'yicha)."""
+    if not branch_id:
+        return []
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT DISTINCT u.tg_id
+               FROM users u
+               LEFT JOIN employee_profiles ep ON ep.user_id=u.id
+               WHERE u.role=? AND (u.branch_id=? OR ep.branch_id=?)""",
+            (ROLE_MANAGER, branch_id, branch_id),
+        )
+        return [r["tg_id"] for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def probation_attendance_stats(user_id, start_iso, end_iso):
+    """Sinov davri ichida kelgan kunlar, kechikish/erta ketishlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COUNT(DISTINCT a.date) AS present_days,
+                      COALESCE(SUM(a.late),0)  AS lates,
+                      COALESCE(SUM(a.early),0) AS earlies
+               FROM attendance a
+               WHERE a.user_id=? AND a.status='present'
+                 AND a.date BETWEEN ? AND ?""",
+            (user_id, start_iso, end_iso),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else {"present_days": 0, "lates": 0, "earlies": 0}
     finally:
         await db.close()

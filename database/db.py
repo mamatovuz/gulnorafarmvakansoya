@@ -251,6 +251,24 @@ CREATE TABLE IF NOT EXISTS positions (
     name TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS probations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER,
+    user_id INTEGER NOT NULL,
+    branch_id INTEGER,
+    full_name TEXT,
+    position TEXT,
+    start_date TEXT,      -- ISO: YYYY-MM-DD
+    end_date TEXT,        -- ISO: YYYY-MM-DD (start + 14 kun)
+    days INTEGER NOT NULL DEFAULT 15,
+    status TEXT NOT NULL DEFAULT 'active',   -- active / finished
+    manager_notified INTEGER NOT NULL DEFAULT 0,
+    hr_3day_sent INTEGER NOT NULL DEFAULT 0,
+    hr_end_sent INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
 """
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)

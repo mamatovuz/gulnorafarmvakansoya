@@ -1,5 +1,8 @@
 """Yordamchi funksiyalar: obuna tekshirish, matn formatlash."""
+import re
 from math import radians, sin, cos, asin, sqrt
+from difflib import SequenceMatcher
+from datetime import datetime, timedelta, date
 
 from aiogram import Bot
 from database import queries as q
@@ -283,3 +286,182 @@ async def broadcast(bot: Bot, tg_ids, message):
         except Exception:
             fail += 1
     return ok, fail
+
+
+# ---------------- MAXFIY KANAL ----------------
+def normalize_chat_id(val):
+    """Kanal ID sini to'g'ri turga keltiradi: @username -> str, raqam -> int."""
+    if val is None:
+        return None
+    val = str(val).strip()
+    if not val:
+        return None
+    if val.startswith("@"):
+        return val
+    try:
+        return int(val)
+    except ValueError:
+        return val
+
+
+async def post_application_to_channel(bot: Bot, chat_id, app, header=None):
+    """Ariza matnini (va bo'lsa rezyumesini) maxfiy kanalga joylashtiradi."""
+    chat_id = normalize_chat_id(chat_id)
+    if not chat_id:
+        return False
+    text = application_text(app, full=True)
+    if header:
+        text = f"{header}\n\n{text}"
+    try:
+        await bot.send_message(chat_id, text)
+        await send_application_resume(bot, chat_id, app)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------- ARIZA ↔ VAKANSIYA MOSLIGI ----------------
+_NORM_RE = re.compile(r"[^\w\s']", flags=re.UNICODE)
+
+
+def _norm(text):
+    """Emoji/tinish belgilarni olib tashlab, kichik harfga keltiradi."""
+    if not text:
+        return ""
+    text = _NORM_RE.sub(" ", str(text).lower())
+    return " ".join(text.split())
+
+
+def text_similarity(a, b):
+    """0..1 — ikki matnning o'xshashligi (belgi va so'z darajasida)."""
+    na, nb = _norm(a), _norm(b)
+    if not na or not nb:
+        return 0.0
+    seq = SequenceMatcher(None, na, nb).ratio()
+    ta, tb = set(na.split()), set(nb.split())
+    union = ta | tb
+    jac = len(ta & tb) / len(union) if union else 0.0
+    return max(seq, jac)
+
+
+def match_score(app, vacancy):
+    """0..100 — nomzod arizasi vakansiyaga qanchalik mos kelishi (foizda)."""
+    pos_sim = text_similarity(
+        app.get("position") or app.get("vacancy_title"),
+        vacancy.get("title"),
+    )
+    same_branch = (
+        1.0
+        if app.get("branch_id") and app.get("branch_id") == vacancy.get("branch_id")
+        else 0.0
+    )
+    same_shift = (
+        1.0
+        if _norm(app.get("shift")) and _norm(app.get("shift")) == _norm(vacancy.get("shift"))
+        else 0.0
+    )
+    score = 0.65 * pos_sim + 0.25 * same_branch + 0.10 * same_shift
+    return round(score * 100)
+
+
+def best_vacancy_matches(app, vacancies, threshold=60, limit=3):
+    """Chegaradan yuqori mos vakansiyalar ro'yxati [(vacancy, score), ...]."""
+    scored = []
+    for v in vacancies or []:
+        s = match_score(app, v)
+        if s >= threshold:
+            scored.append((v, s))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:limit]
+
+
+# ---------------- SINOV MUDDATI (PROBATION) ----------------
+def parse_date_input(text):
+    """'kun.oy.yil' yoki 'bugun' -> (iso 'YYYY-MM-DD', display 'dd.mm.yyyy') yoki None."""
+    text = (text or "").strip().lower()
+    if text in ("bugun", "today", "hozir", "shu kun"):
+        d = date.today()
+        return d.isoformat(), d.strftime("%d.%m.%Y")
+    if text in ("erta", "ertaga", "tomorrow"):
+        d = date.today() + timedelta(days=1)
+        return d.isoformat(), d.strftime("%d.%m.%Y")
+    t = text.replace("/", ".").replace("-", ".")
+    for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+        try:
+            d = datetime.strptime(t, fmt).date()
+            return d.isoformat(), d.strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return None
+
+
+def iso_to_display(iso):
+    try:
+        return date.fromisoformat(iso).strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return iso or "-"
+
+
+def add_days_iso(iso, days):
+    """ISO sanaga kun qo'shadi -> yangi ISO."""
+    return (date.fromisoformat(iso) + timedelta(days=days)).isoformat()
+
+
+def days_left_until(iso):
+    """Bugundan berilgan ISO sanagacha necha kun qolganini qaytaradi."""
+    try:
+        return (date.fromisoformat(iso) - date.today()).days
+    except (ValueError, TypeError):
+        return None
+
+
+def probation_text(p, stats=None):
+    """Sinov muddati kartochkasi (ixtiyoriy davomat statistikasi bilan)."""
+    left = days_left_until(p.get("end_date"))
+    if p.get("status") == "finished" or (left is not None and left < 0):
+        state = "🏁 Tugagan"
+    elif left == 0:
+        state = "⏳ Bugun tugaydi"
+    else:
+        state = f"🟢 Davom etmoqda ({left} kun qoldi)" if left is not None else "🟢 Davom etmoqda"
+    lines = [
+        f"🧪 <b>Sinov muddati #{p['id']}</b> — {state}",
+        "━━━━━━━━━━━━",
+        f"👤 Xodim: <b>{p.get('full_name') or '-'}</b>",
+        f"💼 Lavozim: {p.get('position') or '-'}",
+        f"🏢 Filial: {p.get('branch_name') or '-'}",
+        f"📅 Boshlanishi: {iso_to_display(p.get('start_date'))}",
+        f"🏁 Tugashi: {iso_to_display(p.get('end_date'))} ({p.get('days', 15)} kun)",
+    ]
+    if stats is not None:
+        present = stats.get("present_days", 0) or 0
+        total = p.get("days", 15) or 15
+        # o'tgan kunlar (bugungacha), sinov davridan oshib ketmasin
+        elapsed = total
+        dl = days_left_until(p.get("end_date"))
+        if dl is not None and dl > 0:
+            elapsed = max(0, total - dl)
+        absent = max(0, elapsed - present)
+        lines += [
+            "\n📊 <b>Davomat statistikasi</b>",
+            f"✅ Kelgan kunlari: <b>{present}</b>",
+            f"❌ Kelmagan kunlari: <b>{absent}</b>",
+            f"⏰ Kechikkan: {stats.get('lates', 0) or 0} marta · 🏃 Erta ketgan: {stats.get('earlies', 0) or 0} marta",
+        ]
+    return "\n".join(lines)
+
+
+def recommendation_text(matches):
+    """HR uchun avtomatik tavsiya bloki."""
+    if not matches:
+        return ""
+    lines = [
+        "",
+        "⭐ <b>Avtomatik tavsiya</b>",
+        "Bu nomzod quyidagi ochiq vakansiya(lar)ga mos keladi:",
+    ]
+    for v, sc in matches:
+        branch = v.get("branch_name") or "filial ko'rsatilmagan"
+        lines.append(f"• <b>{v['title']}</b> — {branch} — <b>{sc}%</b> mos (vak #{v['id']})")
+    lines.append("👉 Mos kelsa, nomzodni shu vakansiyaga taklif qiling.")
+    return "\n".join(lines)

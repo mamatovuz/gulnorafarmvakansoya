@@ -12,11 +12,14 @@ from database.db import (
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
+    ProbationForm,
 )
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
     fine_text, manager_request_text, send_application_resume,
+    post_application_to_channel, parse_date_input, add_days_iso,
+    iso_to_display, probation_text,
 )
 from services import export
 
@@ -254,46 +257,213 @@ async def app_view(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
-# ------- Ishga qabul -------
+# ------- Ishga qabul (sinov muddati bilan) -------
 @router.callback_query(F.data.startswith("appacc:"))
-async def app_accept(call: CallbackQuery, bot: Bot):
+async def app_accept(call: CallbackQuery, state: FSMContext):
     if not await is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
     aid = int(call.data.split(":")[1])
-    me = await actor(call.from_user.id)
-    await q.set_application_status(aid, ST_ACCEPTED, handled_by=me["id"])
     a = await q.get_application(aid)
     if not a:
         await call.answer("Ariza topilmadi.", show_alert=True)
         return
+    await state.set_state(ProbationForm.branch)
+    await state.update_data(prob_aid=aid, prob_suggest_branch=a.get("branch_id"))
+    branches = await q.list_branches()
+    hint = f"\n\nArizada ko'rsatilgan filial: <b>{a.get('branch_name') or '—'}</b>"
+    await call.message.answer(
+        f"✅ <b>Ishga qabul — sinov muddati</b>\n\n"
+        f"👤 {a.get('full_name')} · {a.get('position') or a.get('vacancy_title')}\n"
+        f"Xodim <b>qaysi filialga</b> chiqadi? Tanlang:{hint}",
+        reply_markup=kb.branch_pick_kb(branches, prefix="probr"),
+    )
+    await call.answer()
+
+
+@router.callback_query(ProbationForm.branch, F.data.startswith("probr:"))
+async def app_accept_branch(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1]) or None
+    data = await state.get_data()
+    if not bid:
+        bid = data.get("prob_suggest_branch")
+    await state.update_data(prob_branch_id=bid)
+    await state.set_state(ProbationForm.start_date)
+    await call.message.answer(
+        "📅 Sinov muddati <b>qaysi kundan</b> boshlanadi?\n\n"
+        "Sanani <b>kun.oy.yil</b> ko'rinishida yuboring (masalan: <b>15.07.2026</b>) "
+        "yoki <b>bugun</b> / <b>ertaga</b> deb yozing.\n"
+        "ℹ️ Sinov muddati 15 kun davom etadi."
+    )
+    await call.answer()
+
+
+@router.message(ProbationForm.start_date, F.text)
+async def app_accept_start_date(message: Message, state: FSMContext, bot: Bot):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    parsed = parse_date_input(message.text)
+    if not parsed:
+        await message.answer(
+            "❗️ Sana noto'g'ri. <b>kun.oy.yil</b> ko'rinishida yuboring "
+            "(masalan: 15.07.2026) yoki <b>bugun</b> deb yozing."
+        )
+        return
+    start_iso, start_disp = parsed
+    data = await state.get_data()
+    aid = data.get("prob_aid")
+    branch_id = data.get("prob_branch_id")
+    await state.clear()
+    me = await actor(message.from_user.id)
+    await _finalize_accept(bot, message, me, aid, branch_id, start_iso)
+
+
+async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id, start_iso):
+    """Arizani qabul qiladi, sinov muddatini yaratadi va xabarlarni yuboradi."""
+    await q.set_application_status(aid, ST_ACCEPTED, handled_by=me["id"])
+    a = await q.get_application(aid)
+    if not a:
+        await message.answer("Ariza topilmadi.")
+        return
+    if branch_id is None:
+        branch_id = a.get("branch_id")
     new_role = role_from_position(a.get("position") or a.get("vacancy_title"))
     if a.get("applicant_tg"):
-        await q.set_role(a["applicant_tg"], new_role, a.get("branch_id"))
+        await q.set_role(a["applicant_tg"], new_role, branch_id)
     await q.upsert_employee_profile(
         user_id=a["user_id"],
         application_id=aid,
         role=new_role,
         position=a.get("position") or a.get("vacancy_title"),
-        branch_id=a.get("branch_id"),
+        branch_id=branch_id,
         uniform_status=a.get("uniform_status") or "unknown",
     )
-    await q.add_log(call.from_user.id, me["full_name"], "ariza_qabul", f"Ariza #{aid}")
-    await call.answer("✅ Ishga qabul qilindi")
-    await call.message.answer(
-        f"✅ Ariza #{aid} — <b>ishga qabul qilindi</b>.\n"
-        f"Yangi rol: <b>{ROLE_LABELS.get(new_role, new_role)}</b>"
+
+    # Sinov muddati (15 kun)
+    end_iso = add_days_iso(start_iso, 14)
+    pid = await q.add_probation({
+        "application_id": aid,
+        "user_id": a["user_id"],
+        "branch_id": branch_id,
+        "full_name": a.get("full_name"),
+        "position": a.get("position") or a.get("vacancy_title"),
+        "start_date": start_iso,
+        "end_date": end_iso,
+        "days": 15,
+        "created_by": me["id"],
+    })
+    await q.add_log(
+        message.from_user.id, me["full_name"], "ariza_qabul",
+        f"Ariza #{aid} · sinov #{pid}"
     )
+
+    branch = await q.get_branch(branch_id) if branch_id else None
+    branch_name = branch["name"] if branch else "—"
+    await message.answer(
+        f"✅ Ariza #{aid} — <b>ishga qabul qilindi</b>.\n"
+        f"🎯 Rol: <b>{ROLE_LABELS.get(new_role, new_role)}</b>\n"
+        f"🏢 Filial: <b>{branch_name}</b>\n"
+        f"🧪 Sinov muddati: <b>{iso_to_display(start_iso)} — {iso_to_display(end_iso)}</b> (15 kun)"
+    )
+
+    # Filial rahbariga xabar
+    manager_ids = await q.branch_manager_tg_ids(branch_id)
+    mgr_text = (
+        "🧪 <b>Yangi xodim sinov muddatiga chiqadi</b>\n\n"
+        f"👤 <b>{a.get('full_name')}</b>\n"
+        f"💼 Lavozim: {a.get('position') or a.get('vacancy_title')}\n"
+        f"🏢 Filial: {branch_name}\n"
+        f"📅 Ishga chiqadi: <b>{iso_to_display(start_iso)}</b>\n"
+        f"🏁 Sinov tugashi: {iso_to_display(end_iso)} (15 kun)\n"
+        f"📱 Telefon: {a.get('phone') or '-'}\n\n"
+        "Iltimos, shu kuni xodimni kutib oling."
+    )
+    for tid in manager_ids:
+        await safe_send(bot, tid, mgr_text)
+    if not manager_ids:
+        await message.answer(
+            "ℹ️ Bu filialga rahbar biriktirilmagani uchun xabar yuborilmadi."
+        )
+
+    # Maxfiy kanalga yuborish (admin panelda ulangan bo'lsa)
+    secret_channel = await q.get_setting("secret_channel")
+    if secret_channel:
+        posted = await post_application_to_channel(
+            bot, secret_channel, a,
+            header=(
+                f"✅ <b>Ishga qabul qilingan ariza</b>\n"
+                f"👔 Qabul qildi: {me['full_name']}\n"
+                f"🎯 Rol: {ROLE_LABELS.get(new_role, new_role)}\n"
+                f"🧪 Sinov: {iso_to_display(start_iso)} — {iso_to_display(end_iso)}"
+            ),
+        )
+        if not posted:
+            await message.answer(
+                "⚠️ Ariza maxfiy kanalga yuborilmadi. Bot kanalda administrator "
+                "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
+            )
+
+    # Nomzodga xabar
     if a.get("applicant_tg"):
         await safe_send(
             bot, a["applicant_tg"],
             f"🎉 <b>Tabriklaymiz!</b>\n\n"
-            f"«{a['vacancy_title']}» vakansiyasi bo'yicha arizangiz "
-            f"ma'qullandi va siz <b>ishga qabul qilindingiz</b>!\n"
+            f"«{a['vacancy_title']}» bo'yicha arizangiz ma'qullandi va siz "
+            f"<b>ishga qabul qilindingiz</b>!\n"
+            f"🏢 Filial: <b>{branch_name}</b>\n"
+            f"📅 Ishga chiqasiz: <b>{iso_to_display(start_iso)}</b>\n"
+            f"🧪 Sinov muddati: 15 kun ({iso_to_display(start_iso)} — {iso_to_display(end_iso)})\n"
             f"Sizga <b>{ROLE_LABELS.get(new_role, new_role)}</b> paneli ochildi.\n"
             f"Yangilangan menyuni ko'rish uchun /start bosing.",
             reply_markup=kb.main_menu(new_role),
         )
+
+
+# ------- Sinov muddati paneli -------
+@router.message(F.text == "🧪 Sinov muddati")
+async def probation_panel(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    active = await q.list_active_probations()
+    finished = await q.list_probations(status="finished", limit=10)
+    if not active and not finished:
+        await message.answer(
+            "🧪 Hozircha sinov muddatidagi xodimlar yo'q.\n"
+            "Ariza qabul qilinganda sinov muddati avtomatik ochiladi."
+        )
+        return
+    if active:
+        await message.answer(
+            f"🧪 <b>Sinov muddatidagilar</b> (faol: {len(active)} ta)\n"
+            "Batafsil va statistikani ko'rish uchun tanlang:",
+            reply_markup=kb.probations_list_kb(active),
+        )
+    if finished:
+        await message.answer(
+            "🏁 <b>Yaqinda tugaganlar</b>:",
+            reply_markup=kb.probations_list_kb(finished),
+        )
+
+
+@router.callback_query(F.data.startswith("probview:"))
+async def probation_view(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    pid = int(call.data.split(":")[1])
+    p = await q.get_probation(pid)
+    if not p:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    stats = await q.probation_attendance_stats(
+        p["user_id"], p.get("start_date"), p.get("end_date")
+    )
+    await call.message.answer(probation_text(p, stats=stats))
+    await call.answer()
 
 
 # ------- Rad etish -------

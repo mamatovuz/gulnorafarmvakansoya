@@ -678,12 +678,22 @@ async def admin_settings(message: Message):
     if not await is_admin(message.from_user.id):
         return
     require_sub = (await q.get_setting("require_subscription", "1")) != "0"
+    secret_channel = await q.get_setting("secret_channel")
+    threshold = await q.get_setting("match_threshold", "60")
+    chan_line = (
+        f"🔒 <b>Maxfiy kanal</b> — hozir: <code>{secret_channel}</code>"
+        if secret_channel
+        else "🔒 <b>Maxfiy kanal</b> — hali ulanmagan"
+    )
     await message.answer(
         "⚙️ <b>Bot sozlamalari</b>\n\n"
         "📢 <b>Majburiy obuna</b> — yoqilsa, foydalanuvchi kanallarga obuna bo'lmaguncha "
         "botdan foydalana olmaydi.\n"
-        "✍️ <b>Xush kelibsiz matni</b> — /start bosganda chiqadigan matn.",
-        reply_markup=kb.admin_settings_kb(require_sub),
+        "✍️ <b>Xush kelibsiz matni</b> — /start bosganda chiqadigan matn.\n"
+        f"{chan_line} — HR ishga qabul qilgan arizalar shu kanalga tushadi.\n"
+        f"🎯 <b>Moslik chegarasi</b> — {threshold}%. Oddiy ariza shu foizdan yuqori mos "
+        "kelsa, HR ga avtomatik tavsiya beriladi.",
+        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold),
     )
 
 
@@ -730,6 +740,100 @@ async def welcome_reset(call: CallbackQuery):
         return
     await q.set_setting("welcome_text", "")
     await call.answer("♻️ Standart matn tiklandi", show_alert=True)
+
+
+# ---------------- MAXFIY KANAL ----------------
+@router.callback_query(F.data == "setsecret")
+async def secret_channel_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.secret_channel)
+    await call.message.answer(
+        "🔒 <b>Maxfiy kanalni ulash</b>\n\n"
+        "HR ishga qabul qilgan arizalar shu kanalga tushadi.\n\n"
+        "1️⃣ Botni o'sha kanalga <b>administrator</b> qilib qo'shing.\n"
+        "2️⃣ Kanal ID sini yuboring:\n"
+        "   • Yopiq kanal: <code>-1001234567890</code> ko'rinishida\n"
+        "   • Ochiq kanal: <code>@kanal_username</code> ko'rinishida\n\n"
+        "Bekor qilish uchun <b>-</b> yuboring."
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.secret_channel, F.text)
+async def secret_channel_save(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    value = message.text.strip()
+    if value == "-":
+        await message.answer("Bekor qilindi.")
+        return
+    # Kanalni tekshiramiz — bot a'zomi va nomini olamiz
+    title = None
+    try:
+        chat = await bot.get_chat(value)
+        title = chat.title or chat.full_name
+    except Exception:
+        await message.answer(
+            "❗️ Kanalni tekshira olmadim. Bot o'sha kanalda administrator ekaniga "
+            "va ID/username to'g'ri ekaniga ishonch hosil qiling, so'ng qaytadan urinib ko'ring.\n"
+            "Baribir saqlab qo'yishni xohlasangiz, ID ni qayta yuboring."
+        )
+        # Baribir saqlaymiz — ba'zan get_chat ishlamasligi mumkin
+    await q.set_setting("secret_channel", value)
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "sozlama_maxfiy_kanal", value)
+    suffix = f"\n📛 Nomi: <b>{title}</b>" if title else ""
+    await message.answer(
+        f"✅ Maxfiy kanal ulandi: <code>{value}</code>{suffix}\n\n"
+        "Endi HR ishga qabul qilgan har bir ariza shu kanalga yuboriladi."
+    )
+
+
+@router.callback_query(F.data == "setsecret_clear")
+async def secret_channel_clear(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await q.set_setting("secret_channel", "")
+    me = await actor(call.from_user.id)
+    await q.add_log(call.from_user.id, me["full_name"], "sozlama_maxfiy_kanal", "uzildi")
+    require_sub = (await q.get_setting("require_subscription", "1")) != "0"
+    threshold = await q.get_setting("match_threshold", "60")
+    await call.message.edit_reply_markup(
+        reply_markup=kb.admin_settings_kb(require_sub, None, threshold)
+    )
+    await call.answer("🗑 Maxfiy kanal uzildi", show_alert=True)
+
+
+# ---------------- MOSLIK CHEGARASI ----------------
+@router.callback_query(F.data == "setmatch")
+async def match_threshold_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.match_threshold)
+    current = await q.get_setting("match_threshold", "60")
+    await call.message.answer(
+        f"🎯 <b>Moslik chegarasi</b>\n\nHozirgi qiymat: <b>{current}%</b>\n\n"
+        "Oddiy (vakansiyasiz) ariza kelganda, agar u ochiq vakansiyaga shu foizdan "
+        "yuqori mos kelsa, HR ga avtomatik tavsiya beriladi.\n\n"
+        "Yangi foizni yuboring (0–100 oralig'ida). Masalan: <b>60</b>"
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.match_threshold, F.text)
+async def match_threshold_save(message: Message, state: FSMContext):
+    value = message.text.strip().replace("%", "")
+    if not value.isdigit() or not (0 <= int(value) <= 100):
+        await message.answer("❗️ 0 dan 100 gacha butun son yuboring. Masalan: 60")
+        return
+    await state.clear()
+    await q.set_setting("match_threshold", str(int(value)))
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "sozlama_moslik", value)
+    await message.answer(f"✅ Moslik chegarasi <b>{int(value)}%</b> qilib belgilandi.")
 
 
 # ---------------- EKSPORT ----------------

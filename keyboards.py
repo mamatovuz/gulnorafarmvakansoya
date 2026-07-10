@@ -40,7 +40,6 @@ def main_menu(role, has_applied=False):
         b.adjust(1)
         return b.as_markup(resize_keyboard=True)
     b.button(text="💼 Vakansiyalar")
-    b.button(text="📄 Mening arizalarim")
     # Ro'yxatdan o'tgan (tasdiqlangan) xodimlar uchun davomat
     if role in EMPLOYEE_ROLES:
         b.button(text="📍 Ishga keldim")
@@ -62,7 +61,6 @@ def main_menu(role, has_applied=False):
         b.button(text="👑 Admin panel")
         b.button(text="📈 Direktor panel")
         b.button(text="🧮 Buxgalter panel")
-    b.button(text="ℹ️ Yordam")
     b.adjust(2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
@@ -383,12 +381,25 @@ def hr_menu():
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
     b.button(text="📍 Davomat")
+    b.button(text="🧪 Sinov muddati")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+def probations_list_kb(probations, prefix="probview"):
+    b = InlineKeyboardBuilder()
+    for p in probations:
+        mark = "🏁" if p.get("status") == "finished" else "🟢"
+        b.button(
+            text=f"{mark} {p.get('full_name') or '-'} · {p.get('branch_name') or '-'}",
+            callback_data=f"{prefix}:{p['id']}",
+        )
+    b.adjust(1)
+    return b.as_markup()
 
 
 def applications_filter_kb():
@@ -714,7 +725,7 @@ def user_manage_kb(tg_id, blocked=False):
     return b.as_markup()
 
 
-def admin_settings_kb(require_sub=True):
+def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60):
     b = InlineKeyboardBuilder()
     if require_sub:
         b.button(text="📢 Majburiy obuna: 🟢 YOQILGAN", callback_data="setsub:off")
@@ -722,6 +733,12 @@ def admin_settings_kb(require_sub=True):
         b.button(text="📢 Majburiy obuna: 🔴 O'CHIQ", callback_data="setsub:on")
     b.button(text="✍️ Xush kelibsiz matnini o'zgartirish", callback_data="setwelcome")
     b.button(text="♻️ Xush kelibsiz matnini tiklash", callback_data="setwelcome_reset")
+    if secret_channel:
+        b.button(text="🔒 Maxfiy kanal: 🟢 ULANGAN (o'zgartirish)", callback_data="setsecret")
+        b.button(text="🗑 Maxfiy kanalni uzish", callback_data="setsecret_clear")
+    else:
+        b.button(text="🔒 Maxfiy kanal: 🔴 ULANMAGAN (ulash)", callback_data="setsecret")
+    b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
     b.adjust(1)
     return b.as_markup()
 

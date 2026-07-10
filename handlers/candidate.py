@@ -12,7 +12,7 @@ from states import Apply, RescheduleForm
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
-    send_application_resume,
+    send_application_resume, best_vacancy_matches, recommendation_text,
 )
 
 router = Router()
@@ -707,6 +707,18 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
     text = "🔔 <b>Yangi ariza keldi!</b>\n\n" + application_text(app, full=True)
     if app.get("uniform_status") == "no":
         text = "👕 <b>Forma kerak!</b>\n\n" + text
+    # Aynan vakansiyadan kelmagan bo'lsa — ochiq vakansiyalarga moslikni tekshirib,
+    # HR ga avtomatik tavsiya beramiz (tasdiqlashidan oldin).
+    if not app.get("vacancy_id"):
+        try:
+            threshold = int(await q.get_setting("match_threshold", "60") or "60")
+        except (TypeError, ValueError):
+            threshold = 60
+        vacs = await q.list_vacancies(active_only=True)
+        matches = best_vacancy_matches(app, vacs, threshold=threshold)
+        rec = recommendation_text(matches)
+        if rec:
+            text += "\n" + rec
     for tid in set(hr_ids + admin_ids):
         await safe_send(bot, tid, text, reply_markup=kb.application_actions_kb(aid))
         # Rezyume fayli bo'lsa alohida yuboramiz

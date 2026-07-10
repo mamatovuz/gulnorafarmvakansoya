@@ -18,7 +18,7 @@ from config import BOT_TOKEN, SUPER_ADMINS
 from database.db import init_db
 from database import queries as q
 from handlers import register_all
-from services.reminders import interview_reminder_loop
+from services.reminders import interview_reminder_loop, probation_reminder_loop
 
 
 class BlockMiddleware(BaseMiddleware):
@@ -58,14 +58,16 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
     reminder_task = asyncio.create_task(interview_reminder_loop(bot))
+    probation_task = asyncio.create_task(probation_reminder_loop(bot))
     try:
         await dp.start_polling(bot)
     finally:
-        reminder_task.cancel()
-        try:
-            await reminder_task
-        except asyncio.CancelledError:
-            pass
+        for task in (reminder_task, probation_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == "__main__":

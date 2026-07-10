@@ -1,4 +1,4 @@
-"""Suhbat eslatmalarini yuboradigan background loop."""
+"""Suhbat va sinov muddati eslatmalarini yuboradigan background loop."""
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from aiogram import Bot
 
 from database import queries as q
-from utils import safe_send
+from database.db import ROLE_HR, ROLE_ADMIN
+from utils import safe_send, days_left_until, probation_text, iso_to_display
 
 logger = logging.getLogger("hrbot.reminders")
 
@@ -80,4 +81,60 @@ async def interview_reminder_loop(bot: Bot, interval_seconds=60):
             raise
         except Exception:
             logger.exception("Suhbat eslatmalarini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- SINOV MUDDATI ESLATMALARI ----------------
+async def _hr_admin_ids():
+    hr = await q.all_user_tg_ids(role=ROLE_HR)
+    admin = await q.all_user_tg_ids(role=ROLE_ADMIN)
+    return set(hr + admin)
+
+
+async def _check_probations(bot: Bot):
+    probations = await q.list_active_probations()
+    if not probations:
+        return
+    hr_ids = await _hr_admin_ids()
+    for p in probations:
+        left = days_left_until(p.get("end_date"))
+        if left is None:
+            continue
+
+        # Tugashiga 3 kun (yoki kamroq) qolganda — bir marta HR ga xabar
+        if 0 < left <= 3 and not p.get("hr_3day_sent"):
+            text = (
+                "⏳ <b>Sinov muddati tugashiga oz qoldi</b>\n\n"
+                f"👤 <b>{p.get('full_name') or '-'}</b>\n"
+                f"💼 Lavozim: {p.get('position') or '-'}\n"
+                f"🏢 Filial: {p.get('branch_name') or '-'}\n"
+                f"🏁 Tugash sanasi: <b>{iso_to_display(p.get('end_date'))}</b>\n"
+                f"📆 Qolgan: <b>{left} kun</b>\n\n"
+                "Sinov muddati tugashidan oldin xodim bo'yicha qaror qabul qiling."
+            )
+            for tid in hr_ids:
+                await safe_send(bot, tid, text)
+            await q.mark_probation_flag(p["id"], "hr_3day_sent")
+
+        # Sinov muddati tugadi — HR ga statistika bilan xabar
+        elif left <= 0 and not p.get("hr_end_sent"):
+            stats = await q.probation_attendance_stats(
+                p["user_id"], p.get("start_date"), p.get("end_date")
+            )
+            header = "🏁 <b>Sinov muddati tugadi</b>\n\n"
+            body = probation_text({**p, "status": "finished"}, stats=stats)
+            for tid in hr_ids:
+                await safe_send(bot, tid, header + body)
+            await q.mark_probation_flag(p["id"], "hr_end_sent")
+            await q.set_probation_status(p["id"], "finished")
+
+
+async def probation_reminder_loop(bot: Bot, interval_seconds=3600):
+    while True:
+        try:
+            await _check_probations(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Sinov muddati eslatmalarini yuborishda xatolik")
         await asyncio.sleep(interval_seconds)
