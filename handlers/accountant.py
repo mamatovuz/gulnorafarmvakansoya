@@ -10,13 +10,13 @@ from database import queries as q
 from database.db import ROLE_ADMIN, ROLE_ACCOUNTANT
 from states import AccForm
 import keyboards as kb
-from utils import employee_profile_text, fine_text, safe_send
+from utils import employee_profile_text, fine_text, safe_send, now_tk
 
 router = Router()
 
 
 def _period_now():
-    return datetime.now().strftime("%Y-%m")
+    return now_tk().strftime("%Y-%m")
 
 
 async def _is_accountant(tg_id):

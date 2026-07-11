@@ -39,7 +39,8 @@ def _finish(wb, prefix):
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    from utils import now_tk
+    stamp = now_tk().strftime("%Y%m%d_%H%M")
     return BufferedInputFile(buf.read(), filename=f"{prefix}_{stamp}.xlsx")
 
 

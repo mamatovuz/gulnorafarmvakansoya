@@ -12,7 +12,7 @@ from states import Apply, RescheduleForm
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
-    send_application_resume, best_vacancy_matches, recommendation_text,
+    send_application_resume, best_vacancy_matches, recommendation_text, now_tk,
 )
 
 router = Router()
@@ -74,7 +74,7 @@ def parse_birthdate(text):
         dt = datetime.strptime(text, "%d.%m.%Y")
     except ValueError:
         return None
-    if not (1940 <= dt.year <= datetime.now().year):
+    if not (1940 <= dt.year <= now_tk().year):
         return None
     return dt.strftime("%d.%m.%Y")
 

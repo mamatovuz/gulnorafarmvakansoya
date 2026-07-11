@@ -47,6 +47,8 @@ def main_menu(role, has_applied=False):
     if role in EMPLOYEE_ROLES:
         b.button(text="📍 Ishga keldim")
         b.button(text="🏁 Ishdan ketdim")
+        b.button(text="⏸ Tanaffus")
+        b.button(text="▶️ Ishni davom ettirish")
         b.button(text="👤 Mening profilim")
         b.button(text="🔄 Dam olish kunini almashtirish")
     if role == ROLE_MANAGER:
@@ -384,12 +386,13 @@ def hr_menu():
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
     b.button(text="📍 Davomat")
+    b.button(text="⚙️ Davomat sozlamalari")
     b.button(text="🧪 Sinov muddati")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -647,13 +650,14 @@ def manager_menu():
     b.button(text="📊 Filial statistikasi")
     b.button(text="📍 Davomat")
     b.button(text="⏰ Kech/erta hisobot")
+    b.button(text="⏸ Tanaffus hisoboti")
     b.button(text="👕 Formasi yo'q xodimlar")
     b.button(text="📋 Filial arizalari")
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="📋 Mening so'rovlarim")
     b.button(text="💬 HR ga xabar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -675,11 +679,12 @@ def director_menu():
     b.button(text="📥 Arizalar kesimi")
     b.button(text="📍 Davomat")
     b.button(text="⏰ Kech/erta hisobot")
+    b.button(text="⏸ Tanaffus hisoboti")
     b.button(text="🏆 Filiallar reytingi")
     b.button(text="📈 Taqqoslash")
     b.button(text="📑 Hisobot (Excel)")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 1, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -963,6 +968,30 @@ def staff_regs_list_kb(regs, prefix="srview"):
 
 
 # ================= DAVOMAT (ATTENDANCE) =================
+def break_stats_kb(scope="mgr"):
+    """Tanaffus/joylashuv statistikasi uchun davr tanlash."""
+    b = InlineKeyboardBuilder()
+    b.button(text="📅 Bugun", callback_data=f"brk:{scope}:day")
+    b.button(text="🗓 Hafta", callback_data=f"brk:{scope}:week")
+    b.button(text="📆 Oy", callback_data=f"brk:{scope}:month")
+    b.adjust(3)
+    return b.as_markup()
+
+
+def attendance_settings_kb(enabled, interval_hours):
+    """HR: periodik joylashuv tekshiruvi sozlamalari."""
+    b = InlineKeyboardBuilder()
+    if enabled:
+        b.button(text="🟢 Tekshiruv YOQILGAN (bosib o'chirish)", callback_data="attset:toggle")
+    else:
+        b.button(text="🔴 Tekshiruv O'CHIRILGAN (bosib yoqish)", callback_data="attset:toggle")
+    for h in (1, 2, 3):
+        mark = "✅ " if str(interval_hours) == str(h) else ""
+        b.button(text=f"{mark}{h} soatda", callback_data=f"attset:int:{h}")
+    b.adjust(1, 3)
+    return b.as_markup()
+
+
 def attendance_location_kb():
     b = ReplyKeyboardBuilder()
     b.button(text="📍 Joylashuvni yuborish", request_location=True)

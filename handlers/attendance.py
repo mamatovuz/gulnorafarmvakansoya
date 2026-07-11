@@ -1,11 +1,10 @@
 """Davomat (attendance): «📍 Ishga keldim» / «🏁 Ishdan ketdim» — GPS orqali
 ofisda ekanini tekshirish va HR/Direktor/Filial rahbari/Buxgalter uchun
 davomat hisobotlari (kelgan/ketgan vaqt, kech qolgan/erta ketgan)."""
-from datetime import datetime
-
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 
 from database import queries as q
 from database.db import (
@@ -14,7 +13,9 @@ from database.db import (
 )
 from states import AttendanceForm
 import keyboards as kb
-from utils import haversine_m, employee_profile_text, safe_send
+from utils import (
+    haversine_m, employee_profile_text, safe_send, now_tk_hm, fmt_duration,
+)
 
 router = Router()
 
@@ -112,7 +113,7 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
     radius = branch.get("radius") or 150
 
     if dist is not None and dist <= radius:
-        now_hm = datetime.now().strftime("%H:%M")
+        now_hm = now_tk_hm()
         late = _is_late(profile.get("work_hours"), now_hm)
         await q.add_attendance(
             user["id"], branch["id"], lat, lon, dist, status="present", late=late
@@ -198,13 +199,16 @@ async def checkout_location(message: Message, state: FSMContext):
     if not today:
         await message.answer("Bugun kelish yozuvi topilmadi.", reply_markup=menu)
         return
+    # Tanaffusda bo'lsa — avval tanaffusni yopamiz (vaqti hisobga olinadi)
+    if today.get("on_break"):
+        await q.end_break(today["id"])
     branch = await q.get_branch(profile["branch_id"]) if profile and profile.get("branch_id") else None
     lat = message.location.latitude
     lon = message.location.longitude
     dist = None
     if branch and branch.get("latitude") is not None:
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
-    now_hm = datetime.now().strftime("%H:%M")
+    now_hm = now_tk_hm()
     early = _is_early(profile.get("work_hours"), now_hm)
     await q.set_attendance_checkout(today["id"], lat, lon, dist, early=early)
     early_note = "\n⚠️ <b>Erta ketdingiz.</b>" if early else ""
@@ -229,6 +233,154 @@ async def checkout_need_location(message: Message):
     )
 
 
+# ================= TANAFFUS (BREAK) =================
+@router.message(F.text == "⏸ Tanaffus")
+async def break_start(message: Message):
+    profile = await q.get_employee_profile_by_tg(message.from_user.id)
+    if not profile:
+        await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
+        return
+    today = await q.get_attendance_today(message.from_user.id)
+    if not today or today.get("status") != "present" or today.get("out_time"):
+        await message.answer(
+            "❗️ Avval «📍 Ishga keldim» tugmasi bilan ishni boshlang."
+        )
+        return
+    if today.get("on_break"):
+        await message.answer("⏸ Siz allaqachon tanaffusdasiz. Ishni davom ettirish uchun "
+                             "«▶️ Ishni davom ettirish» tugmasini bosing.")
+        return
+    await q.start_break(today["id"])
+    await q.add_log(message.from_user.id, message.from_user.full_name, "tanaffus_boshladi", "")
+    await message.answer(
+        "⏸ <b>Tanaffus boshlandi.</b>\n"
+        "Tanaffus tugagach «▶️ Ishni davom ettirish» tugmasini bosing — "
+        "ish joyingizni tasdiqlash uchun joylashuv so'raladi."
+    )
+
+
+@router.message(F.text == "▶️ Ishni davom ettirish")
+async def break_end(message: Message, state: FSMContext):
+    profile = await q.get_employee_profile_by_tg(message.from_user.id)
+    if not profile:
+        await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
+        return
+    today = await q.get_attendance_today(message.from_user.id)
+    if not today or not today.get("on_break"):
+        await message.answer("❗️ Siz hozir tanaffusda emassiz.")
+        return
+    await q.end_break(today["id"])
+    await q.add_log(message.from_user.id, message.from_user.full_name, "tanaffus_tugadi", "")
+    # Ishga qaytishni tasdiqlash uchun joylashuv so'raymiz (resume tekshiruvi)
+    await q.add_location_check(today["id"], today["user_id"], today.get("branch_id"), kind="resume")
+    await message.answer(
+        "▶️ <b>Tanaffus tugadi.</b>\n\n"
+        "Ish joyingizga qaytganingizni tasdiqlash uchun joriy <b>joylashuvingizni</b> yuboring.",
+        reply_markup=kb.attendance_location_kb(),
+    )
+
+
+# ================= PERIODIK / RESUME JOYLASHUV TEKSHIRUVI =================
+@router.message(StateFilter(None), F.location)
+async def periodic_location_response(message: Message):
+    """FSM holatidan tashqarida kelgan joylashuv — periodik yoki tanaffusdan keyingi
+    tekshiruv javobi sifatida qabul qilinadi."""
+    check = await q.latest_pending_location_check(message.from_user.id)
+    if not check:
+        return  # kutilayotgan tekshiruv yo'q — e'tiborsiz qoldiramiz
+    profile = await q.get_employee_profile_by_tg(message.from_user.id)
+    user = await q.get_user(message.from_user.id)
+    menu = kb.main_menu(user["role"] if user else "candidate")
+    branch = await q.get_branch(profile["branch_id"]) if profile and profile.get("branch_id") else None
+    if not branch or branch.get("latitude") is None:
+        await q.resolve_location_check(check["id"], "present", None)
+        await message.answer("✅ Qabul qilindi.", reply_markup=menu)
+        return
+    lat, lon = message.location.latitude, message.location.longitude
+    dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
+    radius = branch.get("radius") or 150
+    if dist is not None and dist <= radius:
+        await q.resolve_location_check(check["id"], "present", dist)
+        await message.answer(
+            "✅ <b>Rahmat!</b> Ish joyingizda ekaningiz tasdiqlandi.\n"
+            f"📏 Ofisgacha masofa: ~{dist} m",
+            reply_markup=menu,
+        )
+    else:
+        await q.resolve_location_check(check["id"], "away", dist)
+        await message.answer(
+            "⚠️ <b>Siz ish joyingizda emassiz.</b>\n"
+            f"📏 Ofisdan masofa: ~{dist} m (ruxsat: {radius} m)\n"
+            "Bu holat rahbaringiz hisobotida qayd etiladi.",
+            reply_markup=menu,
+        )
+
+
+# ================= TANAFFUS / TEKSHIRUV HISOBOTI (rahbar/direktor) =================
+async def _break_scope_branch(user):
+    """(scope, branch_id) qaytaradi. mgr — o'z filiali, dir — o'z filiali (bo'lsa)."""
+    role = user["role"] if user else None
+    profile = await q.get_employee_profile_by_tg(user["tg_id"]) if user else None
+    branch_id = user.get("branch_id") or (profile.get("branch_id") if profile else None)
+    if role in (ROLE_MANAGER,):
+        return "mgr", branch_id
+    if role == ROLE_DIRECTOR:
+        return "dir", branch_id
+    if role in (ROLE_HR, ROLE_ADMIN):
+        return "hr", None
+    return None, None
+
+
+@router.message(F.text == "⏸ Tanaffus hisoboti")
+async def break_report_menu(message: Message):
+    user = await q.get_user(message.from_user.id)
+    scope, _ = await _break_scope_branch(user)
+    if not scope:
+        await message.answer("⛔ Sizda bu hisobotni ko'rish huquqi yo'q.")
+        return
+    await message.answer(
+        "⏸ <b>Tanaffus va ish joyi tekshiruvi hisoboti</b>\nDavrni tanlang:",
+        reply_markup=kb.break_stats_kb(scope),
+    )
+
+
+@router.callback_query(F.data.startswith("brk:"))
+async def break_report_cb(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    scope, branch_id = await _break_scope_branch(user)
+    if not scope:
+        await call.answer("⛔", show_alert=True)
+        return
+    period = call.data.split(":")[2]
+    rows = await q.break_and_check_stats(period=period, branch_id=branch_id)
+    title = PERIOD_TITLES.get(period, period)
+    lines = [
+        f"⏸ <b>Tanaffus hisoboti</b> — {title}",
+        ("🏢 O'z filialingiz" if branch_id else "🏢 Barcha filiallar"),
+        "━━━━━━━━━━━━",
+    ]
+    if not rows:
+        lines.append("Bu davrda ma'lumot yo'q.")
+    for r in rows[:40]:
+        checks = ""
+        if r.get("away_cnt") or r.get("missed_cnt"):
+            checks = (f" · ⚠️ tashqarida {r['away_cnt']}"
+                      if r.get("away_cnt") else "")
+            checks += (f" · ❌ javobsiz {r['missed_cnt']}"
+                       if r.get("missed_cnt") else "")
+        lines.append(
+            f"• <b>{r.get('full_name') or r.get('tg_id')}</b>"
+            + (f" · {r['branch_name']}" if scope == 'hr' and r.get('branch_name') else "")
+            + f"\n   ⏸ Jami tanaffus: <b>{fmt_duration(r.get('break_seconds'))}</b>"
+            + f" ({r.get('days')} kun)"
+            + (f" · ✅ tekshiruv {r['ok_cnt']}" if r.get('ok_cnt') else "")
+            + checks
+        )
+    for chunk in _split("\n".join(lines)):
+        await call.message.answer(chunk)
+    await call.answer()
+
+
 # ================= MENING PROFILIM (xodim) =================
 @router.message(F.text == "👤 Mening profilim")
 async def my_profile(message: Message):
@@ -240,6 +392,10 @@ async def my_profile(message: Message):
     today = await q.get_attendance_today(message.from_user.id)
     if today and today.get("status") == "present":
         text += f"\n\n📍 Bugun: ✅ Kelgan ({today.get('time') or '-'})"
+        if today.get("on_break"):
+            text += "\n⏸ Hozir tanaffusdasiz"
+        if today.get("break_seconds"):
+            text += f"\n⏸ Bugungi tanaffus: {fmt_duration(today.get('break_seconds'))}"
     else:
         text += "\n\n📍 Bugun: ⏳ Hali belgilanmagan"
     # oxirgi kelishlar

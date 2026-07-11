@@ -9,6 +9,31 @@ from database import queries as q
 from database.db import STATUS_LABELS
 
 
+# O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
+TASHKENT_OFFSET = timedelta(hours=5)
+
+
+def now_tk():
+    """Hozirgi Toshkent vaqti (naive datetime). Server vaqt mintaqasiga bog'liq emas."""
+    return datetime.utcnow() + TASHKENT_OFFSET
+
+
+def now_tk_hm():
+    """Hozirgi Toshkent vaqti 'HH:MM' ko'rinishida."""
+    return now_tk().strftime("%H:%M")
+
+
+def fmt_duration(seconds):
+    """Sekundlarni 'X soat Y daqiqa' ko'rinishiga o'giradi."""
+    seconds = int(seconds or 0)
+    h, m = seconds // 3600, (seconds % 3600) // 60
+    if h and m:
+        return f"{h} soat {m} daqiqa"
+    if h:
+        return f"{h} soat"
+    return f"{m} daqiqa"
+
+
 def haversine_m(lat1, lon1, lat2, lon2):
     """Ikki koordinata orasidagi masofani metrda qaytaradi."""
     if None in (lat1, lon1, lat2, lon2):

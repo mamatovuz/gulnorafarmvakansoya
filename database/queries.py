@@ -550,7 +550,7 @@ async def upsert_employee_profile(
                        photo_file_id=COALESCE(?, photo_file_id),
                        extra_info=COALESCE(?, extra_info),
                        since=COALESCE(?, since),
-                       updated_at=datetime('now','localtime')
+                       updated_at=datetime('now','+5 hours')
                    WHERE user_id=?""",
                 (application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
@@ -656,7 +656,7 @@ async def update_uniform_status(user_id, status):
     try:
         await db.execute(
             """UPDATE employee_profiles
-               SET uniform_status=?, updated_at=datetime('now','localtime')
+               SET uniform_status=?, updated_at=datetime('now','+5 hours')
                WHERE user_id=?""",
             (status, user_id),
         )
@@ -670,7 +670,7 @@ async def update_rest_day(user_id, rest_day):
     try:
         await db.execute(
             """UPDATE employee_profiles
-               SET rest_day=?, updated_at=datetime('now','localtime')
+               SET rest_day=?, updated_at=datetime('now','+5 hours')
                WHERE user_id=?""",
             (rest_day, user_id),
         )
@@ -684,7 +684,7 @@ async def update_monthly_salary(user_id, salary):
     try:
         await db.execute(
             """UPDATE employee_profiles
-               SET monthly_salary=?, updated_at=datetime('now','localtime')
+               SET monthly_salary=?, updated_at=datetime('now','+5 hours')
                WHERE user_id=?""",
             (salary, user_id),
         )
@@ -1036,9 +1036,9 @@ async def stats_counts():
     try:
         out = {}
         for key, sql in {
-            "today": "SELECT COUNT(*) c FROM applications WHERE date(created_at)=date('now','localtime')",
-            "week": "SELECT COUNT(*) c FROM applications WHERE date(created_at)>=date('now','localtime','-6 days')",
-            "month": "SELECT COUNT(*) c FROM applications WHERE date(created_at)>=date('now','localtime','-29 days')",
+            "today": "SELECT COUNT(*) c FROM applications WHERE date(created_at)=date('now','+5 hours')",
+            "week": "SELECT COUNT(*) c FROM applications WHERE date(created_at)>=date('now','+5 hours','-6 days')",
+            "month": "SELECT COUNT(*) c FROM applications WHERE date(created_at)>=date('now','+5 hours','-29 days')",
             "accepted": "SELECT COUNT(*) c FROM applications WHERE status='accepted'",
             "rejected": "SELECT COUNT(*) c FROM applications WHERE status='rejected'",
             "interview": "SELECT COUNT(*) c FROM applications WHERE status='interview'",
@@ -1282,10 +1282,10 @@ async def stats_periods():
     try:
         out = {}
         queries = {
-            "week_now": "date(created_at) >= date('now','localtime','-6 days')",
-            "week_prev": "date(created_at) >= date('now','localtime','-13 days') AND date(created_at) < date('now','localtime','-6 days')",
-            "month_now": "date(created_at) >= date('now','localtime','-29 days')",
-            "month_prev": "date(created_at) >= date('now','localtime','-59 days') AND date(created_at) < date('now','localtime','-29 days')",
+            "week_now": "date(created_at) >= date('now','+5 hours','-6 days')",
+            "week_prev": "date(created_at) >= date('now','+5 hours','-13 days') AND date(created_at) < date('now','+5 hours','-6 days')",
+            "month_now": "date(created_at) >= date('now','+5 hours','-29 days')",
+            "month_prev": "date(created_at) >= date('now','+5 hours','-59 days') AND date(created_at) < date('now','+5 hours','-29 days')",
         }
         for key, cond in queries.items():
             cur = await db.execute(f"SELECT COUNT(*) c FROM applications WHERE {cond}")
@@ -1415,7 +1415,7 @@ async def get_attendance_today(tg_id):
         cur = await db.execute(
             """SELECT a.* FROM attendance a
                JOIN users u ON u.id = a.user_id
-               WHERE u.tg_id=? AND a.date=date('now','localtime')
+               WHERE u.tg_id=? AND a.date=date('now','+5 hours')
                ORDER BY a.id DESC LIMIT 1""",
             (tg_id,),
         )
@@ -1431,8 +1431,10 @@ async def add_attendance(user_id, branch_id, latitude, longitude, distance,
     try:
         cur = await db.execute(
             """INSERT INTO attendance
-               (user_id, branch_id, date, time, latitude, longitude, distance, status, late)
-               VALUES (?,?,date('now','localtime'),time('now','localtime'),?,?,?,?,?)""",
+               (user_id, branch_id, date, time, latitude, longitude, distance, status,
+                late, last_prompt_at)
+               VALUES (?,?,date('now','+5 hours'),time('now','+5 hours'),?,?,?,?,?,
+                       datetime('now','+5 hours'))""",
             (user_id, branch_id, latitude, longitude, distance, status, 1 if late else 0),
         )
         await db.commit()
@@ -1446,7 +1448,7 @@ async def set_attendance_checkout(att_id, latitude, longitude, distance, early=0
     try:
         await db.execute(
             """UPDATE attendance
-               SET out_time=time('now','localtime'), out_latitude=?, out_longitude=?,
+               SET out_time=time('now','+5 hours'), out_latitude=?, out_longitude=?,
                    out_distance=?, early=?
                WHERE id=?""",
             (latitude, longitude, distance, 1 if early else 0, att_id),
@@ -1456,11 +1458,197 @@ async def set_attendance_checkout(att_id, latitude, longitude, distance, early=0
         await db.close()
 
 
+# ---------------- TANAFFUS (break) ----------------
+async def start_break(att_id):
+    """Tanaffusni boshlaydi (break_started_at = hozir, on_break=1)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE attendance
+               SET on_break=1, break_started_at=datetime('now','+5 hours')
+               WHERE id=?""",
+            (att_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def end_break(att_id):
+    """Tanaffusni tugatadi: o'tgan vaqtni break_seconds ga qo'shadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE attendance
+               SET break_seconds = break_seconds + CAST(
+                     (julianday(datetime('now','+5 hours')) - julianday(break_started_at))
+                     * 86400 AS INTEGER),
+                   on_break=0, break_started_at=NULL, last_prompt_at=datetime('now','+5 hours')
+               WHERE id=? AND on_break=1 AND break_started_at IS NOT NULL""",
+            (att_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def break_total_today(tg_id):
+    """Bugungi jami tanaffus (sekund). Agar hozir tanaffusda bo'lsa — davomini ham qo'shadi."""
+    row = await get_attendance_today(tg_id)
+    if not row:
+        return 0
+    total = row.get("break_seconds") or 0
+    return total
+
+
+# ---------------- JOYLASHUV TEKSHIRUVLARI (periodik) ----------------
+async def add_location_check(attendance_id, user_id, branch_id, kind="auto"):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO location_checks
+               (attendance_id, user_id, branch_id, date, requested_at, status, kind)
+               VALUES (?,?,?,date('now','+5 hours'),datetime('now','+5 hours'),'pending',?)""",
+            (attendance_id, user_id, branch_id, kind),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def latest_pending_location_check(tg_id):
+    """Foydalanuvchining bugungi javob kutayotgan (pending) oxirgi tekshiruvi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT lc.* FROM location_checks lc
+               JOIN users u ON u.id = lc.user_id
+               WHERE u.tg_id=? AND lc.date=date('now','+5 hours') AND lc.status='pending'
+               ORDER BY lc.id DESC LIMIT 1""",
+            (tg_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def resolve_location_check(check_id, status, distance=None):
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE location_checks
+               SET status=?, distance=?, responded_at=datetime('now','+5 hours')
+               WHERE id=?""",
+            (status, distance, check_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def mark_stale_location_checks(minutes=30):
+    """Belgilangan vaqtdan oshgan javobsiz tekshiruvlarni 'missed' qiladi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            f"""UPDATE location_checks
+                SET status='missed'
+                WHERE status='pending'
+                  AND (julianday(datetime('now','+5 hours')) - julianday(requested_at))
+                      * 1440 > {int(minutes)}""",
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def attendance_due_for_check(interval_hours):
+    """Periodik joylashuv so'rovi kerak bo'lgan bugungi davomat yozuvlari.
+    Ishda (present), ketmagan, tanaffusda emas va oxirgi so'rovdan interval o'tgan."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT a.*, u.tg_id, u.full_name
+               FROM attendance a
+               JOIN users u ON u.id=a.user_id
+               WHERE a.date=date('now','+5 hours')
+                 AND a.status='present' AND a.out_time IS NULL
+                 AND COALESCE(a.on_break,0)=0
+                 AND (a.last_prompt_at IS NULL OR
+                      (julianday(datetime('now','+5 hours')) - julianday(a.last_prompt_at))
+                      * 24 >= ?)""",
+            (float(interval_hours),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def touch_attendance_prompt(att_id):
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE attendance SET last_prompt_at=datetime('now','+5 hours') WHERE id=?",
+            (att_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def break_and_check_stats(period="month", branch_id=None):
+    """Xodimlar kesimida tanaffus va joylashuv tekshiruvi statistikasi (filial rahbari uchun)."""
+    db = await _conn()
+    try:
+        cond = _period_cond(period)
+        sql = f"""SELECT u.id AS user_id, u.tg_id, u.full_name,
+                         b.name AS branch_name,
+                         SUM(COALESCE(a.break_seconds,0)) AS break_seconds,
+                         COUNT(DISTINCT a.date) AS days
+                  FROM attendance a
+                  JOIN users u ON u.id=a.user_id
+                  LEFT JOIN branches b ON b.id=a.branch_id
+                  WHERE a.status='present' AND {cond}"""
+        params = []
+        if branch_id:
+            sql += " AND a.branch_id=?"
+            params.append(branch_id)
+        sql += " GROUP BY u.id ORDER BY break_seconds DESC, u.full_name"
+        cur = await db.execute(sql, params)
+        rows = [dict(r) for r in await cur.fetchall()]
+
+        # Joylashuv tekshiruvlari kesimi
+        chk_sql = f"""SELECT lc.user_id,
+                             SUM(CASE WHEN lc.status='present' THEN 1 ELSE 0 END) AS ok_cnt,
+                             SUM(CASE WHEN lc.status='away' THEN 1 ELSE 0 END) AS away_cnt,
+                             SUM(CASE WHEN lc.status='missed' THEN 1 ELSE 0 END) AS missed_cnt
+                      FROM location_checks lc
+                      JOIN attendance a ON a.id=lc.attendance_id
+                      WHERE {cond}"""
+        cparams = []
+        if branch_id:
+            chk_sql += " AND lc.branch_id=?"
+            cparams.append(branch_id)
+        chk_sql += " GROUP BY lc.user_id"
+        cur = await db.execute(chk_sql, cparams)
+        checks = {r["user_id"]: dict(r) for r in await cur.fetchall()}
+        for r in rows:
+            c = checks.get(r["user_id"], {})
+            r["ok_cnt"] = c.get("ok_cnt") or 0
+            r["away_cnt"] = c.get("away_cnt") or 0
+            r["missed_cnt"] = c.get("missed_cnt") or 0
+        return rows
+    finally:
+        await db.close()
+
+
 # Davr shartlari (SQLite sana)
 _PERIOD_COND = {
-    "day": "a.date = date('now','localtime')",
-    "week": "a.date >= date('now','localtime','-6 days')",
-    "month": "a.date >= date('now','localtime','-29 days')",
+    "day": "a.date = date('now','+5 hours')",
+    "week": "a.date >= date('now','+5 hours','-6 days')",
+    "month": "a.date >= date('now','+5 hours','-29 days')",
 }
 
 
@@ -1550,7 +1738,7 @@ async def attendance_absent_today(branch_id=None):
                  LEFT JOIN branches b ON b.id=ep.branch_id
                  WHERE u.id NOT IN (
                      SELECT user_id FROM attendance
-                     WHERE date=date('now','localtime') AND status='present'
+                     WHERE date=date('now','+5 hours') AND status='present'
                  )"""
         params = []
         if branch_id:

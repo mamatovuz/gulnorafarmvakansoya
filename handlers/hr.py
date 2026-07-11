@@ -93,6 +93,61 @@ async def hr_panel(message: Message):
     )
 
 
+# ---------------- DAVOMAT SOZLAMALARI (periodik joylashuv tekshiruvi) ----------------
+async def _att_settings_text():
+    enabled = str(await q.get_setting("loc_check_enabled", "1")) == "1"
+    interval = await q.get_setting("loc_check_interval_hours", "2") or "2"
+    status = "🟢 Yoqilgan" if enabled else "🔴 O'chirilgan"
+    return (
+        "⚙️ <b>Davomat sozlamalari</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Ish vaqti davomida bot xodimlardan belgilangan oraliqda joylashuv so'rab, "
+        "ular haqiqatan ish joyida ekanini tekshiradi.\n\n"
+        f"Holat: <b>{status}</b>\n"
+        f"So'rov oralig'i: <b>{interval} soatda bir marta</b>\n\n"
+        "Quyidan boshqaring:"
+    ), enabled, interval
+
+
+@router.message(F.text == "⚙️ Davomat sozlamalari")
+async def att_settings(message: Message):
+    if not await is_staff(message.from_user.id):
+        await message.answer("⛔ Sizda ruxsat yo'q.")
+        return
+    text, enabled, interval = await _att_settings_text()
+    await message.answer(text, reply_markup=kb.attendance_settings_kb(enabled, interval))
+
+
+@router.callback_query(F.data == "attset:toggle")
+async def att_settings_toggle(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    enabled = str(await q.get_setting("loc_check_enabled", "1")) == "1"
+    await q.set_setting("loc_check_enabled", "0" if enabled else "1")
+    text, en, interval = await _att_settings_text()
+    try:
+        await call.message.edit_text(text, reply_markup=kb.attendance_settings_kb(en, interval))
+    except Exception:
+        pass
+    await call.answer("Saqlandi ✅")
+
+
+@router.callback_query(F.data.startswith("attset:int:"))
+async def att_settings_interval(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    hours = call.data.split(":")[2]
+    await q.set_setting("loc_check_interval_hours", hours)
+    text, en, interval = await _att_settings_text()
+    try:
+        await call.message.edit_text(text, reply_markup=kb.attendance_settings_kb(en, interval))
+    except Exception:
+        pass
+    await call.answer(f"{hours} soatda bir marta ✅")
+
+
 # ---------------- DASHBOARD ----------------
 @router.message(F.text == "📊 Dashboard")
 async def hr_dashboard(message: Message):

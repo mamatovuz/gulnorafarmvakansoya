@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone TEXT,
     role TEXT NOT NULL DEFAULT 'candidate',
     branch_id INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS channels (
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS channels (
     title TEXT,
     url TEXT,
     active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS branches (
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS branches (
     radius INTEGER NOT NULL DEFAULT 150,
     phone TEXT,
     work_hours TEXT,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS vacancies (
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS vacancies (
     conditions TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS applications (
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS applications (
     status TEXT NOT NULL DEFAULT 'new',
     hr_comment TEXT,
     handled_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS interviews (
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS interviews (
     reminder_day_sent INTEGER NOT NULL DEFAULT 0,
     reminder_2h_sent INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     actor_name TEXT,
     action TEXT,
     details TEXT,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS employee_profiles (
@@ -149,8 +149,8 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     photo_file_id TEXT,
     extra_info TEXT,
     since TEXT,
-    created_at TEXT DEFAULT (datetime('now','localtime')),
-    updated_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    updated_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS staff_regs (
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS staff_regs (
     extra_info TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     handled_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS attendance (
@@ -192,7 +192,25 @@ CREATE TABLE IF NOT EXISTS attendance (
     out_distance INTEGER,
     late INTEGER NOT NULL DEFAULT 0,
     early INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    on_break INTEGER NOT NULL DEFAULT 0,
+    break_seconds INTEGER NOT NULL DEFAULT 0,
+    break_started_at TEXT,
+    last_prompt_at TEXT,
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS location_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attendance_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    branch_id INTEGER,
+    date TEXT,
+    requested_at TEXT,
+    responded_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending / present / away / missed
+    distance INTEGER,
+    kind TEXT NOT NULL DEFAULT 'auto',        -- auto / resume
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS salary_payments (
@@ -203,7 +221,7 @@ CREATE TABLE IF NOT EXISTS salary_payments (
     status TEXT NOT NULL DEFAULT 'paid',
     note TEXT,
     created_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS dayoff_requests (
@@ -215,7 +233,7 @@ CREATE TABLE IF NOT EXISTS dayoff_requests (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     handled_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS fines (
@@ -224,7 +242,7 @@ CREATE TABLE IF NOT EXISTS fines (
     amount TEXT NOT NULL,
     reason TEXT,
     created_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS manager_requests (
@@ -238,7 +256,7 @@ CREATE TABLE IF NOT EXISTS manager_requests (
     status TEXT NOT NULL DEFAULT 'new',
     hr_comment TEXT,
     handled_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS termination_requests (
@@ -250,7 +268,7 @@ CREATE TABLE IF NOT EXISTS termination_requests (
     status TEXT NOT NULL DEFAULT 'new',  -- new / approved / rejected
     hr_comment TEXT,                     -- HR rad etganda yozgan sabab
     handled_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -261,7 +279,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS probations (
@@ -279,7 +297,7 @@ CREATE TABLE IF NOT EXISTS probations (
     hr_3day_sent INTEGER NOT NULL DEFAULT 0,
     hr_end_sent INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 """
 
@@ -361,6 +379,10 @@ ATTENDANCE_COLUMNS = {
     "out_distance": "INTEGER",
     "late": "INTEGER NOT NULL DEFAULT 0",
     "early": "INTEGER NOT NULL DEFAULT 0",
+    "on_break": "INTEGER NOT NULL DEFAULT 0",
+    "break_seconds": "INTEGER NOT NULL DEFAULT 0",
+    "break_started_at": "TEXT",
+    "last_prompt_at": "TEXT",
 }
 
 STAFF_REG_COLUMNS = {
@@ -411,7 +433,7 @@ async def _rebuild_applications_if_needed(db, columns):
             status TEXT NOT NULL DEFAULT 'new',
             hr_comment TEXT,
             handled_by INTEGER,
-            created_at TEXT DEFAULT (datetime('now','localtime'))
+            created_at TEXT DEFAULT (datetime('now','+5 hours'))
         )
         """
     )

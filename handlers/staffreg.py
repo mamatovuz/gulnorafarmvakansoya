@@ -18,7 +18,7 @@ from database.db import (
 )
 from states import StaffReg
 import keyboards as kb
-from utils import safe_send, staff_reg_text, uniform_label
+from utils import safe_send, staff_reg_text, uniform_label, now_tk
 
 router = Router()
 
@@ -45,7 +45,7 @@ def parse_birthdate(text):
         dt = datetime.strptime(text, "%d.%m.%Y")
     except ValueError:
         return None
-    if not (1940 <= dt.year <= datetime.now().year):
+    if not (1940 <= dt.year <= now_tk().year):
         return None
     return dt.strftime("%d.%m.%Y")
 

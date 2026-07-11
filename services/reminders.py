@@ -7,7 +7,8 @@ from aiogram import Bot
 
 from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN
-from utils import safe_send, days_left_until, probation_text, iso_to_display
+import keyboards as kb
+from utils import safe_send, days_left_until, probation_text, iso_to_display, now_tk
 
 logger = logging.getLogger("hrbot.reminders")
 
@@ -36,7 +37,7 @@ def _reminder_text(interview, title):
 
 
 async def _send_due_reminders(bot: Bot):
-    now = datetime.now()
+    now = now_tk()
     interviews = await q.interviews_for_reminders()
     for interview in interviews:
         dt = _parse_interview_datetime(interview.get("date"), interview.get("time"))
@@ -137,4 +138,43 @@ async def probation_reminder_loop(bot: Bot, interval_seconds=3600):
             raise
         except Exception:
             logger.exception("Sinov muddati eslatmalarini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- PERIODIK JOYLASHUV TEKSHIRUVI ----------------
+async def _run_location_checks(bot: Bot):
+    enabled = await q.get_setting("loc_check_enabled", "1")
+    if str(enabled) != "1":
+        return
+    try:
+        interval = float(await q.get_setting("loc_check_interval_hours", "2") or 2)
+    except (TypeError, ValueError):
+        interval = 2.0
+    # Javobsiz qolgan eski tekshiruvlarni 'missed' qilamiz
+    await q.mark_stale_location_checks(minutes=30)
+    due = await q.attendance_due_for_check(interval)
+    for row in due:
+        tg_id = row.get("tg_id")
+        if not tg_id:
+            continue
+        await q.add_location_check(row["id"], row["user_id"], row.get("branch_id"), kind="auto")
+        await q.touch_attendance_prompt(row["id"])
+        await safe_send(
+            bot, tg_id,
+            "📍 <b>Ish joyi tekshiruvi</b>\n\n"
+            "Hozir siz ish joyingizda ekaningizni tasdiqlash uchun joriy "
+            "<b>joylashuvingizni</b> yuboring.\n"
+            "Pastdagi «📍 Joylashuvni yuborish» tugmasidan foydalaning.",
+            reply_markup=kb.attendance_location_kb(),
+        )
+
+
+async def location_check_loop(bot: Bot, interval_seconds=60):
+    while True:
+        try:
+            await _run_location_checks(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Periodik joylashuv tekshiruvida xatolik")
         await asyncio.sleep(interval_seconds)
