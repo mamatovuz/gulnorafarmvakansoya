@@ -6,13 +6,13 @@ from aiogram.fsm.context import FSMContext
 from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, STATUS_LABELS,
 )
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
-    ProbationForm,
+    ProbationForm, TerminationRejectForm,
 )
 import keyboards as kb
 from utils import (
@@ -816,6 +816,114 @@ async def manager_request_close(call: CallbackQuery, bot: Bot):
     await call.message.answer(f"❌ So'rov #{rid} yopildi.")
     await safe_send(bot, req["manager_tg"], f"❌ Siz yuborgan so'rov #{rid} yopildi.")
     await call.answer("Yopildi")
+
+
+# ------- Ishdan bo'shatish so'rovi (rahbar/direktor -> HR) -------
+@router.callback_query(F.data.startswith("tacc:"))
+async def termination_accept(call: CallbackQuery, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    req = await q.get_termination_request(rid)
+    if not req:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if req.get("status") != "new":
+        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+    me = await actor(call.from_user.id)
+    await q.set_termination_request_status(rid, "approved", handled_by=me["id"])
+    # Xodimni ishdan bo'shatamiz (profil o'chadi, rol nomzodga qaytadi)
+    await q.fire_employee(req["employee_user_id"])
+    await q.add_log(
+        call.from_user.id, me["full_name"], "ishdan_boshatish_tasdiq",
+        f"#{rid} — {req.get('employee_name')}"
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ Ishdan bo'shatish so'rovi #{rid} tasdiqlandi.\n"
+        f"👤 {req.get('employee_name')} ishdan bo'shatildi."
+    )
+    await call.answer("Tasdiqlandi ✅")
+
+    # Ishdan bo'shatilgan xodimga xabar (staj + sabab)
+    since_phrase = req.get("employee_since") or "ishlagan davringiz davomida"
+    await safe_send(
+        bot, req["employee_tg"],
+        f"😔 Hurmatli {req.get('employee_name')}!\n\n"
+        f"Siz Gulnora Farmda <b>{since_phrase}</b> ishlaganingizdan mamnunmiz.\n"
+        "Afsuski, siz quyidagi sabab bilan ishdan bo'shatildingiz:\n"
+        f"✍️ <b>Sabab:</b> {req.get('reason') or '-'}\n\n"
+        "Ko'rsatgan mehnatingiz uchun rahmat! 🙏",
+        reply_markup=kb.main_menu(ROLE_CANDIDATE),
+    )
+    # So'rovchiga (rahbar/direktor) tasdiq haqida xabar
+    await safe_send(
+        bot, req["requester_tg"],
+        f"✅ Siz yuborgan ishdan bo'shatish so'rovi (#{rid}) HR tomonidan tasdiqlandi.\n"
+        f"👤 {req.get('employee_name')} ishdan bo'shatildi."
+    )
+
+
+@router.callback_query(F.data.startswith("trej:"))
+async def termination_reject_start(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    req = await q.get_termination_request(rid)
+    if not req:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if req.get("status") != "new":
+        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+    await state.set_state(TerminationRejectForm.reason)
+    await state.update_data(trej_rid=rid)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "❌ Ishdan bo'shatish so'rovini <b>rad etyapsiz</b>.\n"
+        "✍️ Rad etish sababini yozing (rahbarga yuboriladi):"
+    )
+    await call.answer()
+
+
+@router.message(TerminationRejectForm.reason, F.text)
+async def termination_reject_reason(message: Message, state: FSMContext, bot: Bot):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    await state.clear()
+    rid = data.get("trej_rid")
+    req = await q.get_termination_request(rid) if rid else None
+    if not req:
+        await message.answer("So'rov topilmadi.")
+        return
+    if req.get("status") != "new":
+        await message.answer("Bu so'rov allaqachon ko'rib chiqilgan.")
+        return
+    me = await actor(message.from_user.id)
+    reason = message.text.strip()
+    await q.set_termination_request_status(rid, "rejected", handled_by=me["id"], comment=reason)
+    await q.add_log(
+        message.from_user.id, me["full_name"], "ishdan_boshatish_rad",
+        f"#{rid} — {req.get('employee_name')}"
+    )
+    await message.answer(f"❌ Ishdan bo'shatish so'rovi #{rid} rad etildi.")
+    await safe_send(
+        bot, req["requester_tg"],
+        f"❌ Siz yuborgan ishdan bo'shatish so'rovingiz (#{rid}) rad etildi.\n"
+        f"👤 Xodim: {req.get('employee_name')}\n"
+        f"✍️ <b>HR sababi:</b> {reason}"
+    )
 
 
 # ------- Suhbatga chaqirish -------

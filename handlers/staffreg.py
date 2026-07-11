@@ -123,9 +123,9 @@ async def staff_reg_start(message: Message, state: FSMContext):
 # ---------------- BEKOR QILISH ----------------
 @router.message(StateFilter(
     StaffReg.full_name, StaffReg.birth_date, StaffReg.phone, StaffReg.role,
-    StaffReg.address, StaffReg.branch, StaffReg.work_hours, StaffReg.salary,
-    StaffReg.rest_day, StaffReg.uniform, StaffReg.since, StaffReg.extra,
-    StaffReg.photo,
+    StaffReg.address, StaffReg.branch, StaffReg.shift, StaffReg.work_hours,
+    StaffReg.salary, StaffReg.rest_day, StaffReg.uniform, StaffReg.since,
+    StaffReg.extra, StaffReg.photo,
 ), F.text == kb.CANCEL_BTN)
 async def staff_reg_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -231,22 +231,57 @@ async def sr_branch(message: Message, state: FSMContext):
     branches = await q.list_branches()
     name, bid = resolve_branch(message.text, branches)
     await state.update_data(branch_name=name, branch_id=bid)
-    await state.set_state(StaffReg.work_hours)
+    await state.set_state(StaffReg.shift)
     await message.answer(
-        "<b>7-savol</b>\n🕒 Ish vaqtingiz nechidan nechigacha? Tanlang yoki yozing "
-        "(masalan <i>09:00 - 18:00</i>):",
-        reply_markup=kb.staff_work_hours_kb(),
+        "<b>7-savol</b>\n🔀 Qaysi smenada ishlaysiz? Tanlang:\n\n"
+        f"{kb.STAFF_SHIFT_DAY} — odatda 08:00 - 17:00\n"
+        f"{kb.STAFF_SHIFT_NIGHT} — odatda 14:00 - 00:00\n"
+        f"{kb.STAFF_SHIFT_DOUBLE} — ikkala smena",
+        reply_markup=kb.staff_shift_kb(),
     )
 
 
-# 6) Ish vaqti
+# 6) Smena
+@router.message(StaffReg.shift, F.text)
+async def sr_shift(message: Message, state: FSMContext):
+    text = message.text.strip()
+    valid = (kb.STAFF_SHIFT_DAY, kb.STAFF_SHIFT_NIGHT, kb.STAFF_SHIFT_DOUBLE)
+    if text not in valid:
+        await message.answer(
+            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            reply_markup=kb.staff_shift_kb(),
+        )
+        return
+    await state.update_data(shift=text)
+    await state.set_state(StaffReg.work_hours)
+    await message.answer(
+        "<b>8-savol</b>\n🕒 Ish vaqtingiz nechidan nechigacha? Tayyor variantni tanlang "
+        "yoki «✏️ Boshqa vaqt (custom)» orqali o'zingiz yozing (masalan <i>09:00 - 18:00</i>):",
+        reply_markup=kb.staff_work_hours_kb(text),
+    )
+
+
+# 7) Ish vaqti
 @router.message(StaffReg.work_hours, F.text)
 async def sr_hours(message: Message, state: FSMContext):
-    await state.update_data(work_hours=message.text.replace("🕘", "").replace("🕗", "")
-                            .replace("🕙", "").replace("🔄", "").strip())
+    text = message.text.strip()
+    data = await state.get_data()
+    shift = data.get("shift")
+    # «Boshqa vaqt» tugmasi bosilsa — foydalanuvchidan qo'lda yozishni so'raymiz
+    if text == kb.STAFF_HOURS_CUSTOM:
+        await message.answer(
+            "✏️ Ish vaqtingizni <b>qo'lda yozing</b>.\nMisol: <i>09:00 - 18:00</i>",
+            reply_markup=kb.staff_photo_kb(),
+        )
+        return
+    hours = (text.replace("🕘", "").replace("🕗", "").replace("🕙", "")
+             .replace("🕑", "").replace("🔄", "").strip())
+    # Smena nomini ish vaqti bilan birga saqlaymiz (davomat vaqt regexiga ta'sir qilmaydi)
+    shift_prefix = f"{shift} · " if shift else ""
+    await state.update_data(work_hours=f"{shift_prefix}{hours}")
     await state.set_state(StaffReg.salary)
     await message.answer(
-        "<b>8-savol</b>\n💰 Oyligingiz qancha?\nMisol: <i>4 000 000 so'm</i>",
+        "<b>9-savol</b>\n💰 Oyligingiz qancha?\nMisol: <i>4 000 000 so'm</i>",
         reply_markup=kb.staff_photo_kb(),
     )
 
@@ -257,7 +292,7 @@ async def sr_salary(message: Message, state: FSMContext):
     await state.update_data(salary=message.text.strip())
     await state.set_state(StaffReg.rest_day)
     await message.answer(
-        "<b>9-savol</b>\n🛌 Haftaning qaysi kuni dam olasiz? Tanlang:",
+        "<b>10-savol</b>\n🛌 Haftaning qaysi kuni dam olasiz? Tanlang:",
         reply_markup=kb.staff_rest_day_kb(),
     )
 
@@ -268,7 +303,7 @@ async def sr_rest(message: Message, state: FSMContext):
     await state.update_data(rest_day=message.text.strip())
     await state.set_state(StaffReg.uniform)
     await message.answer(
-        "<b>10-savol</b>\n👕 Ish formangiz bormi?",
+        "<b>11-savol</b>\n👕 Ish formangiz bormi?",
         reply_markup=kb.apply_uniform_kb(),
     )
 
@@ -282,7 +317,7 @@ async def sr_uniform(message: Message, state: FSMContext):
         await state.set_state(StaffReg.since)
         role_word = "filial rahbari" if data.get("role") == ROLE_MANAGER else "direktor"
         await message.answer(
-            f"<b>11-savol</b>\n⏳ Qachondan beri {role_word}siz?",
+            f"<b>12-savol</b>\n⏳ Qachondan beri {role_word}siz?",
             reply_markup=kb.staff_since_kb(),
         )
     else:
@@ -298,7 +333,7 @@ async def sr_since(message: Message, state: FSMContext):
     prompt = _extra_prompt(data.get("role"), data.get("position"))
     if prompt:
         await state.set_state(StaffReg.extra)
-        await message.answer("<b>12-savol</b>\n" + prompt, reply_markup=kb.staff_photo_kb())
+        await message.answer("<b>13-savol</b>\n" + prompt, reply_markup=kb.staff_photo_kb())
     else:
         await _ask_photo(message, state)
 

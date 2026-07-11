@@ -823,6 +823,80 @@ async def set_manager_request_status(rid, status, handled_by=None, comment=None)
         await db.close()
 
 
+# ---------------- ISHDAN BO'SHATISH SO'ROVLARI ----------------
+async def add_termination_request(data):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO termination_requests
+               (employee_user_id, requested_by, branch_id, reason)
+               VALUES (?,?,?,?)""",
+            (
+                data.get("employee_user_id"),
+                data.get("requested_by"),
+                data.get("branch_id"),
+                data.get("reason"),
+            ),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_termination_request(rid):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT tr.*,
+                      emp.tg_id AS employee_tg, emp.full_name AS employee_name,
+                      req.tg_id AS requester_tg, req.full_name AS requester_name,
+                      req.role AS requester_role,
+                      b.name AS branch_name,
+                      ep.since AS employee_since, ep.position AS employee_position
+               FROM termination_requests tr
+               JOIN users emp ON emp.id = tr.employee_user_id
+               JOIN users req ON req.id = tr.requested_by
+               LEFT JOIN branches b ON b.id = tr.branch_id
+               LEFT JOIN employee_profiles ep ON ep.user_id = tr.employee_user_id
+               WHERE tr.id=?""",
+            (rid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_termination_request_status(rid, status, handled_by=None, comment=None):
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE termination_requests
+               SET status=?, handled_by=?, hr_comment=COALESCE(?, hr_comment)
+               WHERE id=?""",
+            (status, handled_by, comment, rid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def fire_employee(user_id):
+    """Xodimni ishdan bo'shatadi: profilini o'chiradi va rolini nomzodga qaytaradi
+    (shu bilan xodim paneli va «Ishga keldim» tugmalari yo'qoladi)."""
+    db = await _conn()
+    try:
+        await db.execute("DELETE FROM employee_profiles WHERE user_id=?", (user_id,))
+        await db.execute(
+            "UPDATE users SET role='candidate', branch_id=NULL WHERE id=?",
+            (user_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def search_applications(field, value):
     """field: full_name | phone | branch | vacancy"""
     db = await _conn()
@@ -1333,13 +1407,17 @@ async def count_staff_regs(status=None):
 
 
 # ---------------- DAVOMAT (ATTENDANCE) ----------------
-async def get_attendance_today(user_id):
+async def get_attendance_today(tg_id):
+    """Bugungi oxirgi davomat yozuvi. tg_id (Telegram id) qabul qiladi va
+    ichki users.id ga bog'lab qidiradi (attendance.user_id = users.id)."""
     db = await _conn()
     try:
         cur = await db.execute(
-            "SELECT * FROM attendance WHERE user_id=? AND date=date('now','localtime') "
-            "ORDER BY id DESC LIMIT 1",
-            (user_id,),
+            """SELECT a.* FROM attendance a
+               JOIN users u ON u.id = a.user_id
+               WHERE u.tg_id=? AND a.date=date('now','localtime')
+               ORDER BY a.id DESC LIMIT 1""",
+            (tg_id,),
         )
         row = await cur.fetchone()
         return dict(row) if row else None

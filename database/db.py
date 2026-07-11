@@ -241,6 +241,18 @@ CREATE TABLE IF NOT EXISTS manager_requests (
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS termination_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_user_id INTEGER NOT NULL,   -- ishdan bo'shatilayotgan xodim (users.id)
+    requested_by INTEGER NOT NULL,       -- so'rovni yuborgan rahbar/direktor (users.id)
+    branch_id INTEGER,
+    reason TEXT,                         -- rahbar yozgan sabab
+    status TEXT NOT NULL DEFAULT 'new',  -- new / approved / rejected
+    hr_comment TEXT,                     -- HR rad etganda yozgan sabab
+    handled_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT

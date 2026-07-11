@@ -105,7 +105,8 @@ class StaffReg(StatesGroup):
     role = State()           # 4  Yo'nalish (rol)
     address = State()        # 4  Manzil
     branch = State()         # 5  Filial (admin ro'yxatidan)
-    work_hours = State()     # 6  Ish vaqti (dan-gacha)
+    shift = State()          # 6  Smena (kunduzgi/kechki/qo'sh)
+    work_hours = State()     # 7  Ish vaqti (dan-gacha)
     salary = State()         # 7  Oylik
     rest_day = State()       # 8  Dam olish kuni
     uniform = State()        # 9  Forma bormi
@@ -203,3 +204,13 @@ class CandidateMessageForm(StatesGroup):
 class ManagerMessageForm(StatesGroup):
     """Filial rahbari HR ga xabar yozadi."""
     text = State()
+
+
+class TerminationForm(StatesGroup):
+    """Filial rahbari/direktor xodimni ishdan bo'shatish sababini yozadi."""
+    reason = State()
+
+
+class TerminationRejectForm(StatesGroup):
+    """HR ishdan bo'shatish so'rovini rad etadi — sababini yozadi."""
+    reason = State()

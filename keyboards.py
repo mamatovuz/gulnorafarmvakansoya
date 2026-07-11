@@ -33,12 +33,15 @@ def main_menu(role, has_applied=False):
     ko'rinadi. Ariza topshirgach yoki rol berilgach to'liq menyu chiqadi.
     """
     b = ReplyKeyboardBuilder()
-    b.button(text="📝 Ishga ariza topshirish")
-    b.button(text="🏢 Gulnora Farm hodimi")
-    # Nomzod hali ariza topshirmagan bo'lsa — faqat shu 2 ta tugma
-    if role == ROLE_CANDIDATE and not has_applied:
-        b.adjust(1)
-        return b.as_markup(resize_keyboard=True)
+    # «Ishga ariza topshirish» va «Gulnora Farm hodimi» tugmalari faqat nomzodga
+    # ko'rinadi. Xodim sifatida tasdiqlangach (rol berilgach) ular olib tashlanadi.
+    if role == ROLE_CANDIDATE:
+        b.button(text="📝 Ishga ariza topshirish")
+        b.button(text="🏢 Gulnora Farm hodimi")
+        # Nomzod hali ariza topshirmagan bo'lsa — faqat shu 2 ta tugma
+        if not has_applied:
+            b.adjust(1)
+            return b.as_markup(resize_keyboard=True)
     b.button(text="💼 Vakansiyalar")
     # Ro'yxatdan o'tgan (tasdiqlangan) xodimlar uchun davomat
     if role in EMPLOYEE_ROLES:
@@ -608,6 +611,23 @@ def pharmacist_manage_kb(user_id, uniform_status=None):
     return b.as_markup()
 
 
+def staff_fire_kb(user_id):
+    """Xodim profili tagida «Ishdan bo'shatish» tugmasi (rahbar/direktor)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🚫 Ishdan bo'shatish", callback_data=f"fire:{user_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def termination_actions_kb(rid):
+    """HR uchun: ishdan bo'shatish so'rovini tasdiqlash / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"tacc:{rid}")
+    b.button(text="❌ Rad etish", callback_data=f"trej:{rid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
 def manager_request_actions_kb(request_id, kind):
     b = InlineKeyboardBuilder()
     if kind == "vacancy":
@@ -650,6 +670,7 @@ def director_menu():
     b = ReplyKeyboardBuilder()
     b.button(text="📊 Direktor statistikasi")
     b.button(text="👥 Xodimlar statistikasi")
+    b.button(text="👥 Filial xodimlari")
     b.button(text="🏢 Filiallar kesimi")
     b.button(text="📥 Arizalar kesimi")
     b.button(text="📍 Davomat")
@@ -658,7 +679,7 @@ def director_menu():
     b.button(text="📈 Taqqoslash")
     b.button(text="📑 Hisobot (Excel)")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -850,11 +871,44 @@ def staff_role_kb():
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
-def staff_work_hours_kb():
+# Smena tugmalari va ularga mos standart ish vaqti
+STAFF_SHIFT_DAY = "☀️ Kunduzgi smena"
+STAFF_SHIFT_NIGHT = "🌙 Kechki smena"
+STAFF_SHIFT_DOUBLE = "🔄 Qo'sh smenali"
+STAFF_HOURS_CUSTOM = "✏️ Boshqa vaqt (custom)"
+
+# Smena -> (standart ish vaqti tugmasi matni, toza vaqt)
+SHIFT_PRESETS = {
+    STAFF_SHIFT_DAY: ("🕗 08:00 - 17:00", "08:00 - 17:00"),
+    STAFF_SHIFT_NIGHT: ("🕑 14:00 - 00:00", "14:00 - 00:00"),
+}
+
+
+def staff_shift_kb():
     return _choices(
-        ["🕘 09:00 - 18:00", "🕗 08:00 - 20:00", "🕙 10:00 - 22:00", "🔄 Smenali"],
-        row=2,
+        [STAFF_SHIFT_DAY, STAFF_SHIFT_NIGHT, STAFF_SHIFT_DOUBLE], row=2
     )
+
+
+def staff_work_hours_kb(shift=None):
+    """Tanlangan smenaga qarab standart vaqt + custom tugmasi."""
+    if shift == STAFF_SHIFT_DAY:
+        options = [SHIFT_PRESETS[STAFF_SHIFT_DAY][0], STAFF_HOURS_CUSTOM]
+    elif shift == STAFF_SHIFT_NIGHT:
+        options = [SHIFT_PRESETS[STAFF_SHIFT_NIGHT][0], STAFF_HOURS_CUSTOM]
+    elif shift == STAFF_SHIFT_DOUBLE:
+        options = [
+            SHIFT_PRESETS[STAFF_SHIFT_DAY][0],
+            SHIFT_PRESETS[STAFF_SHIFT_NIGHT][0],
+            STAFF_HOURS_CUSTOM,
+        ]
+    else:
+        options = [
+            SHIFT_PRESETS[STAFF_SHIFT_DAY][0],
+            SHIFT_PRESETS[STAFF_SHIFT_NIGHT][0],
+            STAFF_HOURS_CUSTOM,
+        ]
+    return _choices(options, row=2)
 
 
 def staff_rest_day_kb():

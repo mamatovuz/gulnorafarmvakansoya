@@ -10,6 +10,7 @@ from database.db import (
 )
 from states import (
     ManagerVacancyForm, TechIssueForm, CommentForm, ManagerMessageForm,
+    TerminationForm,
 )
 import keyboards as kb
 from utils import (
@@ -193,18 +194,26 @@ async def manager_my_request_view(call: CallbackQuery):
 
 @router.message(F.text == "👥 Filial xodimlari")
 async def manager_branch_employees(message: Message):
-    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    """Filial rahbari, direktor yoki admin o'z filialidagi xodimlarni ko'radi.
+    Xodim ustiga bosilsa — ma'lumot va «Ishdan bo'shatish» tugmasi chiqadi."""
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_ADMIN)
     if not user:
         return
-    branch_id = await _manager_branch_id(user)
-    if not branch_id:
+    if user["role"] == ROLE_DIRECTOR:
+        branch_id = await _director_branch_id(user)
+        prefix = "diremp"
+    else:
+        branch_id = await _manager_branch_id(user)
+        prefix = "mgremp"
+    if not branch_id and user["role"] == ROLE_MANAGER:
         await message.answer("Sizga filial biriktirilmagan. HR yoki admin bilan bog'laning.")
         return
-    branch = await q.get_branch(branch_id)
+    branch = await q.get_branch(branch_id) if branch_id else None
     employees = await q.list_employee_profiles(branch_id=branch_id)
+    branch_label = branch["name"] if branch else "Barcha filiallar"
     if not employees:
         await message.answer(
-            f"👥 <b>{branch['name'] if branch else 'Filial'} xodimlari</b>\n\n"
+            f"👥 <b>{branch_label} xodimlari</b>\n\n"
             "Bu filialga hali xodim profili biriktirilmagan."
         )
         return
@@ -212,15 +221,15 @@ async def manager_branch_employees(message: Message):
     pharmacists = [e for e in employees if e.get("role") == ROLE_PHARMACIST]
     no_uniform = [e for e in employees if e.get("uniform_status") == "no"]
     text = (
-        f"👥 <b>{branch['name'] if branch else 'Filial'} xodimlari</b>\n\n"
+        f"👥 <b>{branch_label} xodimlari</b>\n\n"
         f"Jami: <b>{len(employees)}</b>\n"
         f"💊 Farmatsevtlar: <b>{len(pharmacists)}</b>\n"
         f"👕 Formasi yo'q: <b>{len(no_uniform)}</b>\n\n"
-        "Ro'yxat:"
+        "Ma'lumot va boshqarish uchun xodimni tanlang:"
     )
     await message.answer(
         text,
-        reply_markup=kb.employee_profiles_list_kb(employees[:30], prefix="mgremp"),
+        reply_markup=kb.employee_profiles_list_kb(employees[:30], prefix=prefix),
     )
 
 
@@ -235,7 +244,10 @@ async def manager_employee_view(call: CallbackQuery):
     if not profile or (user["role"] != ROLE_ADMIN and profile.get("branch_id") != branch_id):
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    await call.message.answer(employee_profile_text(profile))
+    await call.message.answer(
+        employee_profile_text(profile),
+        reply_markup=kb.staff_fire_kb(profile["user_id"]),
+    )
     await call.answer()
 
 
@@ -419,6 +431,113 @@ async def director_panel(message: Message):
         "📈 <b>Direktor paneli</b>\nKerakli statistikani tanlang:",
         reply_markup=kb.director_menu(),
     )
+
+
+async def _director_branch_id(user):
+    """Direktorning filiali. Biriktirilmagan bo'lsa None (barcha filiallar)."""
+    if user.get("branch_id"):
+        return user["branch_id"]
+    profile = await q.get_employee_profile(user["id"])
+    return profile.get("branch_id") if profile else None
+
+
+@router.callback_query(F.data.startswith("diremp:"))
+async def director_employee_view(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    profile = await q.get_employee_profile(int(call.data.split(":")[1]))
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    if user["role"] == ROLE_DIRECTOR:
+        branch_id = await _director_branch_id(user)
+        if branch_id and profile.get("branch_id") != branch_id:
+            await call.answer("Bu xodim sizning filialingizga tegishli emas.", show_alert=True)
+            return
+    await call.message.answer(
+        employee_profile_text(profile),
+        reply_markup=kb.staff_fire_kb(profile["user_id"]),
+    )
+    await call.answer()
+
+
+# ---------------- ISHDAN BO'SHATISH (rahbar/direktor -> HR) ----------------
+@router.callback_query(F.data.startswith("fire:"))
+async def fire_start(call: CallbackQuery, state: FSMContext):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_MANAGER, ROLE_DIRECTOR, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    emp_user_id = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(emp_user_id)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    # O'zini bo'shata olmaydi
+    if profile.get("user_id") == user["id"]:
+        await call.answer("O'zingizni ishdan bo'shata olmaysiz.", show_alert=True)
+        return
+    # Filial cheklovi (admin uchun cheklov yo'q)
+    if user["role"] == ROLE_MANAGER:
+        branch_id = await _manager_branch_id(user)
+        if branch_id and profile.get("branch_id") != branch_id:
+            await call.answer("Bu xodim sizning filialingizga tegishli emas.", show_alert=True)
+            return
+    elif user["role"] == ROLE_DIRECTOR:
+        branch_id = await _director_branch_id(user)
+        if branch_id and profile.get("branch_id") != branch_id:
+            await call.answer("Bu xodim sizning filialingizga tegishli emas.", show_alert=True)
+            return
+    await state.set_state(TerminationForm.reason)
+    await state.update_data(fire_emp_user_id=emp_user_id)
+    await call.message.answer(
+        f"🚫 <b>{profile.get('full_name') or 'Xodim'}</b>ni ishdan bo'shatmoqchisiz.\n\n"
+        "✍️ Ishdan bo'shatish <b>sababini yozing</b>. Sabab HR bo'limiga tasdiqlash uchun "
+        "yuboriladi."
+    )
+    await call.answer()
+
+
+@router.message(TerminationForm.reason, F.text)
+async def fire_reason(message: Message, state: FSMContext, bot: Bot):
+    user = await q.get_user(message.from_user.id)
+    data = await state.get_data()
+    await state.clear()
+    emp_user_id = data.get("fire_emp_user_id")
+    profile = await q.get_employee_profile(emp_user_id) if emp_user_id else None
+    if not user or not profile:
+        await message.answer("⛔ So'rov bekor qilindi (xodim topilmadi).")
+        return
+    branch_id = profile.get("branch_id")
+    rid = await q.add_termination_request({
+        "employee_user_id": emp_user_id,
+        "requested_by": user["id"],
+        "branch_id": branch_id,
+        "reason": message.text.strip(),
+    })
+    await q.add_log(
+        message.from_user.id, message.from_user.full_name,
+        "ishdan_boshatish_sorovi", f"#{rid} — {profile.get('full_name')}"
+    )
+    await message.answer(
+        "✅ Ishdan bo'shatish so'rovingiz HR bo'limiga yuborildi.\n"
+        "HR tasdiqlagach xodim ishdan bo'shatiladi."
+    )
+    branch = await q.get_branch(branch_id) if branch_id else None
+    role_word = "Direktor" if user["role"] == ROLE_DIRECTOR else "Filial rahbari"
+    text = (
+        "🚫 <b>Ishdan bo'shatish so'rovi!</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{profile.get('full_name')}</b>\n"
+        f"💼 Lavozim: {profile.get('position') or '-'}\n"
+        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
+        f"🙋 So'rovchi: {user.get('full_name')} ({role_word})\n"
+        f"✍️ Sabab: {message.text.strip()}\n\n"
+        "Bu xodimni ishdan bo'shatishni tasdiqlaysizmi?"
+    )
+    await notify_hr_admin(bot, text, reply_markup=kb.termination_actions_kb(rid))
 
 
 @router.message(F.text == "📊 Direktor statistikasi")
