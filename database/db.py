@@ -282,6 +282,18 @@ CREATE TABLE IF NOT EXISTS positions (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS advance_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,        -- ichki users.id
+    period TEXT NOT NULL,            -- qaysi oy avansi: YYYY-MM
+    full_name TEXT,
+    card_number TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending / confirmed / declined
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    updated_at TEXT DEFAULT (datetime('now','+5 hours')),
+    UNIQUE(user_id, period)
+);
+
 CREATE TABLE IF NOT EXISTS probations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER,

@@ -3,7 +3,7 @@ from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from aiogram.types import BufferedInputFile
 
@@ -96,6 +96,91 @@ def build_users_xlsx(users):
         ])
     _write_sheet(ws, headers, rows)
     return _finish(wb, "foydalanuvchilar")
+
+
+def build_advance_xlsx(rows, period, pay_date=None):
+    """Avans oluvchilar ro'yxati — chiroyli, tushunarli dizayn bilan.
+
+    rows — list_advances() natijasi (ism, karta, filial, lavozim, telefon).
+    period — 'YYYY-MM'. pay_date — to'lov sanasi (masalan '15.07.2026').
+    """
+    thin = Side(style="thin", color="BBBBBB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_fill = PatternFill("solid", fgColor="1B5E20")
+    title_font = Font(bold=True, color="FFFFFF", size=16)
+    sub_font = Font(bold=True, color="1B5E20", size=11)
+    alt_fill = PatternFill("solid", fgColor="E8F5E9")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    headers = ["№", "Ism-familiya", "Karta raqami", "Filial", "Lavozim", "Telefon"]
+    ncols = len(headers)
+    last_col = get_column_letter(ncols)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Avans"
+    ws.sheet_view.showGridLines = False
+
+    # 1-qator: sarlavha banneri
+    ws.merge_cells(f"A1:{last_col}1")
+    c = ws["A1"]
+    c.value = "GULNORA FARM — AVANS OLUVCHILAR RO'YXATI"
+    c.fill = title_fill
+    c.font = title_font
+    c.alignment = center
+    ws.row_dimensions[1].height = 30
+
+    # 2-qator: davr / to'lov sanasi / jami
+    ws.merge_cells(f"A2:{last_col}2")
+    info = f"Davr: {period}"
+    if pay_date:
+        info += f"    |    To'lov sanasi: {pay_date}"
+    info += f"    |    Jami: {len(rows)} nafar"
+    c2 = ws["A2"]
+    c2.value = info
+    c2.font = sub_font
+    c2.alignment = center
+    ws.row_dimensions[2].height = 20
+
+    # 3-qator: ustun sarlavhalari
+    ws.append([])  # 3-qatorga o'tkazish uchun bo'sh — keyin qo'lda yozamiz
+    header_row = 3
+    for i, h in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=i, value=h)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = center
+        cell.border = border
+    ws.row_dimensions[header_row].height = 22
+
+    # Ma'lumot qatorlari
+    for idx, r in enumerate(rows, start=1):
+        row_i = header_row + idx
+        values = [
+            idx,
+            r.get("full_name") or "-",
+            r.get("card_number") or "-",
+            r.get("branch_name") or "-",
+            r.get("position") or "-",
+            r.get("phone") or "-",
+        ]
+        for col_i, val in enumerate(values, start=1):
+            cell = ws.cell(row=row_i, column=col_i, value=val)
+            cell.border = border
+            cell.alignment = center if col_i in (1,) else left
+            if idx % 2 == 0:
+                cell.fill = alt_fill
+        # karta raqami matn sifatida (raqam formatlanmasin)
+        ws.cell(row=row_i, column=3).number_format = "@"
+
+    # Ustun kengliklari
+    widths = [6, 28, 24, 26, 20, 18]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.freeze_panes = f"A{header_row + 1}"
+    return _finish(wb, f"avans_{period}")
 
 
 def build_report_xlsx(stats, branches, vacancies):

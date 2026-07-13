@@ -206,6 +206,11 @@ class ManagerMessageForm(StatesGroup):
     text = State()
 
 
+class AdvanceForm(StatesGroup):
+    """Xodim avans (oldindan to'lov) so'raydi — karta raqami kutilmoqda."""
+    card = State()         # karta raqamini kiritish / tahrirlash
+
+
 class TerminationForm(StatesGroup):
     """Filial rahbari/direktor xodimni ishdan bo'shatish sababini yozadi."""
     reason = State()

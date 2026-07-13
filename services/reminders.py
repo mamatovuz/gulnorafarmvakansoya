@@ -178,3 +178,50 @@ async def location_check_loop(bot: Bot, interval_seconds=60):
         except Exception:
             logger.exception("Periodik joylashuv tekshiruvida xatolik")
         await asyncio.sleep(interval_seconds)
+
+
+# ---------------- AVANS SO'ROVI (har oy belgilangan kunda) ----------------
+async def _run_advance_prompt(bot: Bot):
+    enabled = await q.get_setting("avans_enabled", "1")
+    if str(enabled) != "1":
+        return
+    now = now_tk()
+    try:
+        prompt_day = int(await q.get_setting("avans_prompt_day", "13") or 13)
+    except (TypeError, ValueError):
+        prompt_day = 13
+    if now.day != prompt_day:
+        return
+
+    period = now.strftime("%Y-%m")
+    flag_key = f"avans_prompt_sent:{period}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return  # bu oy allaqachon yuborilgan
+
+    try:
+        pay_day = int(await q.get_setting("avans_day", "15") or 15)
+    except (TypeError, ValueError):
+        pay_day = 15
+
+    ids = await q.advance_employee_tg_ids()
+    text = (
+        "💵 <b>Avans so'rovi</b>\n\n"
+        f"Assalomu alaykum! <b>{pay_day}-sanada</b> avans olishni "
+        "xohlaysizmi?\n\n"
+        "Quyidagi tugmalardan birini tanlang 👇"
+    )
+    for tid in ids:
+        await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period))
+    await q.set_setting(flag_key, "1")
+    logger.info("Avans so'rovi %s ta xodimga yuborildi (%s)", len(ids), period)
+
+
+async def advance_prompt_loop(bot: Bot, interval_seconds=3600):
+    while True:
+        try:
+            await _run_advance_prompt(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Avans so'rovini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)

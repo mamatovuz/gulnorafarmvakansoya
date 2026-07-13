@@ -388,11 +388,12 @@ def hr_menu():
     b.button(text="📍 Davomat")
     b.button(text="⚙️ Davomat sozlamalari")
     b.button(text="🧪 Sinov muddati")
+    b.button(text="💵 Avans")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -509,8 +510,9 @@ def broadcast_target_kb():
     b.button(text="👥 Barchaga", callback_data="bc:all")
     b.button(text="👷 Xodimlarga", callback_data="bc:employee")
     b.button(text="🧑‍💼 Nomzodlarga", callback_data="bc:candidate")
-    b.button(text="🏢 Filial bo'yicha", callback_data="bc:branch")
-    b.adjust(2, 2)
+    b.button(text="🏢 Filial rahbarlariga", callback_data="bc:manager")
+    b.button(text="🏬 Filial bo'yicha", callback_data="bc:branch")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 
@@ -1057,8 +1059,9 @@ def accountant_menu():
     b.button(text="🏢 Filial tanlab ko'rish")
     b.button(text="👥 Xodimlar (oylik/jarima)")
     b.button(text="🛌 Dam olish so'rovlari")
+    b.button(text="💵 Avans oluvchilar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 1, 1)
+    b.adjust(2, 2, 1, 1, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1080,6 +1083,29 @@ def accountant_employee_kb(user_id):
     b.button(text="📋 Jarimalar", callback_data=f"accfines:{user_id}")
     b.button(text="🧾 To'lovlar tarixi", callback_data=f"accpayhist:{user_id}")
     b.adjust(2, 2, 2, 1)
+    return b.as_markup()
+
+
+# ================= AVANS (oldindan to'lov) =================
+def advance_yes_no_kb(period):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha", callback_data=f"avns_yes:{period}")
+    b.button(text="❌ Yo'q", callback_data=f"avns_no:{period}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def advance_confirm_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data="avns_confirm")
+    b.button(text="✏️ Tahrirlash", callback_data="avns_edit")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def advance_send_acc_kb(period):
+    b = InlineKeyboardBuilder()
+    b.button(text="📤 Buxgalterga yuborish", callback_data=f"avns_send:{period}")
     return b.as_markup()
 
 

@@ -20,6 +20,7 @@ from database import queries as q
 from handlers import register_all
 from services.reminders import (
     interview_reminder_loop, probation_reminder_loop, location_check_loop,
+    advance_prompt_loop,
 )
 
 
@@ -62,10 +63,11 @@ async def main():
     reminder_task = asyncio.create_task(interview_reminder_loop(bot))
     probation_task = asyncio.create_task(probation_reminder_loop(bot))
     location_task = asyncio.create_task(location_check_loop(bot))
+    advance_task = asyncio.create_task(advance_prompt_loop(bot))
     try:
         await dp.start_polling(bot)
     finally:
-        for task in (reminder_task, probation_task, location_task):
+        for task in (reminder_task, probation_task, location_task, advance_task):
             task.cancel()
             try:
                 await task

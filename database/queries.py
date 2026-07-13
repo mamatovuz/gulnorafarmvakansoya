@@ -1848,6 +1848,103 @@ async def latest_salary_payment(employee_user_id, period):
         await db.close()
 
 
+# ---------------- AVANS (oldindan to'lov) ----------------
+async def advance_employee_tg_ids():
+    """Avans so'rovi yuboriladigan xodimlar (employee_profiles bor va bloklanmagan)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT DISTINCT u.tg_id
+               FROM employee_profiles ep
+               JOIN users u ON u.id=ep.user_id
+               WHERE u.tg_id IS NOT NULL
+                 AND COALESCE(u.blocked, 0) = 0"""
+        )
+        return [r["tg_id"] for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def upsert_advance_request(user_id, period, full_name, card_number, status):
+    """Xodimning shu oydagi avans so'rovini yaratadi yoki yangilaydi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """INSERT INTO advance_requests
+                   (user_id, period, full_name, card_number, status)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(user_id, period) DO UPDATE SET
+                   full_name=excluded.full_name,
+                   card_number=excluded.card_number,
+                   status=excluded.status,
+                   updated_at=datetime('now','+5 hours')""",
+            (user_id, period, full_name, card_number, status),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_advance_request(user_id, period):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM advance_requests WHERE user_id=? AND period=?",
+            (user_id, period),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_advance_status(user_id, period, status):
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE advance_requests
+               SET status=?, updated_at=datetime('now','+5 hours')
+               WHERE user_id=? AND period=?""",
+            (status, user_id, period),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_advances(period, status="confirmed"):
+    """Avans oluvchilar ro'yxati (Excel uchun): ism, karta, filial, lavozim, telefon."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT ar.*, u.tg_id, u.phone,
+                      ep.position, ep.role AS emp_role,
+                      b.name AS branch_name
+               FROM advance_requests ar
+               JOIN users u ON u.id=ar.user_id
+               LEFT JOIN employee_profiles ep ON ep.user_id=ar.user_id
+               LEFT JOIN branches b ON b.id=ep.branch_id
+               WHERE ar.period=? AND ar.status=?
+               ORDER BY b.name, ar.full_name""",
+            (period, status),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def count_advances(period, status="confirmed"):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) c FROM advance_requests WHERE period=? AND status=?",
+            (period, status),
+        )
+        return (await cur.fetchone())["c"]
+    finally:
+        await db.close()
+
+
 # ---------------- DAM OLISH KUNINI ALMASHTIRISH ----------------
 async def add_dayoff_request(user_id, branch_id, from_day, to_day, reason):
     db = await _conn()
