@@ -10,6 +10,7 @@ ROLE_EMPLOYEE = "employee"    # Oddiy xodim
 ROLE_PHARMACIST = "pharmacist"  # Farmatsevt
 ROLE_DIRECTOR = "director"    # Direktor
 ROLE_ACCOUNTANT = "accountant"  # Buxgalter
+ROLE_IT = "it"                # IT xodim (kadrlar harakati hisoboti)
 ROLE_CANDIDATE = "candidate"  # Nomzod (default)
 
 # Ariza holatlari
@@ -292,6 +293,19 @@ CREATE TABLE IF NOT EXISTS advance_requests (
     created_at TEXT DEFAULT (datetime('now','+5 hours')),
     updated_at TEXT DEFAULT (datetime('now','+5 hours')),
     UNIQUE(user_id, period)
+);
+
+CREATE TABLE IF NOT EXISTS hr_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,     -- hired / left / transferred / name_changed
+    user_id INTEGER,              -- ta'sirlangan xodim (users.id)
+    full_name TEXT,               -- voqea paytidagi (yangi) ism
+    old_value TEXT,               -- eski qiymat (eski ism / eski filial)
+    new_value TEXT,               -- yangi qiymat (yangi ism / yangi filial)
+    branch_id INTEGER,
+    details TEXT,
+    created_by INTEGER,           -- amalni bajargan (users.id)
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS probations (

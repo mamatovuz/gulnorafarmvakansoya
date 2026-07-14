@@ -2121,6 +2121,118 @@ async def branch_manager_tg_ids(branch_id):
         await db.close()
 
 
+# ---------------- KADRLAR HARAKATI (IT paneli hisoboti) ----------------
+async def add_hr_event(event_type, user_id=None, full_name=None, old_value=None,
+                       new_value=None, branch_id=None, details=None, created_by=None):
+    """Kadrlar harakati voqeasini yozadi (hired / left / transferred / name_changed)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """INSERT INTO hr_events
+               (event_type, user_id, full_name, old_value, new_value,
+                branch_id, details, created_by)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (event_type, user_id, full_name, old_value, new_value,
+             branch_id, details, created_by),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def hr_event_counts(start_iso, end_iso=None):
+    """Berilgan davr ichida har bir voqea turi sonini qaytaradi.
+    start_iso <= created_at < end_iso (end_iso berilmasa — hozirgacha)."""
+    db = await _conn()
+    try:
+        sql = ("SELECT event_type, COUNT(*) c FROM hr_events "
+               "WHERE created_at >= ?")
+        params = [start_iso]
+        if end_iso:
+            sql += " AND created_at < ?"
+            params.append(end_iso)
+        sql += " GROUP BY event_type"
+        cur = await db.execute(sql, params)
+        rows = await cur.fetchall()
+        result = {"hired": 0, "left": 0, "transferred": 0, "name_changed": 0}
+        for r in rows:
+            result[r["event_type"]] = r["c"]
+        return result
+    finally:
+        await db.close()
+
+
+async def list_hr_events(event_type, start_iso, end_iso=None, limit=50):
+    """Davr ichidagi ma'lum turdagi voqealar ro'yxati (yangidan eskiga)."""
+    db = await _conn()
+    try:
+        sql = ("SELECT * FROM hr_events WHERE event_type=? AND created_at >= ?")
+        params = [event_type, start_iso]
+        if end_iso:
+            sql += " AND created_at < ?"
+            params.append(end_iso)
+        sql += f" ORDER BY id DESC LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def count_active_probations():
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) c FROM probations WHERE status='active'"
+        )
+        return (await cur.fetchone())["c"]
+    finally:
+        await db.close()
+
+
+async def rename_user(user_id, new_name):
+    """Xodim ism-familiyasini o'zgartiradi. Eski ismni qaytaradi.
+    users.full_name asosiy manba; aktiv sinov yozuvidagi nusxa ham yangilanadi."""
+    db = await _conn()
+    try:
+        cur = await db.execute("SELECT full_name FROM users WHERE id=?", (user_id,))
+        row = await cur.fetchone()
+        old_name = row["full_name"] if row else None
+        await db.execute(
+            "UPDATE users SET full_name=? WHERE id=?", (new_name, user_id)
+        )
+        await db.execute(
+            "UPDATE probations SET full_name=? WHERE user_id=? AND status='active'",
+            (new_name, user_id),
+        )
+        await db.commit()
+        return old_name
+    finally:
+        await db.close()
+
+
+async def set_employee_branch(user_id, branch_id):
+    """Xodimni boshqa filialga ko'chiradi (users va profil). Eski filialni qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT branch_id FROM employee_profiles WHERE user_id=?", (user_id,)
+        )
+        row = await cur.fetchone()
+        old_branch = row["branch_id"] if row else None
+        await db.execute(
+            "UPDATE users SET branch_id=? WHERE id=?", (branch_id, user_id)
+        )
+        await db.execute(
+            "UPDATE employee_profiles SET branch_id=?, updated_at=datetime('now','+5 hours') "
+            "WHERE user_id=?",
+            (branch_id, user_id),
+        )
+        await db.commit()
+        return old_branch
+    finally:
+        await db.close()
+
+
 async def probation_attendance_stats(user_id, start_iso, end_iso):
     """Sinov davri ichida kelgan kunlar, kechikish/erta ketishlar soni."""
     db = await _conn()

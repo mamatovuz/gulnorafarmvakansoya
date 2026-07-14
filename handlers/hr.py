@@ -415,6 +415,11 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id, start
         message.from_user.id, me["full_name"], "ariza_qabul",
         f"Ariza #{aid} · sinov #{pid}"
     )
+    # Kadrlar harakati (IT hisoboti): ishga kirdi
+    await q.add_hr_event(
+        "hired", user_id=a["user_id"], full_name=a.get("full_name"),
+        branch_id=branch_id, details=f"ariza #{aid}", created_by=me["id"],
+    )
 
     branch = await q.get_branch(branch_id) if branch_id else None
     branch_name = branch["name"] if branch else "—"
@@ -889,6 +894,11 @@ async def termination_accept(call: CallbackQuery, bot: Bot):
         return
     me = await actor(call.from_user.id)
     await q.set_termination_request_status(rid, "approved", handled_by=me["id"])
+    # Kadrlar harakati (IT hisoboti): ishdan ketdi — profil o'chishidan oldin yozamiz
+    await q.add_hr_event(
+        "left", user_id=req["employee_user_id"], full_name=req.get("employee_name"),
+        branch_id=req.get("branch_id"), details=f"so'rov #{rid}", created_by=me["id"],
+    )
     # Xodimni ishdan bo'shatamiz (profil o'chadi, rol nomzodga qaytadi)
     await q.fire_employee(req["employee_user_id"])
     await q.add_log(

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from database import queries as q
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
 )
 from states import (
     BranchForm, ChannelForm, RoleForm, UserManageForm, SettingsForm,
@@ -21,6 +21,7 @@ ROLE_NAMES = {
     ROLE_HR: "🧑‍💼 HR",
     ROLE_DIRECTOR: "👔 Direktor",
     ROLE_ACCOUNTANT: "🧮 Buxgalter",
+    ROLE_IT: "🖥 IT xodim",
     ROLE_MANAGER: "🏢 Filial rahbari",
     ROLE_PHARMACIST: "💊 Farmatsevt",
     ROLE_EMPLOYEE: "👷 Oddiy xodim",
@@ -497,11 +498,17 @@ async def role_set(call: CallbackQuery, state: FSMContext, bot: Bot):
     await _apply_role(call.message, state, bot, tg_id, role, call=call)
 
 
+EMPLOYEE_ROLES = (
+    ROLE_MANAGER, ROLE_PHARMACIST, ROLE_DIRECTOR, ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
+)
+
+
 async def _apply_role(message, state, bot, tg_id, role, call=None):
     target = await q.get_user(tg_id)
     branch_id = target.get("branch_id") if target else None
+    prev_role = target.get("role") if target else None
     await q.set_role(tg_id, role, branch_id)
-    if role in (ROLE_MANAGER, ROLE_PHARMACIST, ROLE_DIRECTOR, ROLE_EMPLOYEE, ROLE_ACCOUNTANT):
+    if role in EMPLOYEE_ROLES:
         await q.upsert_employee_profile(
             user_id=target["id"],
             application_id=None,
@@ -510,6 +517,12 @@ async def _apply_role(message, state, bot, tg_id, role, call=None):
             branch_id=branch_id,
             uniform_status="unknown",
         )
+        # Nomzoddan xodimga o'tkazilsa — bu "ishga kirdi" voqeasi (IT hisoboti uchun)
+        if prev_role == ROLE_CANDIDATE and target:
+            await q.add_hr_event(
+                "hired", user_id=target["id"], full_name=target.get("full_name"),
+                branch_id=branch_id, details="admin rol berdi",
+            )
     await state.clear()
     me = await q.get_user(message.chat.id if call is None else call.from_user.id)
     actor_name = me["full_name"] if me else "?"

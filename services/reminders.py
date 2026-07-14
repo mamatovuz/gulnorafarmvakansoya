@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT
 import keyboards as kb
 from utils import safe_send, days_left_until, probation_text, iso_to_display, now_tk
 
@@ -214,6 +214,46 @@ async def _run_advance_prompt(bot: Bot):
         await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period))
     await q.set_setting(flag_key, "1")
     logger.info("Avans so'rovi %s ta xodimga yuborildi (%s)", len(ids), period)
+
+
+# ---------------- IT KADRLAR HISOBOTI (har oy 14-sanada) ----------------
+async def _run_it_report(bot: Bot):
+    """Har oyning 14-sanasida tugagan davr (o'tgan 14 -> shu 14) bo'yicha
+    kadrlar harakati hisobotini barcha IT xodim va adminlarga yuboradi."""
+    now = now_tk()
+    if now.day != 14:
+        return
+    period = now.strftime("%Y-%m")
+    flag_key = f"it_report_sent:{period}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return  # bu oy allaqachon yuborilgan
+
+    # Lazy import — servis handlerlarga bog'liq bo'lib qolmasligi uchun
+    from handlers.it import (
+        period_start_for, prev_period_start, build_report_text,
+    )
+    current_start = period_start_for(now)          # shu oy 14-sanasi
+    start = prev_period_start(current_start)        # o'tgan oy 14-sanasi
+    text = "🗓 <b>Oylik kadrlar hisoboti (14-sana)</b>\n\n" + \
+        await build_report_text(start, end_dt=current_start)
+
+    ids = set(await q.all_user_tg_ids(role=ROLE_IT))
+    ids |= set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    for tid in ids:
+        await safe_send(bot, tid, text)
+    await q.set_setting(flag_key, "1")
+    logger.info("IT kadrlar hisoboti %s ta oluvchiga yuborildi (%s)", len(ids), period)
+
+
+async def it_report_loop(bot: Bot, interval_seconds=3600):
+    while True:
+        try:
+            await _run_it_report(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("IT kadrlar hisobotini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
 
 
 async def advance_prompt_loop(bot: Bot, interval_seconds=3600):

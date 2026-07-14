@@ -545,6 +545,12 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         since=reg.get("since"),
     )
     await q.add_log(call.from_user.id, me["full_name"], "hodim_tasdiqlandi", f"#{rid}")
+    # Kadrlar harakati (IT hisoboti): ishga kirdi
+    await q.add_hr_event(
+        "hired", user_id=reg["user_id"], full_name=reg.get("full_name"),
+        branch_id=reg.get("branch_id"), details=f"hodim ro'yxati #{rid}",
+        created_by=me["id"],
+    )
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:

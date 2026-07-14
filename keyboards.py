@@ -8,7 +8,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED,
 )
 
@@ -59,6 +59,8 @@ def main_menu(role, has_applied=False):
         b.button(text="📈 Direktor panel")
     if role == ROLE_ACCOUNTANT:
         b.button(text="🧮 Buxgalter panel")
+    if role == ROLE_IT:
+        b.button(text="🖥 IT xodim panel")
     if role == ROLE_HR:
         b.button(text="👨‍💼 HR panel")
     if role == ROLE_ADMIN:
@@ -66,6 +68,7 @@ def main_menu(role, has_applied=False):
         b.button(text="👑 Admin panel")
         b.button(text="📈 Direktor panel")
         b.button(text="🧮 Buxgalter panel")
+        b.button(text="🖥 IT xodim panel")
     b.adjust(2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
@@ -848,6 +851,7 @@ def roles_pick_kb():
     b.button(text="🧑‍💼 HR", callback_data="setrole:hr")
     b.button(text="👔 Direktor", callback_data="setrole:director")
     b.button(text="🧮 Buxgalter", callback_data="setrole:accountant")
+    b.button(text="🖥 IT xodim", callback_data="setrole:it")
     b.button(text="🏢 Filial rahbari", callback_data="setrole:manager")
     b.button(text="💊 Farmatsevt", callback_data="setrole:pharmacist")
     b.button(text="👷 Oddiy xodim", callback_data="setrole:employee")
@@ -1083,6 +1087,33 @@ def accountant_employee_kb(user_id):
     b.button(text="📋 Jarimalar", callback_data=f"accfines:{user_id}")
     b.button(text="🧾 To'lovlar tarixi", callback_data=f"accpayhist:{user_id}")
     b.adjust(2, 2, 2, 1)
+    return b.as_markup()
+
+
+# ================= IT XODIM PANELI =================
+def it_menu():
+    b = ReplyKeyboardBuilder()
+    b.button(text="📊 Oylik hisobot (14-sana)")
+    b.button(text="👥 Xodimlar")
+    b.button(text="✏️ Ism o'zgartirishlar")
+    b.button(text="🏠 Asosiy menyu")
+    b.adjust(1, 2, 1)
+    return b.as_markup(resize_keyboard=True)
+
+
+def it_employee_kb(user_id):
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Ismini o'zgartirish", callback_data=f"itren:{user_id}")
+    b.button(text="🔄 Filialga ko'chirish", callback_data=f"itmove:{user_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def it_branch_pick_kb(branches, user_id):
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"itmovebr:{user_id}:{br['id']}")
+    b.adjust(2)
     return b.as_markup()
 
 

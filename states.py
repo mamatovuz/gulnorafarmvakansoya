@@ -216,6 +216,11 @@ class TerminationForm(StatesGroup):
     reason = State()
 
 
+class ITForm(StatesGroup):
+    """IT xodim: xodim ism-familiyasini o'zgartiradi."""
+    rename = State()
+
+
 class TerminationRejectForm(StatesGroup):
     """HR ishdan bo'shatish so'rovini rad etadi — sababini yozadi."""
     reason = State()
