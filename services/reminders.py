@@ -102,10 +102,11 @@ async def _check_probations(bot: Bot):
         if left is None:
             continue
 
+        noun = "O'rganish muddati" if p.get("kind") == "learner" else "Sinov muddati"
         # Tugashiga 3 kun (yoki kamroq) qolganda — bir marta HR ga xabar
         if 0 < left <= 3 and not p.get("hr_3day_sent"):
             text = (
-                "⏳ <b>Sinov muddati tugashiga oz qoldi</b>\n\n"
+                f"⏳ <b>{noun} tugashiga oz qoldi</b>\n\n"
                 f"👤 <b>{p.get('full_name') or '-'}</b>\n"
                 f"💼 Lavozim: {p.get('position') or '-'}\n"
                 f"🏢 Filial: {p.get('branch_name') or '-'}\n"
@@ -122,7 +123,7 @@ async def _check_probations(bot: Bot):
             stats = await q.probation_attendance_stats(
                 p["user_id"], p.get("start_date"), p.get("end_date")
             )
-            header = "🏁 <b>Sinov muddati tugadi</b>\n\n"
+            header = f"🏁 <b>{noun} tugadi</b>\n\n"
             body = probation_text({**p, "status": "finished"}, stats=stats)
             for tid in hr_ids:
                 await safe_send(bot, tid, header + body)

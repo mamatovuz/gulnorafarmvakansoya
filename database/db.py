@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS applications (
     phone TEXT,
     resume_file_id TEXT,
     resume_type TEXT,
+    offered_salary TEXT,          -- kelishuvdagi joriy oylik summasi
+    salary_offer_by TEXT,         -- oxirgi taklifni kim berdi: hr / candidate
+    salary_status TEXT,           -- NULL / pending / agreed
     status TEXT NOT NULL DEFAULT 'new',
     hr_comment TEXT,
     handled_by INTEGER,
@@ -318,6 +321,7 @@ CREATE TABLE IF NOT EXISTS probations (
     start_date TEXT,      -- ISO: YYYY-MM-DD
     end_date TEXT,        -- ISO: YYYY-MM-DD (start + 14 kun)
     days INTEGER NOT NULL DEFAULT 15,
+    kind TEXT NOT NULL DEFAULT 'trial',      -- trial (sinov) / learner (o'rganuvchi)
     status TEXT NOT NULL DEFAULT 'active',   -- active / finished
     manager_notified INTEGER NOT NULL DEFAULT 0,
     hr_3day_sent INTEGER NOT NULL DEFAULT 0,
@@ -369,6 +373,11 @@ APP_COLUMNS = {
     "languages": "TEXT", "work_intent": "TEXT", "reason": "TEXT",
     "resume_file_id": "TEXT", "resume_type": "TEXT",
     "favorite": "INTEGER NOT NULL DEFAULT 0",
+    "offered_salary": "TEXT", "salary_offer_by": "TEXT", "salary_status": "TEXT",
+}
+
+PROBATION_COLUMNS = {
+    "kind": "TEXT NOT NULL DEFAULT 'trial'",
 }
 
 INTERVIEW_COLUMNS = {
@@ -530,6 +539,13 @@ async def _migrate(db):
         for col, coltype in STAFF_REG_COLUMNS.items():
             if col not in existing:
                 await db.execute(f"ALTER TABLE staff_regs ADD COLUMN {col} {coltype}")
+
+    cur = await db.execute("PRAGMA table_info(probations)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing:
+        for col, coltype in PROBATION_COLUMNS.items():
+            if col not in existing:
+                await db.execute(f"ALTER TABLE probations ADD COLUMN {col} {coltype}")
     await db.commit()
 
 

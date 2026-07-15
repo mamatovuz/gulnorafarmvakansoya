@@ -191,9 +191,16 @@ class SettingsForm(StatesGroup):
 
 
 class ProbationForm(StatesGroup):
-    """HR ariza qabul qilganda sinov muddatini belgilaydi."""
+    """HR ariza qabul qilganda sinov/o'rganuvchi muddatini belgilaydi."""
     branch = State()       # qaysi filialga chiqadi
-    start_date = State()   # sinov qaysi kundan boshlanadi
+    start_date = State()   # muddat qaysi kundan boshlanadi
+    days = State()         # o'rganuvchi uchun — necha kun
+
+
+class SalaryNegoForm(StatesGroup):
+    """Oylik kelishuvi: HR taklif beradi, nomzod boshqa summa taklif qiladi."""
+    hr_amount = State()         # HR taklif/qarshi taklif summasini yozadi
+    candidate_amount = State()  # nomzod boshqa summa yozadi
 
 
 class CandidateMessageForm(StatesGroup):

@@ -2021,8 +2021,8 @@ async def add_probation(data):
         cur = await db.execute(
             """INSERT INTO probations
                (application_id, user_id, branch_id, full_name, position,
-                start_date, end_date, days, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                start_date, end_date, days, kind, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("application_id"),
                 data.get("user_id"),
@@ -2032,6 +2032,7 @@ async def add_probation(data):
                 data.get("start_date"),
                 data.get("end_date"),
                 data.get("days", 15),
+                data.get("kind", "trial"),
                 data.get("created_by"),
             ),
         )
@@ -2058,17 +2059,21 @@ async def get_probation(pid):
         await db.close()
 
 
-async def list_probations(status=None, limit=30):
+async def list_probations(status=None, limit=30, kind=None):
     db = await _conn()
     try:
         sql = """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg
                  FROM probations p
                  LEFT JOIN branches b ON b.id=p.branch_id
-                 LEFT JOIN users u ON u.id=p.user_id"""
+                 LEFT JOIN users u ON u.id=p.user_id
+                 WHERE 1=1"""
         params = []
         if status:
-            sql += " WHERE p.status=?"
+            sql += " AND p.status=?"
             params.append(status)
+        if kind:
+            sql += " AND p.kind=?"
+            params.append(kind)
         sql += " ORDER BY p.end_date ASC, p.id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -2078,8 +2083,8 @@ async def list_probations(status=None, limit=30):
         await db.close()
 
 
-async def list_active_probations():
-    return await list_probations(status="active", limit=200)
+async def list_active_probations(kind=None):
+    return await list_probations(status="active", limit=200, kind=kind)
 
 
 async def mark_probation_flag(pid, flag):
@@ -2178,13 +2183,49 @@ async def list_hr_events(event_type, start_iso, end_iso=None, limit=50):
         await db.close()
 
 
-async def count_active_probations():
+async def count_active_probations(kind=None):
+    db = await _conn()
+    try:
+        sql = "SELECT COUNT(*) c FROM probations WHERE status='active'"
+        params = []
+        if kind:
+            sql += " AND kind=?"
+            params.append(kind)
+        cur = await db.execute(sql, params)
+        return (await cur.fetchone())["c"]
+    finally:
+        await db.close()
+
+
+# ---------------- OYLIK KELISHUVI (nomzod ⇄ HR) ----------------
+async def set_salary_offer(aid, amount, offer_by):
+    """Arizaga oylik taklifini yozadi (pending). offer_by: 'hr' yoki 'candidate'."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE applications SET offered_salary=?, salary_offer_by=?, "
+            "salary_status='pending' WHERE id=?",
+            (amount, offer_by, aid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def agree_salary(aid):
+    """Joriy taklifni kelishilgan deb belgilaydi va kelishilgan summani qaytaradi."""
     db = await _conn()
     try:
         cur = await db.execute(
-            "SELECT COUNT(*) c FROM probations WHERE status='active'"
+            "SELECT offered_salary FROM applications WHERE id=?", (aid,)
         )
-        return (await cur.fetchone())["c"]
+        row = await cur.fetchone()
+        amount = row["offered_salary"] if row else None
+        await db.execute(
+            "UPDATE applications SET salary_status='agreed' WHERE id=?", (aid,)
+        )
+        await db.commit()
+        return amount
     finally:
         await db.close()
 

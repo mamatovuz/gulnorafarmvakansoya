@@ -458,13 +458,34 @@ def application_actions_kb(aid, favorite=False):
     b = InlineKeyboardBuilder()
     b.button(text="👁 Batafsil", callback_data=f"appview:{aid}")
     b.button(text="📅 Suhbatga chaqirish", callback_data=f"appint:{aid}")
-    b.button(text="✅ Ishga qabul", callback_data=f"appacc:{aid}")
+    b.button(text="✅ Ishga qabul", callback_data=f"apphire:{aid}")
+    b.button(text="🧪 Sinovga qabul", callback_data=f"apptrial:{aid}")
+    b.button(text="🎓 O'rganuvchi qilib qabul", callback_data=f"applearn:{aid}")
+    b.button(text="💰 Oylik taklif qilish", callback_data=f"appsal:{aid}")
     b.button(text="❌ Rad etish", callback_data=f"apprej:{aid}")
     b.button(text="📝 Izoh qoldirish", callback_data=f"appcom:{aid}")
     b.button(text="💬 Nomzodga xabar", callback_data=f"appmsg:{aid}")
     fav_label = "⭐ Saralangan ✓" if favorite else "⭐ Saralashga qo'shish"
     b.button(text=fav_label, callback_data=f"appfav:{aid}")
-    b.adjust(1, 2, 2, 1, 1)
+    b.adjust(1, 2, 1, 1, 1, 2, 1)
+    return b.as_markup()
+
+
+def candidate_salary_offer_kb(aid):
+    """Nomzodga: HR taklif qilgan oylikni tasdiqlash yoki boshqa summa taklif qilish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"candsal_ok:{aid}")
+    b.button(text="✏️ Boshqa summa", callback_data=f"candsal_other:{aid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def hr_salary_offer_kb(aid):
+    """HR ga: nomzod taklif qilgan boshqa summani tasdiqlash yoki qarshi taklif berish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"hrsal_ok:{aid}")
+    b.button(text="✏️ Boshqa summa", callback_data=f"hrsal_other:{aid}")
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -1099,6 +1120,16 @@ def it_menu():
     b.button(text="🏠 Asosiy menyu")
     b.adjust(1, 2, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+def it_employee_branch_kb(branches):
+    """IT panel — «Xodimlar» bosilganda filiallar ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"itempbr:{br['id']}")
+    b.button(text="➖ Filialsiz xodimlar", callback_data="itempbr:0")
+    b.adjust(2)
+    return b.as_markup()
 
 
 def it_employee_kb(user_id):

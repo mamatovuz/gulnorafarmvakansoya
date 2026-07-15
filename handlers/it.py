@@ -46,7 +46,8 @@ async def build_report_text(start_dt, end_dt=None):
     start_iso = _iso(start_dt)
     end_iso = _iso(end_dt) if end_dt else None
     counts = await q.hr_event_counts(start_iso, end_iso)
-    active_prob = await q.count_active_probations()
+    active_prob = await q.count_active_probations(kind="trial")
+    active_learner = await q.count_active_probations(kind="learner")
 
     if end_dt:
         period_line = (
@@ -66,6 +67,7 @@ async def build_report_text(start_dt, end_dt=None):
         f"🔴 Ishdan ketdi: <b>{counts['left']}</b>",
         f"🔄 Boshqa filialga ko'chirildi: <b>{counts['transferred']}</b>",
         f"🧪 Sinovdagi xodimlar (hozirda): <b>{active_prob}</b>",
+        f"🎓 O'rganuvchilar (hozirda): <b>{active_learner}</b>",
         f"✏️ Ism o'zgartirishlar: <b>{counts['name_changed']}</b>",
     ]
     return "\n".join(lines)
@@ -91,8 +93,15 @@ async def it_panel(message: Message, state: FSMContext):
         await message.answer("⛔ Sizda IT xodim paneli uchun ruxsat yo'q.")
         return
     await state.clear()
+    trial_cnt = await q.count_active_probations(kind="trial")
+    learner_cnt = await q.count_active_probations(kind="learner")
     await message.answer(
-        "🖥 <b>IT xodim paneli</b>\nKerakli bo'limni tanlang:",
+        "🖥 <b>IT xodim paneli</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"🧪 Sinov muddatidagilar: <b>{trial_cnt}</b> ta\n"
+        f"🎓 O'rganuvchilar: <b>{learner_cnt}</b> ta\n"
+        "━━━━━━━━━━━━\n"
+        "Kerakli bo'limni tanlang:",
         reply_markup=kb.it_menu(),
     )
 
@@ -106,20 +115,47 @@ async def it_report(message: Message):
     await message.answer(text)
 
 
-# ---------------- XODIMLAR (ism / filial) ----------------
+# ---------------- XODIMLAR (filial -> filial xodimlari) ----------------
 @router.message(F.text == "👥 Xodimlar")
 async def it_employees(message: Message):
     if not await _is_it(message.from_user.id):
         return
-    employees = await q.list_employee_profiles()
-    if not employees:
-        await message.answer("Hali xodim profillari yo'q.")
+    branches = await q.list_branches()
+    if not branches:
+        await message.answer("Hali filiallar yo'q.")
         return
     await message.answer(
-        f"👥 <b>Xodimlar</b>\n\nJami: <b>{len(employees)}</b> ta\n"
+        "👥 <b>Xodimlar</b>\n\nAvval <b>filialni</b> tanlang — so'ng o'sha "
+        "filial xodimlari ro'yxati chiqadi:",
+        reply_markup=kb.it_employee_branch_kb(branches),
+    )
+
+
+@router.callback_query(F.data.startswith("itempbr:"))
+async def it_employees_by_branch(call: CallbackQuery):
+    if not await _is_it(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1]) or None
+    if bid:
+        branch = await q.get_branch(bid)
+        branch_name = branch["name"] if branch else "—"
+        employees = await q.list_employee_profiles(branch_id=bid)
+    else:
+        branch_name = "Filialsiz"
+        employees = [e for e in await q.list_employee_profiles() if not e.get("branch_id")]
+    if not employees:
+        await call.message.answer(
+            f"🏢 <b>{branch_name}</b> filialida xodim profillari yo'q."
+        )
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{branch_name}</b>\n\nXodimlar: <b>{len(employees)}</b> ta\n"
         "Ism yoki filialni o'zgartirish uchun xodimni tanlang:",
         reply_markup=kb.employee_profiles_list_kb(employees[:30], prefix="itemp"),
     )
+    await call.answer()
 
 
 @router.callback_query(F.data.startswith("itemp:"))

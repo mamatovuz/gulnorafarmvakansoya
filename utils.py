@@ -441,7 +441,7 @@ def days_left_until(iso):
 
 
 def probation_text(p, stats=None):
-    """Sinov muddati kartochkasi (ixtiyoriy davomat statistikasi bilan)."""
+    """Sinov / o'rganuvchi muddati kartochkasi (ixtiyoriy davomat statistikasi bilan)."""
     left = days_left_until(p.get("end_date"))
     if p.get("status") == "finished" or (left is not None and left < 0):
         state = "🏁 Tugagan"
@@ -449,8 +449,12 @@ def probation_text(p, stats=None):
         state = "⏳ Bugun tugaydi"
     else:
         state = f"🟢 Davom etmoqda ({left} kun qoldi)" if left is not None else "🟢 Davom etmoqda"
+    if p.get("kind") == "learner":
+        title = f"🎓 <b>O'rganuvchi #{p['id']}</b>"
+    else:
+        title = f"🧪 <b>Sinov muddati #{p['id']}</b>"
     lines = [
-        f"🧪 <b>Sinov muddati #{p['id']}</b> — {state}",
+        f"{title} — {state}",
         "━━━━━━━━━━━━",
         f"👤 Xodim: <b>{p.get('full_name') or '-'}</b>",
         f"💼 Lavozim: {p.get('position') or '-'}",

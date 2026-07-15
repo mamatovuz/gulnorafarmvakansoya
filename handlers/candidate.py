@@ -8,7 +8,7 @@ from aiogram.filters import StateFilter
 
 from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ST_NEW
-from states import Apply, RescheduleForm
+from states import Apply, RescheduleForm, SalaryNegoForm
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
@@ -810,3 +810,88 @@ async def interview_reschedule_send(message: Message, state: FSMContext, bot: Bo
                 f"🔄 Nomzod <b>{app['full_name']}</b> (ariza #{app['id']}) "
                 f"boshqa vaqt taklif qildi:\n\n«{message.text.strip()}»",
             )
+
+
+# ---------------- OYLIK KELISHUVI (nomzod tomoni) ----------------
+async def _notify_hr(bot: Bot, text, reply_markup=None):
+    hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
+    admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
+    for tid in set(hr_ids + admin_ids):
+        await safe_send(bot, tid, text, reply_markup=reply_markup)
+
+
+@router.callback_query(F.data.startswith("candsal_ok:"))
+async def candidate_salary_agree(call: CallbackQuery, bot: Bot):
+    """Nomzod HR taklif qilgan oylikni tasdiqlaydi."""
+    aid = int(call.data.split(":")[1])
+    app = await q.get_application(aid)
+    user = await q.get_user(call.from_user.id)
+    if not app or not user or app.get("user_id") != user["id"]:
+        await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    amount = await q.agree_salary(aid)
+    # Profil mavjud bo'lsa — darhol oylikni yozamiz
+    profile = await q.get_employee_profile(user["id"])
+    if profile:
+        await q.update_monthly_salary(user["id"], amount)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ Rahmat! Siz <b>{amount}</b> oylikni tasdiqladingiz. "
+        "HR bo'limi tez orada siz bilan bog'lanadi."
+    )
+    await call.answer("Tasdiqlandi ✅")
+    await _notify_hr(
+        bot,
+        f"✅ <b>Oylik kelishildi</b>\n\n"
+        f"👤 {app.get('full_name')} (ariza #{aid}) siz taklif qilgan oylikni "
+        f"tasdiqladi: <b>{amount}</b>.",
+    )
+
+
+@router.callback_query(F.data.startswith("candsal_other:"))
+async def candidate_salary_counter_start(call: CallbackQuery, state: FSMContext):
+    """Nomzod boshqa summa taklif qilmoqchi."""
+    aid = int(call.data.split(":")[1])
+    app = await q.get_application(aid)
+    user = await q.get_user(call.from_user.id)
+    if not app or not user or app.get("user_id") != user["id"]:
+        await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    await state.set_state(SalaryNegoForm.candidate_amount)
+    await state.update_data(sal_aid=aid)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "✏️ O'zingiz xohlagan oylik summasini yozing (masalan: <b>5 000 000 so'm</b>):"
+    )
+    await call.answer()
+
+
+@router.message(SalaryNegoForm.candidate_amount, F.text)
+async def candidate_salary_counter_send(message: Message, state: FSMContext, bot: Bot):
+    amount = message.text.strip()
+    data = await state.get_data()
+    aid = data.get("sal_aid")
+    await state.clear()
+    app = await q.get_application(aid)
+    if not app:
+        await message.answer("Ariza topilmadi.")
+        return
+    await q.set_salary_offer(aid, amount, "candidate")
+    await message.answer(
+        f"📤 Taklifingiz HR bo'limiga yuborildi: <b>{amount}</b>.\n"
+        "Ular tasdiqlashi yoki boshqa summa taklif qilishi mumkin."
+    )
+    await _notify_hr(
+        bot,
+        f"💰 <b>Nomzoddan oylik taklifi</b>\n\n"
+        f"👤 {app.get('full_name')} (ariza #{aid}) o'zi xohlagan oylikni "
+        f"taklif qilmoqda: <b>{amount}</b>.\n\n"
+        "Tasdiqlaysizmi yoki boshqa summa taklif qilasizmi?",
+        reply_markup=kb.hr_salary_offer_kb(aid),
+    )
