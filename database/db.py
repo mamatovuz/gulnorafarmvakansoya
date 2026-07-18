@@ -249,6 +249,24 @@ CREATE TABLE IF NOT EXISTS fines (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+-- Xodim maosh oshirish so'rovi (xodim ⇄ HR kelishuvi)
+CREATE TABLE IF NOT EXISTS salary_raise_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,          -- users.id (ichki)
+    branch_id INTEGER,
+    position TEXT,
+    current_salary TEXT,               -- so'rov paytidagi joriy oylik (snapshot)
+    requested_amount TEXT,             -- xodim so'ragan oxirgi summa
+    offered_amount TEXT,               -- HR taklif qilgan oxirgi summa
+    last_offer_by TEXT,                -- 'employee' / 'hr'
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending / agreed / rejected
+    final_amount TEXT,                 -- kelishilgan yakuniy summa
+    reject_reason TEXT,
+    handled_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    updated_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
 CREATE TABLE IF NOT EXISTS manager_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manager_user_id INTEGER NOT NULL,

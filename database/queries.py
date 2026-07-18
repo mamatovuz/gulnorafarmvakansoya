@@ -2230,6 +2230,126 @@ async def agree_salary(aid):
         await db.close()
 
 
+# ---------------- MAOSH OSHIRISH SO'ROVI (xodim ⇄ HR) ----------------
+async def get_pending_raise_for_user(user_id):
+    """Xodimning hali yopilmagan (pending) maosh so'rovini qaytaradi (bo'lmasa None)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM salary_raise_requests "
+            "WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def add_raise_request(user_id, branch_id, position, current_salary, requested_amount):
+    """Yangi maosh oshirish so'rovini yaratadi (xodim taklifi). id qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "INSERT INTO salary_raise_requests "
+            "(user_id, branch_id, position, current_salary, requested_amount, "
+            " last_offer_by, status) VALUES (?,?,?,?,?, 'employee', 'pending')",
+            (user_id, branch_id, position, current_salary, requested_amount),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_raise_request(rid):
+    """So'rovni xodim tg_id, ism va filial nomi bilan birga qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.tg_id AS user_tg, u.full_name, b.name AS branch_name
+               FROM salary_raise_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches b ON b.id=r.branch_id
+               WHERE r.id=?""",
+            (rid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_raise_offer(rid, amount, offer_by):
+    """So'rovga yangi taklif yozadi. offer_by: 'employee' yoki 'hr'."""
+    db = await _conn()
+    try:
+        if offer_by == "hr":
+            await db.execute(
+                "UPDATE salary_raise_requests SET offered_amount=?, last_offer_by='hr', "
+                "status='pending', updated_at=datetime('now','+5 hours') WHERE id=?",
+                (amount, rid),
+            )
+        else:
+            await db.execute(
+                "UPDATE salary_raise_requests SET requested_amount=?, "
+                "last_offer_by='employee', status='pending', "
+                "updated_at=datetime('now','+5 hours') WHERE id=?",
+                (amount, rid),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def agree_raise(rid, final_amount, handled_by=None):
+    """So'rovni kelishilgan deb belgilaydi va yakuniy summani yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE salary_raise_requests SET status='agreed', final_amount=?, "
+            "handled_by=COALESCE(?, handled_by), updated_at=datetime('now','+5 hours') "
+            "WHERE id=?",
+            (final_amount, handled_by, rid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def reject_raise(rid, reason, handled_by=None):
+    """So'rovni rad etadi va sababini yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE salary_raise_requests SET status='rejected', reject_reason=?, "
+            "handled_by=COALESCE(?, handled_by), updated_at=datetime('now','+5 hours') "
+            "WHERE id=?",
+            (reason, handled_by, rid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_pending_raise_requests(limit=30):
+    """HR paneli uchun ochiq (pending) maosh so'rovlari ro'yxati."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.full_name, b.name AS branch_name
+               FROM salary_raise_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches b ON b.id=r.branch_id
+               WHERE r.status='pending'
+               ORDER BY r.id DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
 async def rename_user(user_id, new_name):
     """Xodim ism-familiyasini o'zgartiradi. Eski ismni qaytaradi.
     users.full_name asosiy manba; aktiv sinov yozuvidagi nusxa ham yangilanadi."""

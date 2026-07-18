@@ -22,9 +22,6 @@ from utils import safe_send, staff_reg_text, uniform_label, now_tk
 
 router = Router()
 
-# Tugma matni -> (role, position)
-_ROLE_MAP = {label: (role, pos) for label, role, pos in kb.STAFF_ROLES}
-
 ROLE_LABELS = {
     ROLE_MANAGER: "🏢 Filial rahbari",
     ROLE_PHARMACIST: "💊 Farmatsevt",
@@ -181,23 +178,26 @@ async def sr_phone(message: Message, state: FSMContext):
         return
     await state.update_data(phone=text)
     await state.set_state(StaffReg.role)
+    names = await q.list_position_names()
     await message.answer(
         "<b>4-savol</b>\n💼 Qaysi yo'nalishda ishlaysiz? Tanlang:",
-        reply_markup=kb.staff_role_kb(),
+        reply_markup=kb.staff_role_kb(names),
     )
 
 
 # 4) Rol / yo'nalish
 @router.message(StaffReg.role, F.text)
 async def sr_role(message: Message, state: FSMContext):
-    mapping = _ROLE_MAP.get(message.text.strip())
-    if not mapping:
+    names = await q.list_position_names()
+    mapping = {label: (role, pos) for label, role, pos in kb.staff_role_options(names)}
+    got = mapping.get(message.text.strip())
+    if not got:
         await message.answer(
             "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
-            reply_markup=kb.staff_role_kb(),
+            reply_markup=kb.staff_role_kb(names),
         )
         return
-    role, position = mapping
+    role, position = got
     await state.update_data(role=role, position=position)
     await state.set_state(StaffReg.address)
     await message.answer(

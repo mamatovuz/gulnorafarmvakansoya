@@ -51,6 +51,7 @@ def main_menu(role, has_applied=False):
         b.button(text="▶️ Ishni davom ettirish")
         b.button(text="👤 Mening profilim")
         b.button(text="🔄 Dam olish kunini almashtirish")
+        b.button(text="💸 Maosh oshirishni so'rash")
     if role == ROLE_MANAGER:
         b.button(text="🏢 Filial rahbari panel")
     if role == ROLE_PHARMACIST:
@@ -392,11 +393,12 @@ def hr_menu():
     b.button(text="⚙️ Davomat sozlamalari")
     b.button(text="🧪 Sinov muddati")
     b.button(text="💵 Avans")
+    b.button(text="💸 Maosh so'rovlari")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -486,6 +488,68 @@ def hr_salary_offer_kb(aid):
     b.button(text="✅ Tasdiqlash", callback_data=f"hrsal_ok:{aid}")
     b.button(text="✏️ Boshqa summa", callback_data=f"hrsal_other:{aid}")
     b.adjust(2)
+    return b.as_markup()
+
+
+# ---------------- MAOSH OSHIRISH SO'ROVI (xodim ⇄ HR) ----------------
+def raise_confirm_change_kb():
+    """Xodimga: hozirgi maoshni o'zgartirishni xohlaysizmi?"""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha", callback_data="raise_yes")
+    b.button(text="❌ Yo'q", callback_data="raise_no")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def raise_amount_confirm_kb():
+    """Xodim kiritgan summani: tasdiqlash / tahrirlash / bekor qilish.
+    Summa FSM holatida saqlanadi (so'rov hali yaratilmagan bo'lishi mumkin)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data="raise_amt_ok")
+    b.button(text="✏️ Tahrirlash", callback_data="raise_amt_edit")
+    b.button(text="❌ Bekor qilish", callback_data="raise_amt_cancel")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def hr_raise_actions_kb(rid):
+    """HR ga: xodim so'rovini tasdiqlash / taklif berish / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"hrraise_ok:{rid}")
+    b.button(text="💬 Taklif berish", callback_data=f"hrraise_offer:{rid}")
+    b.button(text="❌ Rad etish", callback_data=f"hrraise_rej:{rid}")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def hr_raise_offer_confirm_kb(rid):
+    """HR taklif summasini: tasdiqlash / tahrirlash / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"hrraise_sendoffer:{rid}")
+    b.button(text="✏️ Tahrirlash", callback_data=f"hrraise_editoffer:{rid}")
+    b.button(text="❌ Rad etish", callback_data=f"hrraise_rej:{rid}")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def emp_raise_counter_kb(rid):
+    """Xodimga: HR qarshi taklifini tasdiqlash yoki yangi summa taklif qilish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"empraise_ok:{rid}")
+    b.button(text="💬 Taklif berish", callback_data=f"empraise_counter:{rid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def raise_requests_list_kb(requests):
+    """HR paneli: ochiq maosh so'rovlari ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for r in requests:
+        b.button(
+            text=f"💸 {r.get('full_name') or '-'} · {r.get('branch_name') or '-'}",
+            callback_data=f"raiseview:{r['id']}",
+        )
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -894,9 +958,24 @@ STAFF_ROLES = [
 ]
 
 
-def staff_role_kb():
+def staff_role_options(positions=None):
+    """Standart STAFF_ROLES + admin «🏷 Yo'nalishlar»da qo'shgan yo'nalishlar.
+    Har bir element — (label, role, position). Admin qo'shgan yangi yo'nalishlar
+    oddiy xodim (ROLE_EMPLOYEE) sifatida maplanadi va davomat panelini oladi.
+    Dublikat label (standart ro'yxatda bor bo'lsa) qayta qo'shilmaydi."""
+    opts = list(STAFF_ROLES)
+    seen = {label for label, _r, _p in opts}
+    for name in (positions or []):
+        if name in seen:
+            continue
+        seen.add(name)
+        opts.append((name, ROLE_EMPLOYEE, name))
+    return opts
+
+
+def staff_role_kb(positions=None):
     b = ReplyKeyboardBuilder()
-    for label, _role, _pos in STAFF_ROLES:
+    for label, _role, _pos in staff_role_options(positions):
         b.button(text=label)
     b.button(text=CANCEL_BTN)
     b.adjust(2)

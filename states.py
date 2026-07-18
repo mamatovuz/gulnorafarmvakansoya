@@ -231,3 +231,10 @@ class ITForm(StatesGroup):
 class TerminationRejectForm(StatesGroup):
     """HR ishdan bo'shatish so'rovini rad etadi — sababini yozadi."""
     reason = State()
+
+
+class SalaryRaiseForm(StatesGroup):
+    """Xodim maosh oshirishni so'raydi; HR ⇄ xodim kelishuvi."""
+    amount = State()         # xodim so'ramoqchi bo'lgan summani kiritadi/tahrirlaydi
+    hr_amount = State()      # HR qarshi taklif summasini kiritadi/tahrirlaydi
+    reject_reason = State()  # HR rad etish sababini yozadi
