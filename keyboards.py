@@ -393,6 +393,7 @@ def hr_menu():
     b.button(text="⚙️ Davomat sozlamalari")
     b.button(text="🧪 Sinov muddati")
     b.button(text="💵 Avans")
+    b.button(text="💵 Avans sozlamalari")
     b.button(text="💸 Maosh so'rovlari")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
@@ -804,9 +805,10 @@ def admin_menu():
     b.button(text="📢 Xabarnoma")
     b.button(text="📤 Eksport")
     b.button(text="⚙️ Sozlamalar")
+    b.button(text="💵 Avans sozlamalari")
     b.button(text="🧾 Audit log")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1247,6 +1249,24 @@ def advance_confirm_kb():
 def advance_send_acc_kb(period):
     b = InlineKeyboardBuilder()
     b.button(text="📤 Buxgalterga yuborish", callback_data=f"avns_send:{period}")
+    return b.as_markup()
+
+
+def advance_settings_kb(prompt_day, pay_day, enabled=True):
+    b = InlineKeyboardBuilder()
+    if enabled:
+        b.button(text="💵 Avans so'rovi: 🟢 YOQILGAN", callback_data="avset:toggle")
+    else:
+        b.button(text="💵 Avans so'rovi: 🔴 O'CHIQ", callback_data="avset:toggle")
+    b.button(
+        text=f"📨 So'rov yuboriladigan kun: {prompt_day}-sana",
+        callback_data="avset:promptday",
+    )
+    b.button(
+        text=f"💳 To'lov sanasi: {pay_day}-sana",
+        callback_data="avset:payday",
+    )
+    b.adjust(1)
     return b.as_markup()
 
 

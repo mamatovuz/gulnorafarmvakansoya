@@ -71,7 +71,7 @@ async def raise_start(message: Message, state: FSMContext):
     await message.answer(
         "💸 <b>Maosh oshirish</b>\n\n"
         f"💰 Hozirgi maoshingiz: <b>{cur}</b>\n\n"
-        "Siz buni o'zgartirmoqchimisiz?",
+        "Maoshingizni oshirish uchun HR bo'limiga so'rov yubormoqchimisiz?",
         reply_markup=kb.raise_confirm_change_kb(),
     )
 
