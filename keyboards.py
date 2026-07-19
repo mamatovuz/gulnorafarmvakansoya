@@ -51,7 +51,7 @@ def main_menu(role, has_applied=False):
         b.button(text="▶️ Ishni davom ettirish")
         b.button(text="👤 Mening profilim")
         b.button(text="🔄 Dam olish kunini almashtirish")
-        b.button(text="💸 Maosh oshirishni so'rash")
+        b.button(text="💸 HR ga so'rov")
     if role == ROLE_MANAGER:
         b.button(text="🏢 Filial rahbari panel")
     if role == ROLE_PHARMACIST:

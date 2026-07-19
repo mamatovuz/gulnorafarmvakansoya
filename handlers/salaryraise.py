@@ -1,6 +1,6 @@
 """Xodim maosh oshirishni so'raydi — xodim ⇄ HR kelishuvi.
 
-Xodim asosiy menyudagi «💸 Maosh oshirishni so'rash» tugmasi orqali kiradi.
+Xodim asosiy menyudagi «💸 HR ga so'rov» tugmasi orqali kiradi.
 Hozirgi maoshini ko'radi, yangi summa taklif qiladi. So'rov HR bo'limiga boradi.
 HR tasdiqlashi, o'z summasini taklif qilishi (qarshi taklif) yoki sabab bilan
 rad etishi mumkin. Qarshi taklif xodimga qaytadi — u tasdiqlaydi yoki yana boshqa
@@ -11,7 +11,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import SalaryRaiseForm
 import keyboards as kb
 from utils import safe_send
@@ -31,11 +31,20 @@ async def _notify_hr(bot: Bot, text, markup=None):
         await safe_send(bot, tid, text, reply_markup=markup)
 
 
-async def _main_menu(message: Message):
-    user = await q.get_user(message.from_user.id)
+async def _main_menu(message: Message, tg_id):
+    """Xodimga o'z roliga mos asosiy menyuni qaytaradi.
+
+    DIQQAT: callback ichida `call.message.from_user` — bot, foydalanuvchi emas.
+    Shu sabab menyu tg_id (call.from_user.id) bo'yicha aniqlanadi.
+    """
+    user = await q.get_user(tg_id)
+    role = user["role"] if user else ROLE_CANDIDATE
+    has_applied = False
+    if role == ROLE_CANDIDATE and user:
+        has_applied = await q.count_applications(user["id"]) > 0
     await message.answer(
         "🏠 Asosiy menyu",
-        reply_markup=kb.main_menu(user["role"] if user else "candidate"),
+        reply_markup=kb.main_menu(role, has_applied),
     )
 
 
@@ -52,7 +61,7 @@ def _hr_request_text(req):
 
 
 # ================= XODIM: SO'ROV BOSHLASH =================
-@router.message(F.text == "💸 Maosh oshirishni so'rash")
+@router.message(F.text == "💸 HR ga so'rov")
 async def raise_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:
@@ -84,7 +93,7 @@ async def raise_no(call: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     await call.message.answer("❌ Bekor qilindi.")
-    await _main_menu(call.message)
+    await _main_menu(call.message, call.from_user.id)
     await call.answer()
 
 
@@ -137,7 +146,7 @@ async def raise_amt_cancel(call: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     await call.message.answer("❌ Bekor qilindi.")
-    await _main_menu(call.message)
+    await _main_menu(call.message, call.from_user.id)
     await call.answer()
 
 
@@ -196,7 +205,7 @@ async def raise_amt_ok(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"📈 So'ralgan maosh: <b>{amount}</b>\n"
         "HR javobini kuting."
     )
-    await _main_menu(call.message)
+    await _main_menu(call.message, call.from_user.id)
     await call.answer("Yuborildi ✅")
 
     req = await q.get_raise_request(rid)
@@ -445,7 +454,7 @@ async def emp_raise_accept(call: CallbackQuery, bot: Bot):
     await call.message.answer(
         f"🎉 Tabriklaymiz! Yangi maoshingiz tasdiqlandi: <b>{final}</b>"
     )
-    await _main_menu(call.message)
+    await _main_menu(call.message, call.from_user.id)
     await call.answer("Tasdiqlandi ✅")
     await _notify_hr(
         bot,
