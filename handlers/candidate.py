@@ -13,7 +13,7 @@ import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
     send_application_resume, send_application_photo, best_vacancy_matches,
-    recommendation_text, now_tk,
+    recommendation_text, now_tk, post_application_channel,
 )
 
 router = Router()
@@ -753,6 +753,13 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
         await send_application_photo(bot, tid, app)
         # Rezyume fayli bo'lsa alohida yuboramiz
         await send_application_resume(bot, tid, app)
+
+    # Nomzodlar (kutuvchilar) kanaliga avtomatik joylash (admin ulagan bo'lsa)
+    candidate_channel = await q.get_setting("candidate_channel")
+    if candidate_channel:
+        chat_id, msg_id = await post_application_channel(bot, candidate_channel, app)
+        if chat_id and msg_id:
+            await q.set_application_channel(aid, chat_id, msg_id)
 
 
 # ---------------- MENING ARIZALARIM ----------------

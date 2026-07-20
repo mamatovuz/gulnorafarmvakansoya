@@ -18,12 +18,14 @@ ST_NEW = "new"
 ST_INTERVIEW = "interview"
 ST_ACCEPTED = "accepted"
 ST_REJECTED = "rejected"
+ST_WAITING = "waiting"        # Kutuvda — nomzodlar bazasiga qo'shilgan
 
 STATUS_LABELS = {
     ST_NEW: "🆕 Yangi",
     ST_INTERVIEW: "📅 Suhbatga chaqirilgan",
     ST_ACCEPTED: "✅ Ishga qabul qilingan",
     ST_REJECTED: "❌ Rad etilgan",
+    ST_WAITING: "⏳ Kutuvda",
 }
 
 SCHEMA = """
@@ -112,6 +114,8 @@ CREATE TABLE IF NOT EXISTS applications (
     resume_file_id TEXT,
     resume_type TEXT,
     photo_file_id TEXT,           -- oxirgi 10 kunda tushgan rasm (majburiy)
+    channel_chat_id TEXT,         -- kandidatlar kanaliga joylangan bo'lsa — chat id
+    channel_message_id INTEGER,   -- kanaldagi post message id (status yangilash uchun)
     offered_salary TEXT,          -- kelishuvdagi joriy oylik summasi
     salary_offer_by TEXT,         -- oxirgi taklifni kim berdi: hr / candidate
     salary_status TEXT,           -- NULL / pending / agreed
@@ -427,6 +431,7 @@ APP_COLUMNS = {
     "favorite": "INTEGER NOT NULL DEFAULT 0",
     "offered_salary": "TEXT", "salary_offer_by": "TEXT", "salary_status": "TEXT",
     "photo_file_id": "TEXT",
+    "channel_chat_id": "TEXT", "channel_message_id": "INTEGER",
 }
 
 VACANCY_COLUMNS = {

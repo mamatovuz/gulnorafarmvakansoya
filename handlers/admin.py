@@ -693,6 +693,7 @@ async def admin_settings(message: Message):
     require_sub = (await q.get_setting("require_subscription", "1")) != "0"
     secret_channel = await q.get_setting("secret_channel")
     vacancy_channel = await q.get_setting("vacancy_channel")
+    candidate_channel = await q.get_setting("candidate_channel")
     threshold = await q.get_setting("match_threshold", "60")
     chan_line = (
         f"🔒 <b>Maxfiy kanal</b> — hozir: <code>{secret_channel}</code>"
@@ -704,6 +705,11 @@ async def admin_settings(message: Message):
         if vacancy_channel
         else "📣 <b>Vakansiya kanali</b> — hali ulanmagan"
     )
+    cand_line = (
+        f"📇 <b>Nomzodlar kanali</b> — hozir: <code>{candidate_channel}</code>"
+        if candidate_channel
+        else "📇 <b>Nomzodlar kanali</b> — hali ulanmagan"
+    )
     await message.answer(
         "⚙️ <b>Bot sozlamalari</b>\n\n"
         "📢 <b>Majburiy obuna</b> — yoqilsa, foydalanuvchi kanallarga obuna bo'lmaguncha "
@@ -711,10 +717,12 @@ async def admin_settings(message: Message):
         "✍️ <b>Xush kelibsiz matni</b> — /start bosganda chiqadigan matn.\n"
         f"{chan_line} — HR ishga qabul qilgan arizalar shu kanalga tushadi.\n"
         f"{vac_line} — HR tasdiqlagan vakansiyalar shu kanalga joylanadi (ochiq yoki maxfiy).\n"
+        f"{cand_line} — nomzod ariza tasdiqlashi bilan shu maxfiy kanalga tushadi, "
+        "holati (kutuvda/tasdiqlangan/rad etilgan) avtomatik yangilanadi.\n"
         f"🎯 <b>Moslik chegarasi</b> — {threshold}%. Oddiy ariza shu foizdan yuqori mos "
         "kelsa, HR ga avtomatik tavsiya beriladi.",
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
-                                          vacancy_channel),
+                                          vacancy_channel, candidate_channel),
     )
 
 
@@ -728,7 +736,14 @@ async def toggle_subscription(call: CallbackQuery):
     me = await actor(call.from_user.id)
     await q.add_log(call.from_user.id, me["full_name"], "sozlama_obuna", action)
     require_sub = action == "on"
-    await call.message.edit_reply_markup(reply_markup=kb.admin_settings_kb(require_sub))
+    secret_channel = await q.get_setting("secret_channel")
+    vacancy_channel = await q.get_setting("vacancy_channel")
+    candidate_channel = await q.get_setting("candidate_channel")
+    threshold = await q.get_setting("match_threshold", "60")
+    await call.message.edit_reply_markup(
+        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
+                                          vacancy_channel, candidate_channel)
+    )
     await call.answer("✅ Yangilandi")
 
 
@@ -822,8 +837,10 @@ async def secret_channel_clear(call: CallbackQuery):
     require_sub = (await q.get_setting("require_subscription", "1")) != "0"
     threshold = await q.get_setting("match_threshold", "60")
     vacancy_channel = await q.get_setting("vacancy_channel")
+    candidate_channel = await q.get_setting("candidate_channel")
     await call.message.edit_reply_markup(
-        reply_markup=kb.admin_settings_kb(require_sub, None, threshold, vacancy_channel)
+        reply_markup=kb.admin_settings_kb(require_sub, None, threshold, vacancy_channel,
+                                          candidate_channel)
     )
     await call.answer("🗑 Maxfiy kanal uzildi", show_alert=True)
 
@@ -885,10 +902,78 @@ async def vacancy_channel_clear(call: CallbackQuery):
     require_sub = (await q.get_setting("require_subscription", "1")) != "0"
     secret_channel = await q.get_setting("secret_channel")
     threshold = await q.get_setting("match_threshold", "60")
+    candidate_channel = await q.get_setting("candidate_channel")
     await call.message.edit_reply_markup(
-        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold, None)
+        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold, None,
+                                          candidate_channel)
     )
     await call.answer("🗑 Vakansiya kanali uzildi", show_alert=True)
+
+
+# ---------------- NOMZODLAR (KUTUVCHILAR) KANALI ----------------
+@router.callback_query(F.data == "setcand")
+async def candidate_channel_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.candidate_channel)
+    await call.message.answer(
+        "📇 <b>Nomzodlar kanalini ulash</b>\n\n"
+        "Nomzod ariza tasdiqlashi bilan uning ma'lumotlari shu <b>maxfiy</b> kanalga "
+        "tushadi. Holati (⏳ kutuvda / ✅ tasdiqlangan / ❌ rad etilgan) avtomatik "
+        "yangilanadi.\n\n"
+        "1️⃣ Botni o'sha kanalga <b>administrator</b> qilib qo'shing.\n"
+        "2️⃣ Kanal ID sini yuboring:\n"
+        "   • Yopiq kanal: <code>-1001234567890</code> ko'rinishida\n"
+        "   • Ochiq kanal: <code>@kanal_username</code> ko'rinishida\n\n"
+        "Bekor qilish uchun <b>-</b> yuboring."
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.candidate_channel, F.text)
+async def candidate_channel_save(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    value = message.text.strip()
+    if value == "-":
+        await message.answer("Bekor qilindi.")
+        return
+    title = None
+    try:
+        chat = await bot.get_chat(value)
+        title = chat.title or chat.full_name
+    except Exception:
+        await message.answer(
+            "❗️ Kanalni tekshira olmadim. Bot o'sha kanalda administrator ekaniga "
+            "va ID/username to'g'ri ekaniga ishonch hosil qiling. Baribir saqlayapman."
+        )
+    await q.set_setting("candidate_channel", value)
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "sozlama_nomzod_kanal", value)
+    suffix = f"\n📛 Nomi: <b>{title}</b>" if title else ""
+    await message.answer(
+        f"✅ Nomzodlar kanali ulandi: <code>{value}</code>{suffix}\n\n"
+        "Endi nomzod tasdiqlagan har bir ariza shu kanalga joylanadi."
+    )
+
+
+@router.callback_query(F.data == "setcand_clear")
+async def candidate_channel_clear(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await q.set_setting("candidate_channel", "")
+    me = await actor(call.from_user.id)
+    await q.add_log(call.from_user.id, me["full_name"], "sozlama_nomzod_kanal", "uzildi")
+    require_sub = (await q.get_setting("require_subscription", "1")) != "0"
+    secret_channel = await q.get_setting("secret_channel")
+    threshold = await q.get_setting("match_threshold", "60")
+    vacancy_channel = await q.get_setting("vacancy_channel")
+    await call.message.edit_reply_markup(
+        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
+                                          vacancy_channel, None)
+    )
+    await call.answer("🗑 Nomzodlar kanali uzildi", show_alert=True)
 
 
 # ---------------- MOSLIK CHEGARASI ----------------

@@ -192,6 +192,7 @@ class SettingsForm(StatesGroup):
     welcome = State()
     secret_channel = State()   # maxfiy kanal chat_id
     vacancy_channel = State()  # vakansiyalar joylanadigan kanal chat_id
+    candidate_channel = State()  # kutuvchi nomzodlar joylanadigan maxfiy kanal chat_id
     match_threshold = State()  # moslik (tavsiya) foizi
     avans_prompt_day = State()  # avans so'rovi yuboriladigan kun
     avans_pay_day = State()     # avans to'lov sanasi

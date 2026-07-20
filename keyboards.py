@@ -360,6 +360,31 @@ def applications_list_kb(apps, prefix="appview"):
     return b.as_markup()
 
 
+def waiters_list_kb(apps, page=0, per_page=10):
+    """Kutuvchi nomzodlar ro'yxati. 10 tadan ko'p bo'lsa ◀️▶️ paginatsiya chiqadi."""
+    b = InlineKeyboardBuilder()
+    pages = max(1, (len(apps) + per_page - 1) // per_page)
+    page = max(0, min(page, pages - 1))
+    for a in apps[page * per_page:(page + 1) * per_page]:
+        name = a.get("full_name") or "Nomzod"
+        pos = a.get("vacancy_title") or a.get("position") or "-"
+        b.row(InlineKeyboardButton(
+            text=f"⏳ {name} · {pos}", callback_data=f"appview:{a['id']}"
+        ))
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(
+                text="◀️ Oldingi", callback_data=f"waitpage:{page - 1}"))
+        nav.append(InlineKeyboardButton(
+            text=f"{page + 1}/{pages}", callback_data="waitnoop"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton(
+                text="Keyingi ▶️", callback_data=f"waitpage:{page + 1}"))
+        b.row(*nav)
+    return b.as_markup()
+
+
 def vacancy_detail_kb(vid):
     b = InlineKeyboardBuilder()
     b.button(text="📝 Ariza topshirish", callback_data=f"apply:{vid}")
@@ -381,6 +406,7 @@ def hr_menu():
     b = ReplyKeyboardBuilder()
     b.button(text="📊 Dashboard")
     b.button(text="📥 Arizalar")
+    b.button(text="⏳ Kutuvchilar")
     b.button(text="📅 Suhbatlar")
     b.button(text="⭐ Saralanganlar")
     b.button(text="💼 Vakansiyalar (HR)")
@@ -400,7 +426,7 @@ def hr_menu():
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -466,12 +492,13 @@ def application_actions_kb(aid, favorite=False):
     b.button(text="🧪 Sinovga qabul", callback_data=f"apptrial:{aid}")
     b.button(text="🎓 O'rganuvchi qilib qabul", callback_data=f"applearn:{aid}")
     b.button(text="💰 Oylik taklif qilish", callback_data=f"appsal:{aid}")
+    b.button(text="⏳ Kutish (bazaga qo'shish)", callback_data=f"appwait:{aid}")
     b.button(text="❌ Rad etish", callback_data=f"apprej:{aid}")
     b.button(text="📝 Izoh qoldirish", callback_data=f"appcom:{aid}")
     b.button(text="💬 Nomzodga xabar", callback_data=f"appmsg:{aid}")
     fav_label = "⭐ Saralangan ✓" if favorite else "⭐ Saralashga qo'shish"
     b.button(text=fav_label, callback_data=f"appfav:{aid}")
-    b.adjust(1, 2, 1, 1, 1, 2, 1)
+    b.adjust(1, 2, 2, 2, 2, 2)
     return b.as_markup()
 
 
@@ -906,7 +933,7 @@ def user_manage_kb(tg_id, blocked=False):
 
 
 def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
-                      vacancy_channel=None):
+                      vacancy_channel=None, candidate_channel=None):
     b = InlineKeyboardBuilder()
     if require_sub:
         b.button(text="📢 Majburiy obuna: 🟢 YOQILGAN", callback_data="setsub:off")
@@ -924,6 +951,11 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
         b.button(text="🗑 Vakansiya kanalini uzish", callback_data="setvac_clear")
     else:
         b.button(text="📣 Vakansiya kanali: 🔴 ULANMAGAN (ulash)", callback_data="setvac")
+    if candidate_channel:
+        b.button(text="📇 Nomzodlar kanali: 🟢 ULANGAN (o'zgartirish)", callback_data="setcand")
+        b.button(text="🗑 Nomzodlar kanalini uzish", callback_data="setcand_clear")
+    else:
+        b.button(text="📇 Nomzodlar kanali: 🔴 ULANMAGAN (ulash)", callback_data="setcand")
     b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
     b.adjust(1)
     return b.as_markup()

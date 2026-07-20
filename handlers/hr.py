@@ -7,7 +7,7 @@ from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE,
-    ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, STATUS_LABELS,
+    ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING, STATUS_LABELS,
 )
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
@@ -19,7 +19,7 @@ from utils import (
     vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
     fine_text, manager_request_text, send_application_resume, send_application_photo,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
-    iso_to_display, probation_text,
+    iso_to_display, probation_text, update_application_channel,
 )
 from services import export
 
@@ -313,6 +313,78 @@ async def app_view(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
+# ---------------- KUTISH (nomzodlar bazasiga qo'shish) ----------------
+@router.callback_query(F.data.startswith("appwait:"))
+async def app_wait(call: CallbackQuery, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    aid = int(call.data.split(":")[1])
+    me = await actor(call.from_user.id)
+    await q.set_application_status(aid, ST_WAITING, handled_by=me["id"])
+    a = await q.get_application(aid)
+    if not a:
+        await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    # Kanaldagi post statusini «⏳ Kutuvda» ga yangilaymiz (panel OCHILMAYDI)
+    await update_application_channel(bot, a)
+    await q.add_log(call.from_user.id, me["full_name"], "ariza_kutish", f"Ariza #{aid}")
+    await call.message.answer(
+        f"⏳ Ariza #{aid} — <b>kutuvchilar bazasiga</b> qo'shildi.\n"
+        "Nomzodga xabar yuborildi. «⏳ Kutuvchilar» bo'limidan ko'rishingiz mumkin."
+    )
+    if a.get("applicant_tg"):
+        await safe_send(
+            bot, a["applicant_tg"],
+            "⏳ <b>Arizangiz kutuv ro'yxatiga qo'shildi</b>\n\n"
+            "Sizni nomzodlar bazamizga qo'shib qo'ydik. Ayni paytda mos ish o'rni "
+            "bo'lmasa-da, sizga mos vakansiya paydo bo'lishi bilanoq biz siz bilan "
+            "bog'lanamiz.\n\n"
+            "Iltimos, biroz kuting — e'tiboringiz uchun rahmat! 🙏",
+        )
+    await call.answer("Kutuvga qo'shildi ✅")
+
+
+# ---------------- KUTUVCHILAR RO'YXATI ----------------
+@router.message(F.text == "⏳ Kutuvchilar")
+async def hr_waiters(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    apps = await q.list_applications(status=ST_WAITING)
+    if not apps:
+        await message.answer(
+            "⏳ <b>Kutuvchilar bazasi</b>\n\nHozircha kutuv ro'yxatida nomzod yo'q.\n"
+            "Ariza ostidagi «⏳ Kutish» tugmasi orqali nomzodni bazaga qo'shishingiz mumkin."
+        )
+        return
+    await message.answer(
+        f"⏳ <b>Kutuvchilar bazasi</b>\n\nJami: <b>{len(apps)}</b> ta nomzod.\n"
+        "Batafsil ko'rish uchun nomzodni tanlang 👇",
+        reply_markup=kb.waiters_list_kb(apps, page=0),
+    )
+
+
+@router.callback_query(F.data.startswith("waitpage:"))
+async def hr_waiters_page(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    page = int(call.data.split(":")[1])
+    apps = await q.list_applications(status=ST_WAITING)
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=kb.waiters_list_kb(apps, page=page)
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "waitnoop")
+async def hr_waiters_noop(call: CallbackQuery):
+    await call.answer()
+
+
 # ------- Ishga qabul: 3 xil (ishga / sinov / o'rganuvchi) -------
 # Har bir tur uchun matn yorliqlari
 ACCEPT_KINDS = {
@@ -560,6 +632,9 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
                 "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
             )
 
+    # Nomzodlar kanalidagi post statusini «✅ Tasdiqlangan» ga yangilaymiz
+    await update_application_channel(bot, a)
+
     # Nomzodga xabar
     if a.get("applicant_tg"):
         period_cand = (
@@ -760,6 +835,8 @@ async def app_reject_finish(message: Message, state: FSMContext, bot: Bot):
     if reason and reason != "-":
         await q.set_application_comment(aid, reason)
     a = await q.get_application(aid)
+    # Kanaldagi post statusini «❌ Rad etilgan» ga yangilaymiz
+    await update_application_channel(bot, a)
     await q.add_log(message.from_user.id, me["full_name"], "ariza_rad", f"Ariza #{aid}")
     await message.answer(f"❌ Ariza #{aid} — <b>rad etildi</b>.")
     if a.get("applicant_tg"):
@@ -1289,6 +1366,8 @@ async def interview_finish(message: Message, state: FSMContext, bot: Bot):
     await q.set_application_status(aid, ST_INTERVIEW, handled_by=me["id"])
     await state.clear()
     a = await q.get_application(aid)
+    # Kanaldagi post statusini «📅 Suhbatga chaqirilgan» ga yangilaymiz
+    await update_application_channel(bot, a)
     await q.add_log(message.from_user.id, me["full_name"], "suhbat_belgilandi", f"Ariza #{aid}")
     await message.answer(f"✅ Suhbat belgilandi va nomzodga yuborildi (Ariza #{aid}).")
 

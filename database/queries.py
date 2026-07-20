@@ -556,6 +556,19 @@ async def set_application_status(aid, status, handled_by=None):
         await db.close()
 
 
+async def set_application_channel(aid, chat_id, message_id):
+    """Arizaning kandidatlar kanalidagi post joyini saqlaydi (status yangilash uchun)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE applications SET channel_chat_id=?, channel_message_id=? WHERE id=?",
+            (str(chat_id), message_id, aid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def set_application_comment(aid, comment):
     db = await _conn()
     try:

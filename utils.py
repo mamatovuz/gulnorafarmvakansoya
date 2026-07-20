@@ -426,6 +426,49 @@ async def post_application_to_channel(bot: Bot, chat_id, app, header=None):
         return False
 
 
+# ---------------- KANDIDATLAR (KUTUVCHILAR) KANALI ----------------
+def candidate_channel_text(app):
+    """Nomzod arizasini kandidatlar kanaliga joylash uchun matn (status bilan)."""
+    status = STATUS_LABELS.get(app.get("status"), app.get("status") or "-")
+    return (
+        "📇 <b>NOMZOD — ISH QIDIRUVCHI</b>\n"
+        f"📌 Holati: <b>{status}</b>\n\n"
+        + application_text(app, full=True)
+    )
+
+
+async def post_application_channel(bot: Bot, chat_id, app):
+    """Arizani kandidatlar kanaliga joylaydi.
+    (chat_id, message_id) yoki (None, None) qaytaradi — keyin status yangilash uchun."""
+    chat_id = normalize_chat_id(chat_id)
+    if not chat_id:
+        return None, None
+    try:
+        msg = await bot.send_message(chat_id, candidate_channel_text(app))
+        # Rasm va rezyume alohida yuboriladi (status matni asosiy postda tahrirlanadi)
+        await send_application_photo(bot, chat_id, app)
+        await send_application_resume(bot, chat_id, app)
+        return chat_id, msg.message_id
+    except Exception:
+        return None, None
+
+
+async def update_application_channel(bot: Bot, app):
+    """Kanaldagi ariza postining status matnini yangilaydi (post tahrirlanadi)."""
+    chat_id = app.get("channel_chat_id")
+    msg_id = app.get("channel_message_id")
+    if not chat_id or not msg_id:
+        return False
+    chat_id = normalize_chat_id(chat_id)
+    try:
+        await bot.edit_message_text(
+            candidate_channel_text(app), chat_id=chat_id, message_id=int(msg_id)
+        )
+        return True
+    except Exception:
+        return False
+
+
 # ---------------- ARIZA ↔ VAKANSIYA MOSLIGI ----------------
 _NORM_RE = re.compile(r"[^\w\s']", flags=re.UNICODE)
 
