@@ -70,6 +70,12 @@ CREATE TABLE IF NOT EXISTS vacancies (
     requirements TEXT,
     responsibilities TEXT,
     conditions TEXT,
+    staff_count TEXT,                 -- nechta xodim kerak (rahbar so'rovi)
+    experience TEXT,                  -- talab qilinadigan tajriba
+    manager_request_id INTEGER,       -- qaysi rahbar so'rovidan ochilgan
+    channel_chat_id TEXT,             -- kanalga joylangan bo'lsa — chat id
+    channel_message_id INTEGER,       -- kanaldagi post message id
+    filled INTEGER NOT NULL DEFAULT 0,-- 1 => hodimlar soni to'ldi (yakunlandi)
     is_active INTEGER NOT NULL DEFAULT 1,
     created_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
@@ -105,6 +111,7 @@ CREATE TABLE IF NOT EXISTS applications (
     phone TEXT,
     resume_file_id TEXT,
     resume_type TEXT,
+    photo_file_id TEXT,           -- oxirgi 10 kunda tushgan rasm (majburiy)
     offered_salary TEXT,          -- kelishuvdagi joriy oylik summasi
     salary_offer_by TEXT,         -- oxirgi taklifni kim berdi: hr / candidate
     salary_status TEXT,           -- NULL / pending / agreed
@@ -274,10 +281,37 @@ CREATE TABLE IF NOT EXISTS manager_requests (
     kind TEXT NOT NULL,
     title TEXT,
     staff_count TEXT,
+    shift TEXT,                       -- smena (ertalabki/kechki)
+    experience TEXT,                  -- talab qilinadigan tajriba
     details TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     hr_comment TEXT,
     handled_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+-- Kunlik dam olish rejasi: har filial, har kun uchun bitta reja.
+-- Filial rahbari 17:00 da tasdiqlaydi/tahrirlaydi; 08:30 da HR ga to'planadi.
+CREATE TABLE IF NOT EXISTS dayoff_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch_id INTEGER,
+    plan_date TEXT NOT NULL,          -- reja qaysi kunga (ertangi kun) ISO YYYY-MM-DD
+    weekday TEXT,                     -- hafta kuni nomi (Dushanba...)
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending / confirmed
+    confirmed_by INTEGER,
+    confirmed_at TEXT,
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    UNIQUE(branch_id, plan_date)
+);
+
+CREATE TABLE IF NOT EXISTS dayoff_plan_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    full_name TEXT,
+    position TEXT,
+    -- 'off' => ertaga dam oladi (kelmaydi); 'work' => keladi (rahbar o'zgartirgan)
+    day_status TEXT NOT NULL DEFAULT 'off',
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
@@ -351,7 +385,7 @@ CREATE TABLE IF NOT EXISTS probations (
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)
 DEFAULT_POSITIONS = [
-    "💊 Farmatsevt", "👨‍💼 Filial rahbari", "👔 Direktor", "🧮 Buxgalter",
+    "💊 Farmatsevt", "👨‍💼 Filial rahbari", "👔 Direktor", "🧮 Moliya bo'limi",
     "🧹 Tozalik xodimi", "📦 Omborchi", "🚚 Haydovchi",
 ]
 
@@ -392,6 +426,21 @@ APP_COLUMNS = {
     "resume_file_id": "TEXT", "resume_type": "TEXT",
     "favorite": "INTEGER NOT NULL DEFAULT 0",
     "offered_salary": "TEXT", "salary_offer_by": "TEXT", "salary_status": "TEXT",
+    "photo_file_id": "TEXT",
+}
+
+VACANCY_COLUMNS = {
+    "staff_count": "TEXT",
+    "experience": "TEXT",
+    "manager_request_id": "INTEGER",
+    "channel_chat_id": "TEXT",
+    "channel_message_id": "INTEGER",
+    "filled": "INTEGER NOT NULL DEFAULT 0",
+}
+
+MANAGER_REQUEST_COLUMNS = {
+    "shift": "TEXT",
+    "experience": "TEXT",
 }
 
 PROBATION_COLUMNS = {
@@ -564,6 +613,20 @@ async def _migrate(db):
         for col, coltype in PROBATION_COLUMNS.items():
             if col not in existing:
                 await db.execute(f"ALTER TABLE probations ADD COLUMN {col} {coltype}")
+
+    cur = await db.execute("PRAGMA table_info(vacancies)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing:
+        for col, coltype in VACANCY_COLUMNS.items():
+            if col not in existing:
+                await db.execute(f"ALTER TABLE vacancies ADD COLUMN {col} {coltype}")
+
+    cur = await db.execute("PRAGMA table_info(manager_requests)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing:
+        for col, coltype in MANAGER_REQUEST_COLUMNS.items():
+            if col not in existing:
+                await db.execute(f"ALTER TABLE manager_requests ADD COLUMN {col} {coltype}")
     await db.commit()
 
 
@@ -590,6 +653,11 @@ async def init_db():
         if (await cur.fetchone())[0] == 0:
             for name in DEFAULT_POSITIONS:
                 await db.execute("INSERT INTO positions (name) VALUES (?)", (name,))
+        # Eski bazalarda "Buxgalter" yo'nalishini "Moliya bo'limi" ga o'zgartiramiz
+        await db.execute(
+            "UPDATE positions SET name=? WHERE name=?",
+            ("🧮 Moliya bo'limi", "🧮 Buxgalter"),
+        )
         # Standart filiallar — nomi bo'yicha mavjud bo'lmasa qo'shamiz (idempotent).
         # Agar avval koordinatasiz qo'shilgan bo'lsa, standart koordinata bilan to'ldiramiz
         # (admin qo'lda kiritgan koordinatalarni buzmaymiz).

@@ -2,6 +2,7 @@
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 
 from database import queries as q
 from database.db import (
@@ -15,7 +16,8 @@ from states import (
 import keyboards as kb
 from utils import (
     safe_send, manager_request_text, employee_profile_text, fine_text,
-    application_text, send_application_resume,
+    application_text, send_application_resume, send_application_photo,
+    vacancy_channel_text, mark_vacancy_channel_filled,
 )
 
 router = Router()
@@ -26,7 +28,7 @@ ROLE_NAMES = {
     ROLE_MANAGER: "Filial rahbari",
     ROLE_PHARMACIST: "Farmatsevt",
     ROLE_DIRECTOR: "Direktor",
-    ROLE_ACCOUNTANT: "Buxgalter",
+    ROLE_ACCOUNTANT: "Moliya bo'limi",
     ROLE_EMPLOYEE: "Oddiy xodim",
 }
 
@@ -70,53 +72,145 @@ async def _manager_branch_id(user):
     return profile.get("branch_id") if profile else None
 
 
+def _mgr_vacancy_summary(data):
+    return (
+        "📋 <b>Vakansiya so'rovi</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"💼 Yo'nalish: <b>{data.get('position') or '-'}</b>\n"
+        f"👥 Kerakli soni: <b>{data.get('staff_count') or '-'}</b>\n"
+        f"🕒 Smena: {data.get('shift') or '-'}\n"
+        f"📈 Tajriba: {data.get('experience') or '-'}\n"
+        f"📝 Izoh: {data.get('details') or '—'}\n\n"
+        "Hammasi to'g'rimi? Tasdiqlasangiz HR ga yuboriladi."
+    )
+
+
 @router.message(F.text == "➕ Xodim kerak")
 async def manager_vacancy_start(message: Message, state: FSMContext):
     user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
     if not user:
         return
-    await state.set_state(ManagerVacancyForm.title)
-    await message.answer("➕ Qaysi lavozimga xodim kerak? Masalan: <b>Farmatsevt</b>")
+    positions = await q.list_position_names()
+    await state.set_state(ManagerVacancyForm.position)
+    await message.answer(
+        "➕ <b>Xodim kerak</b>\n\nQaysi yo'nalishga xodim kerak? Ro'yxatdan tanlang:",
+        reply_markup=kb.manager_vacancy_position_kb(positions),
+    )
 
 
-@router.message(ManagerVacancyForm.title, F.text)
-async def manager_vacancy_title(message: Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
+@router.message(StateFilter(
+    ManagerVacancyForm.position, ManagerVacancyForm.staff_count,
+    ManagerVacancyForm.shift, ManagerVacancyForm.experience,
+    ManagerVacancyForm.details,
+), F.text == kb.CANCEL_BTN)
+async def manager_vacancy_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Bekor qilindi.", reply_markup=kb.manager_menu())
+
+
+@router.message(ManagerVacancyForm.position, F.text)
+async def manager_vacancy_position(message: Message, state: FSMContext):
+    await state.update_data(position=message.text.strip())
     await state.set_state(ManagerVacancyForm.staff_count)
-    await message.answer("👥 Nechta xodim kerak? Masalan: <b>2 ta</b>")
+    await message.answer(
+        "👥 Nechta xodim kerak? Faqat son yozing. Masalan: <b>2</b>",
+        reply_markup=kb.cancel_kb(),
+    )
 
 
 @router.message(ManagerVacancyForm.staff_count, F.text)
 async def manager_vacancy_count(message: Message, state: FSMContext):
     await state.update_data(staff_count=message.text.strip())
+    await state.set_state(ManagerVacancyForm.shift)
+    await message.answer(
+        "🕒 Qaysi smenaga xodim kerak? Tanlang:",
+        reply_markup=kb.manager_vacancy_shift_kb(),
+    )
+
+
+@router.message(ManagerVacancyForm.shift, F.text)
+async def manager_vacancy_shift(message: Message, state: FSMContext):
+    await state.update_data(shift=message.text.strip())
+    await state.set_state(ManagerVacancyForm.experience)
+    await message.answer(
+        "📈 Qanday tajriba talab qilinadi? Masalan: <b>kamida 1 yil</b> yoki "
+        "<b>tajribasiz ham bo'ladi</b>.",
+        reply_markup=kb.cancel_kb(),
+    )
+
+
+@router.message(ManagerVacancyForm.experience, F.text)
+async def manager_vacancy_experience(message: Message, state: FSMContext):
+    await state.update_data(experience=message.text.strip())
     await state.set_state(ManagerVacancyForm.details)
-    await message.answer("📝 Talablar, ish vaqti yoki izohlarni yozing:")
+    await message.answer(
+        "📝 Qo'shimcha talab yoki izoh bo'lsa yozing. Bo'lmasa «⏭️ O'tkazib yuborish».",
+        reply_markup=kb.manager_vacancy_skip_kb(),
+    )
 
 
 @router.message(ManagerVacancyForm.details, F.text)
-async def manager_vacancy_finish(message: Message, state: FSMContext, bot: Bot):
-    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
-    if not user:
-        await state.clear()
+async def manager_vacancy_details(message: Message, state: FSMContext):
+    text = message.text.strip()
+    details = None if text == kb.MGR_VAC_SKIP else text
+    await state.update_data(details=details)
+    data = await state.get_data()
+    await state.set_state(ManagerVacancyForm.confirm)
+    await message.answer(
+        "✅ Ma'lumot to'plandi.", reply_markup=kb.manager_menu()
+    )
+    await message.answer(
+        _mgr_vacancy_summary(data), reply_markup=kb.manager_vacancy_confirm_kb()
+    )
+
+
+@router.callback_query(F.data == "mgrvac_cancel")
+async def manager_vacancy_confirm_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("❌ Vakansiya so'rovi bekor qilindi.")
+    await call.answer()
+
+
+@router.callback_query(F.data == "mgrvac_confirm")
+async def manager_vacancy_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_MANAGER, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
         return
     data = await state.get_data()
+    if not data.get("position"):
+        await call.answer("⏳ Sessiya tugagan. Qaytadan «➕ Xodim kerak» ni bosing.",
+                          show_alert=True)
+        await state.clear()
+        return
     await state.clear()
-    rid = await q.add_manager_request(
-        {
-            "manager_user_id": user["id"],
-            "branch_id": user.get("branch_id"),
-            "kind": "vacancy",
-            "title": data.get("title"),
-            "staff_count": data.get("staff_count"),
-            "details": message.text.strip(),
-        }
-    )
+    rid = await q.add_manager_request({
+        "manager_user_id": user["id"],
+        "branch_id": user.get("branch_id"),
+        "kind": "vacancy",
+        "title": data.get("position"),
+        "staff_count": data.get("staff_count"),
+        "shift": data.get("shift"),
+        "experience": data.get("experience"),
+        "details": data.get("details"),
+    })
     req = await q.get_manager_request(rid)
-    await q.add_log(message.from_user.id, message.from_user.full_name, "rahbar_vakansiya_soradi", f"#{rid}")
-    await message.answer("✅ So'rovingiz HR ga yuborildi.")
+    await q.add_log(call.from_user.id, call.from_user.full_name,
+                    "rahbar_vakansiya_soradi", f"#{rid}")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("✅ So'rovingiz HR ga yuborildi. HR tasdiqlagach "
+                              "vakansiya kanalga joylanadi.")
+    await call.answer("Yuborildi ✅")
     await notify_hr_admin(
         bot,
-        "📨 <b>Filial rahbaridan yangi so'rov!</b>\n\n" + manager_request_text(req),
+        "📨 <b>Filial rahbaridan yangi vakansiya so'rovi!</b>\n\n" + manager_request_text(req),
         reply_markup=kb.manager_request_actions_kb(rid, "vacancy"),
     )
 
@@ -190,6 +284,86 @@ async def manager_my_request_view(call: CallbackQuery):
         return
     await call.message.answer(manager_request_text(req))
     await call.answer()
+
+
+# ---------------- MENING VAKANSIYALARIM ----------------
+@router.message(F.text == "📢 Mening vakansiyalarim")
+async def manager_my_vacancies(message: Message):
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    if not user:
+        return
+    vacs = await q.list_vacancies_by_manager_request_creator(user["id"], limit=30)
+    if not vacs:
+        await message.answer(
+            "📢 Hali tasdiqlangan vakansiyangiz yo'q.\n"
+            "«➕ Xodim kerak» orqali so'rov yuboring — HR tasdiqlagach shu yerda ko'rinadi."
+        )
+        return
+    await message.answer(
+        f"📢 <b>Mening vakansiyalarim</b>\n\nJami: <b>{len(vacs)}</b> ta\n"
+        "Batafsil ko'rish / yakunlash uchun tanlang:",
+        reply_markup=kb.manager_my_vacancies_kb(vacs),
+    )
+
+
+@router.callback_query(F.data.startswith("mymgrvac:"))
+async def manager_my_vacancy_view(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_MANAGER, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    vid = int(call.data.split(":")[1])
+    v = await q.get_vacancy(vid)
+    if not v:
+        await call.answer("Vakansiya topilmadi.", show_alert=True)
+        return
+    if v.get("filled"):
+        status = "✅ Hodimlar soni to'ldi (yakunlangan)"
+    elif v.get("is_active"):
+        status = "🟢 Faol — nomzodlar qabul qilinmoqda"
+    else:
+        status = "🔴 Yopiq"
+    text = vacancy_channel_text(v) + f"\n\n📌 Holati: <b>{status}</b>"
+    markup = None if v.get("filled") else kb.manager_vacancy_finish_kb(vid)
+    await call.message.answer(text, reply_markup=markup)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("mgrvacfin:"))
+async def manager_vacancy_finish_cb(call: CallbackQuery, bot: Bot):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_MANAGER, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    vid = int(call.data.split(":")[1])
+    v = await q.get_vacancy(vid)
+    if not v:
+        await call.answer("Vakansiya topilmadi.", show_alert=True)
+        return
+    if v.get("filled"):
+        await call.answer("Bu vakansiya allaqachon yakunlangan.", show_alert=True)
+        return
+    await q.mark_vacancy_filled(vid)
+    await q.add_log(call.from_user.id, user.get("full_name"), "vakansiya_yakunladi", f"#{vid}")
+    # Kanaldagi postni yangilaymiz
+    v = await q.get_vacancy(vid)
+    channel_ok = await mark_vacancy_channel_filled(bot, v)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    note = " Kanaldagi e'lon yangilandi." if channel_ok else ""
+    await call.message.answer(
+        f"✅ Vakansiya #{vid} yakunlandi — hodimlar soni to'ldi.{note}"
+    )
+    await call.answer("Yakunlandi ✅")
+    # HR/Admin ga xabar
+    await notify_hr_admin(
+        bot,
+        f"✅ <b>Vakansiya yakunlandi</b>\n\n"
+        f"💼 {v.get('title')} · 🏢 {v.get('branch_name') or '-'}\n"
+        f"Filial rahbari «{user.get('full_name')}» hodimlar soni to'lganini bildirdi.",
+    )
 
 
 @router.message(F.text == "👥 Filial xodimlari")
@@ -283,6 +457,47 @@ async def manager_branch_stats(message: Message):
     await message.answer(text)
 
 
+# ---------------- BUGUNGI DAVOMAT (rahbar) ----------------
+@router.message(F.text == "📊 Bugungi davomat")
+async def manager_today_attendance(message: Message):
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    if not user:
+        return
+    branch_id = await _manager_branch_id(user)
+    if not branch_id:
+        await message.answer("Sizga filial biriktirilmagan.")
+        return
+    branch = await q.get_branch(branch_id)
+    employees = await q.list_employee_profiles(branch_id=branch_id)
+    present = await q.attendance_detail(period="day", branch_id=branch_id, limit=200)
+    absent = await q.attendance_absent_today(branch_id=branch_id)
+    name = branch["name"] if branch else "Filial"
+    lines = [
+        f"📊 <b>{name} — bugungi davomat</b>",
+        "━━━━━━━━━━━━",
+        f"👥 Jami xodim: <b>{len(employees)}</b>",
+        f"✅ Kelgan: <b>{len(present)}</b>",
+        f"❌ Kelmagan: <b>{len(absent)}</b>",
+    ]
+    if present:
+        lines.append("\n<b>✅ Kelganlar:</b>")
+        for a in present:
+            came = a.get("time") or "-"
+            out = a.get("out_time")
+            out_txt = f"ketdi {out}" if out else "hali ishda"
+            marks = ""
+            if a.get("late"):
+                marks += " ⏰kech"
+            if a.get("early"):
+                marks += " 🏃erta"
+            lines.append(f"• {a.get('full_name') or '-'} — keldi {came}, {out_txt}{marks}")
+    if absent:
+        lines.append("\n<b>❌ Kelmaganlar:</b>")
+        for a in absent[:50]:
+            lines.append(f"• {a.get('full_name') or '-'}")
+    await message.answer("\n".join(lines))
+
+
 # ---------------- FORMASI YO'Q XODIMLAR ----------------
 @router.message(F.text == "👕 Formasi yo'q xodimlar")
 async def manager_no_uniform(message: Message):
@@ -339,6 +554,7 @@ async def manager_application_view(call: CallbackQuery, bot: Bot):
         await call.answer("Bu ariza sizning filialingizga tegishli emas.", show_alert=True)
         return
     await call.message.answer(application_text(app, full=True))
+    await send_application_photo(bot, call.message.chat.id, app)
     await send_application_resume(bot, call.message.chat.id, app)
     await call.answer()
 
@@ -679,6 +895,7 @@ async def director_application_view(call: CallbackQuery, bot: Bot):
         application_text(app, full=True),
         reply_markup=kb.director_app_actions_kb(app["id"]),
     )
+    await send_application_photo(bot, call.message.chat.id, app)
     await send_application_resume(bot, call.message.chat.id, app)
     await call.answer()
 

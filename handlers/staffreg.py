@@ -526,7 +526,15 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         return
     me = await q.get_user(call.from_user.id)
     role = reg.get("role") or ROLE_EMPLOYEE
-    await q.set_staff_reg_status(rid, "approved", handled_by=me["id"])
+    # ATOMIK — bir marta tasdiqlanadi
+    if not await q.claim_request("staff_regs", rid, "approved", me["id"], "new"):
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
+                          show_alert=True)
+        return
     await q.set_role(reg["user_tg"], role, reg.get("branch_id"))
     await q.upsert_employee_profile(
         user_id=reg["user_id"],

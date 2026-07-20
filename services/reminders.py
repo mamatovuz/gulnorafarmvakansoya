@@ -6,9 +6,18 @@ from datetime import datetime, timedelta
 from aiogram import Bot
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT, ROLE_MANAGER, ROLE_DIRECTOR
 import keyboards as kb
 from utils import safe_send, days_left_until, probation_text, iso_to_display, now_tk
+
+
+def _time_reached(now, hhmm, default="00:00"):
+    """now (Toshkent) belgilangan HH:MM ga yetgan yoki o'tganini tekshiradi."""
+    try:
+        h, m = (hhmm or default).strip().split(":")
+        return (now.hour, now.minute) >= (int(h), int(m))
+    except (ValueError, AttributeError):
+        return False
 
 logger = logging.getLogger("hrbot.reminders")
 
@@ -266,4 +275,150 @@ async def advance_prompt_loop(bot: Bot, interval_seconds=3600):
             raise
         except Exception:
             logger.exception("Avans so'rovini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- KUNLIK DAM OLISH: 17:00 RAHBARGA SO'ROV ----------------
+async def _run_dayoff_prompt(bot: Bot):
+    now = now_tk()
+    hhmm = await q.get_setting("dayoff_prompt_time", "17:00")
+    if not _time_reached(now, hhmm, "17:00"):
+        return
+    plan_dt = now + timedelta(days=1)
+    plan_date = plan_dt.strftime("%Y-%m-%d")
+    flag_key = f"dayoff_prompt_sent:{plan_date}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return
+    from handlers.dayoff_plan import weekday_uz, plan_prompt_text
+    weekday = weekday_uz(plan_dt)
+    branches = await q.list_branches()
+    for br in branches:
+        mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=br["id"])
+        if not mgr_ids:
+            continue
+        plan_id = await q.create_dayoff_plan(br["id"], plan_date, weekday)
+        if plan_id is None:
+            continue  # allaqachon yaratilgan (qayta yubormaymiz)
+        profiles = await q.list_employee_profiles(branch_id=br["id"])
+        off = [p for p in profiles if (p.get("rest_day") or "").strip() == weekday]
+        for p in off:
+            await q.add_dayoff_plan_item(
+                plan_id, p["user_id"], p.get("full_name"), p.get("position")
+            )
+        if not off:
+            # Hech kim dam olmaydi — rejani avtomatik tasdiqlaymiz, rahbarni bezovta qilmaymiz
+            await q.set_dayoff_plan_status(plan_id, "confirmed")
+            continue
+        plan = await q.get_dayoff_plan(plan_id)
+        items = await q.list_dayoff_plan_items(plan_id)
+        for tid in mgr_ids:
+            await safe_send(
+                bot, tid, plan_prompt_text(plan, items),
+                reply_markup=kb.dayoff_plan_confirm_kb(plan_id),
+            )
+    await q.set_setting(flag_key, "1")
+    logger.info("Kunlik dam olish so'rovi yuborildi (%s)", plan_date)
+
+
+async def dayoff_prompt_loop(bot: Bot, interval_seconds=60):
+    while True:
+        try:
+            await _run_dayoff_prompt(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Kunlik dam olish so'rovida xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- KUNLIK DAM OLISH: 08:30 HR GA EXCEL HISOBOT ----------------
+async def _run_dayoff_report(bot: Bot):
+    now = now_tk()
+    hhmm = await q.get_setting("dayoff_report_time", "08:30")
+    if not _time_reached(now, hhmm, "08:30"):
+        return
+    date_iso = now.strftime("%Y-%m-%d")
+    flag_key = f"dayoff_report_sent:{date_iso}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return
+    from handlers.dayoff_plan import send_dayoff_report
+    ids = set(await q.all_user_tg_ids(role=ROLE_HR)) | set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    if ids:
+        await send_dayoff_report(bot, ids, date_iso, note_empty=False)
+    await q.set_setting(flag_key, "1")
+    logger.info("Kunlik dam olish hisoboti HR ga yuborildi (%s)", date_iso)
+
+
+async def dayoff_report_loop(bot: Bot, interval_seconds=60):
+    while True:
+        try:
+            await _run_dayoff_report(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Kunlik dam olish hisobotida xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- KUNLIK DAVOMAT: 20:00 DIREKTORGA EXCEL ----------------
+async def _run_director_report(bot: Bot):
+    now = now_tk()
+    hhmm = await q.get_setting("director_report_time", "20:00")
+    if not _time_reached(now, hhmm, "20:00"):
+        return
+    date_iso = now.strftime("%Y-%m-%d")
+    flag_key = f"director_report_sent:{date_iso}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return
+    from services import export
+    branches = await q.list_branches()
+    branches_data = []
+    for br in branches:
+        profiles = await q.list_employee_profiles(branch_id=br["id"])
+        total = len(profiles)
+        if total == 0:
+            continue
+        detail = await q.attendance_detail(period="day", branch_id=br["id"], limit=200)
+        absent = await q.attendance_absent_today(branch_id=br["id"])
+        present = max(total - len(absent), 0)
+        rows = [{
+            "full_name": d.get("full_name"), "came": d.get("time"),
+            "out": d.get("out_time"), "late": d.get("late"), "early": d.get("early"),
+        } for d in detail]
+        branches_data.append({
+            "branch_name": br["name"], "total": total, "present": present,
+            "absent": len(absent), "detail": rows,
+        })
+    if not branches_data:
+        await q.set_setting(flag_key, "1")
+        return
+    xlsx = export.build_daily_attendance_xlsx(branches_data, iso_to_display(date_iso))
+    tot_e = sum(b["total"] for b in branches_data)
+    tot_p = sum(b["present"] for b in branches_data)
+    tot_a = sum(b["absent"] for b in branches_data)
+    caption = (
+        "📊 <b>Kunlik davomat hisoboti</b>\n"
+        f"📆 Sana: <b>{iso_to_display(date_iso)}</b>\n"
+        f"🏢 Filiallar: <b>{len(branches_data)}</b>\n"
+        f"👥 Jami xodim: <b>{tot_e}</b>\n"
+        f"✅ Kelgan: <b>{tot_p}</b> · ❌ Kelmagan: <b>{tot_a}</b>"
+    )
+    ids = set(await q.all_user_tg_ids(role=ROLE_DIRECTOR)) | set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    for tid in ids:
+        try:
+            await bot.send_document(tid, xlsx, caption=caption)
+        except Exception:
+            await safe_send(bot, tid, caption)
+    await q.set_setting(flag_key, "1")
+    logger.info("Kunlik davomat hisoboti direktorga yuborildi (%s)", date_iso)
+
+
+async def director_report_loop(bot: Bot, interval_seconds=60):
+    while True:
+        try:
+            await _run_director_report(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Direktor kunlik hisobotida xatolik")
         await asyncio.sleep(interval_seconds)

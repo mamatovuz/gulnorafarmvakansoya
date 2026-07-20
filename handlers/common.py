@@ -140,7 +140,7 @@ async def help_cmd(message: Message):
         "🏁 <b>Ishdan ketdim</b> — ketish vaqtini belgilash (GPS).\n"
         "🔄 <b>Dam olish kunini almashtirish</b> — filial rahbari/HR tasdiqlaydi.\n"
         "👤 <b>Mening profilim</b> — ma'lumot va davomat tarixi.\n\n"
-        "Rolingizga qarab Farmatsevt, Filial rahbari, Direktor, Buxgalter, HR yoki "
+        "Rolingizga qarab Farmatsevt, Filial rahbari, Direktor, Moliya bo'limi, HR yoki "
         "Admin paneli menyuda ko'rinadi.\n\n"
         "Savollar bo'lsa administrator bilan bog'laning."
     )

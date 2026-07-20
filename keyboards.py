@@ -59,7 +59,7 @@ def main_menu(role, has_applied=False):
     if role == ROLE_DIRECTOR:
         b.button(text="📈 Direktor panel")
     if role == ROLE_ACCOUNTANT:
-        b.button(text="🧮 Buxgalter panel")
+        b.button(text="🧮 Moliya bo'limi")
     if role == ROLE_IT:
         b.button(text="🖥 IT xodim panel")
     if role == ROLE_HR:
@@ -68,7 +68,7 @@ def main_menu(role, has_applied=False):
         b.button(text="👨‍💼 HR panel")
         b.button(text="👑 Admin panel")
         b.button(text="📈 Direktor panel")
-        b.button(text="🧮 Buxgalter panel")
+        b.button(text="🧮 Moliya bo'limi")
         b.button(text="🖥 IT xodim panel")
     b.adjust(2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
@@ -184,7 +184,7 @@ def apply_branch_kb(branches):
 
 
 POSITIONS = [
-    "💊 Farmatsevt", "👨‍💼 Filial rahbari", "👔 Direktor", "🧮 Buxgalter",
+    "💊 Farmatsevt", "👨‍💼 Filial rahbari", "👔 Direktor", "🧮 Moliya bo'limi",
     "🧹 Tozalik xodimi", "📦 Omborchi", "🚚 Haydovchi",
 ]
 
@@ -390,6 +390,7 @@ def hr_menu():
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
     b.button(text="📍 Davomat")
+    b.button(text="🛌 Kunlik dam olish")
     b.button(text="⚙️ Davomat sozlamalari")
     b.button(text="🧪 Sinov muddati")
     b.button(text="💵 Avans")
@@ -399,7 +400,7 @@ def hr_menu():
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -733,11 +734,72 @@ def manager_request_actions_kb(request_id, kind):
     return b.as_markup()
 
 
+# ---- Filial rahbari vakansiya (xodim kerak) so'rovi ----
+MGR_SHIFT_MORNING = "☀️ Ertalabki smena (08:00 - 17:00)"
+MGR_SHIFT_EVENING = "🌙 Kechki smena (14:00 - 00:00)"
+MGR_VAC_SKIP = "⏭️ O'tkazib yuborish"
+
+
+def manager_vacancy_position_kb(positions=None):
+    b = ReplyKeyboardBuilder()
+    for label, _role, _pos in staff_role_options(positions):
+        b.button(text=label)
+    b.button(text=CANCEL_BTN)
+    b.adjust(2)
+    return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+def manager_vacancy_shift_kb():
+    return _choices([MGR_SHIFT_MORNING, MGR_SHIFT_EVENING], row=1)
+
+
+def manager_vacancy_skip_kb():
+    b = ReplyKeyboardBuilder()
+    b.button(text=MGR_VAC_SKIP)
+    b.button(text=CANCEL_BTN)
+    b.adjust(1)
+    return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+def manager_vacancy_confirm_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlab HR ga yuborish", callback_data="mgrvac_confirm")
+    b.button(text="❌ Bekor qilish", callback_data="mgrvac_cancel")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def manager_my_vacancies_kb(vacancies, prefix="mymgrvac"):
+    b = InlineKeyboardBuilder()
+    for v in vacancies:
+        if v.get("filled"):
+            mark = "✅ to'ldi"
+        elif v.get("is_active"):
+            mark = "🟢 faol"
+        else:
+            mark = "🔴 yopiq"
+        b.button(
+            text=f"{mark} · {v.get('title') or '-'} ({v.get('staff_count') or '-'})",
+            callback_data=f"{prefix}:{v['id']}",
+        )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def manager_vacancy_finish_kb(vid):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Yakunlash (hodimlar soni to'ldi)", callback_data=f"mgrvacfin:{vid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def manager_menu():
     b = ReplyKeyboardBuilder()
     b.button(text="➕ Xodim kerak")
+    b.button(text="📢 Mening vakansiyalarim")
     b.button(text="🔧 Texnik nosozlik")
     b.button(text="👥 Filial xodimlari")
+    b.button(text="📊 Bugungi davomat")
     b.button(text="📊 Filial statistikasi")
     b.button(text="📍 Davomat")
     b.button(text="⏰ Kech/erta hisobot")
@@ -748,7 +810,7 @@ def manager_menu():
     b.button(text="📋 Mening so'rovlarim")
     b.button(text="💬 HR ga xabar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -843,7 +905,8 @@ def user_manage_kb(tg_id, blocked=False):
     return b.as_markup()
 
 
-def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60):
+def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
+                      vacancy_channel=None):
     b = InlineKeyboardBuilder()
     if require_sub:
         b.button(text="📢 Majburiy obuna: 🟢 YOQILGAN", callback_data="setsub:off")
@@ -856,6 +919,11 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60)
         b.button(text="🗑 Maxfiy kanalni uzish", callback_data="setsecret_clear")
     else:
         b.button(text="🔒 Maxfiy kanal: 🔴 ULANMAGAN (ulash)", callback_data="setsecret")
+    if vacancy_channel:
+        b.button(text="📣 Vakansiya kanali: 🟢 ULANGAN (o'zgartirish)", callback_data="setvac")
+        b.button(text="🗑 Vakansiya kanalini uzish", callback_data="setvac_clear")
+    else:
+        b.button(text="📣 Vakansiya kanali: 🔴 ULANMAGAN (ulash)", callback_data="setvac")
     b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
     b.adjust(1)
     return b.as_markup()
@@ -937,7 +1005,7 @@ def roles_pick_kb():
     b.button(text="👑 Administrator", callback_data="setrole:admin")
     b.button(text="🧑‍💼 HR", callback_data="setrole:hr")
     b.button(text="👔 Direktor", callback_data="setrole:director")
-    b.button(text="🧮 Buxgalter", callback_data="setrole:accountant")
+    b.button(text="🧮 Moliya bo'limi", callback_data="setrole:accountant")
     b.button(text="🖥 IT xodim", callback_data="setrole:it")
     b.button(text="🏢 Filial rahbari", callback_data="setrole:manager")
     b.button(text="💊 Farmatsevt", callback_data="setrole:pharmacist")
@@ -953,7 +1021,7 @@ STAFF_ROLES = [
     ("💊 Farmatsevt", ROLE_PHARMACIST, "Farmatsevt"),
     ("👨‍💼 Filial rahbari", ROLE_MANAGER, "Filial rahbari"),
     ("👔 Direktor", ROLE_DIRECTOR, "Direktor"),
-    ("🧮 Buxgalter", ROLE_ACCOUNTANT, "Buxgalter"),
+    ("🧮 Moliya bo'limi", ROLE_ACCOUNTANT, "Moliya bo'limi"),
     ("🧹 Tozalik rahbari", ROLE_EMPLOYEE, "Tozalik rahbari"),
     ("📦 Omborchi", ROLE_EMPLOYEE, "Omborchi"),
     ("🚚 Haydovchi", ROLE_EMPLOYEE, "Haydovchi"),
@@ -1248,7 +1316,7 @@ def advance_confirm_kb():
 
 def advance_send_acc_kb(period):
     b = InlineKeyboardBuilder()
-    b.button(text="📤 Buxgalterga yuborish", callback_data=f"avns_send:{period}")
+    b.button(text="📤 Moliya bo'limiga yuborish", callback_data=f"avns_send:{period}")
     return b.as_markup()
 
 
@@ -1301,5 +1369,28 @@ def dayoff_list_kb(reqs, prefix="doview"):
             text=f"#{r['id']} · {r.get('full_name') or '-'} · {r.get('from_day')}→{r.get('to_day')} · {r.get('status')}",
             callback_data=f"{prefix}:{r['id']}",
         )
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- KUNLIK DAM OLISH REJASI (17:00 tasdiq) ----------------
+def dayoff_plan_confirm_kb(plan_id):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"dopl_ok:{plan_id}")
+    b.button(text="✏️ Tahrirlash", callback_data=f"dopl_edit:{plan_id}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def dayoff_plan_edit_kb(plan_id, items):
+    """Har bir xodim uchun holat tugmasi: 🛌 dam oladi <-> ✅ keladi."""
+    b = InlineKeyboardBuilder()
+    for it in items:
+        if it.get("day_status") == "off":
+            label = f"🛌 {it.get('full_name') or '-'} — dam oladi"
+        else:
+            label = f"✅ {it.get('full_name') or '-'} — keladi"
+        b.button(text=label, callback_data=f"dopl_tog:{it['id']}")
+    b.button(text="✅ Tasdiqlash", callback_data=f"dopl_ok:{plan_id}")
     b.adjust(1)
     return b.as_markup()

@@ -12,7 +12,8 @@ from states import Apply, RescheduleForm, SalaryNegoForm
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
-    send_application_resume, best_vacancy_matches, recommendation_text, now_tk,
+    send_application_resume, send_application_photo, best_vacancy_matches,
+    recommendation_text, now_tk,
 )
 
 router = Router()
@@ -164,7 +165,7 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
     Apply.education, Apply.exp_years, Apply.prev_years, Apply.criminal,
     Apply.marital, Apply.children, Apply.prev_salary, Apply.expected_salary,
     Apply.word_level, Apply.excel_level, Apply.languages, Apply.work_intent,
-    Apply.reason, Apply.phone, Apply.resume, Apply.edit_field,
+    Apply.reason, Apply.phone, Apply.photo, Apply.resume, Apply.edit_field,
 ), F.text == kb.CANCEL_BTN)
 async def apply_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -463,7 +464,7 @@ async def a_reason(message: Message, state: FSMContext):
 @router.message(Apply.phone, F.contact)
 async def a_phone_contact(message: Message, state: FSMContext):
     await state.update_data(phone=message.contact.phone_number)
-    await _ask_resume(message, state)
+    await _ask_photo(message, state)
 
 
 @router.message(Apply.phone, F.text)
@@ -477,13 +478,40 @@ async def a_phone_text(message: Message, state: FSMContext):
         )
         return
     await state.update_data(phone=message.text.strip())
+    await _ask_photo(message, state)
+
+
+async def _ask_photo(message: Message, state: FSMContext):
+    """Oxirgi 10 kunda tushgan rasm — majburiy."""
+    await state.set_state(Apply.photo)
+    await message.answer(
+        "<b>24-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
+        "rasmingizni yuboring.\n\n"
+        "<i>Rasm aniq va yaqinda olingan bo'lishi shart. Bu majburiy bosqich.</i>",
+        reply_markup=kb.cancel_kb(),
+    )
+
+
+@router.message(Apply.photo, F.photo)
+async def a_photo(message: Message, state: FSMContext):
+    await state.update_data(photo_file_id=message.photo[-1].file_id)
     await _ask_resume(message, state)
+
+
+@router.message(Apply.photo)
+async def a_photo_invalid(message: Message):
+    # Rasm o'rniga boshqa narsa yuborilsa — qayta so'raymiz (majburiy)
+    await message.answer(
+        "❗️ Iltimos, <b>rasm (foto)</b> yuboring — oxirgi 10 kun ichida tushgan "
+        "shaxsiy rasmingiz. Faqat rasm qabul qilinadi.",
+        reply_markup=kb.cancel_kb(),
+    )
 
 
 async def _ask_resume(message: Message, state: FSMContext):
     await state.set_state(Apply.resume)
     await message.answer(
-        "<b>24-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
+        "<b>25-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
         "Faylni yuboring yoki «⏭️ O'tkazib yuborish» tugmasini bosing.",
         reply_markup=kb.apply_resume_kb(),
     )
@@ -671,7 +699,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
         "prev_years", "criminal", "marital", "children", "prev_salary",
         "expected_salary", "word_level", "excel_level", "languages",
         "work_intent", "reason", "phone",
-        "resume_file_id", "resume_type",
+        "resume_file_id", "resume_type", "photo_file_id",
     ]
     app_data = {f: data.get(f) for f in db_fields}
     app_data["user_id"] = user["id"]
@@ -721,6 +749,8 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
             text += "\n" + rec
     for tid in set(hr_ids + admin_ids):
         await safe_send(bot, tid, text, reply_markup=kb.application_actions_kb(aid))
+        # Oxirgi 10 kunda tushgan rasm
+        await send_application_photo(bot, tid, app)
         # Rezyume fayli bo'lsa alohida yuboramiz
         await send_application_resume(bot, tid, app)
 
@@ -749,6 +779,7 @@ async def my_application_view(call: CallbackQuery, bot: Bot):
         await call.answer("Ariza topilmadi.", show_alert=True)
         return
     await call.message.answer(application_text(app, full=True))
+    await send_application_photo(bot, call.message.chat.id, app)
     await send_application_resume(bot, call.message.chat.id, app)
     await call.answer()
 

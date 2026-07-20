@@ -4,6 +4,46 @@ from config import DB_PATH, SUPER_ADMINS
 from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER
 
 
+_CLAIMABLE_TABLES = {
+    "manager_requests", "dayoff_requests", "termination_requests",
+    "salary_raise_requests", "advance_requests", "staff_regs",
+}
+
+
+async def claim_request(table, rid, new_status, handled_by=None, expected="new"):
+    """So'rovni ATOMIK ravishda «egallaydi»: faqat status hali `expected` bo'lsa
+    o'zgartiradi. True qaytarsa — shu chaqiruv egalladi; False — kimdir allaqachon
+    ko'rib chiqqan. Bir so'rov ikki marta tasdiqlanishining oldini oladi."""
+    if table not in _CLAIMABLE_TABLES:
+        raise ValueError("Ruxsat etilmagan jadval")
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            f"UPDATE {table} SET status=?, handled_by=? WHERE id=? AND status=?",
+            (new_status, handled_by, rid, expected),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def accept_application_once(aid, handled_by=None):
+    """Arizani ATOMIK qabul qiladi — faqat hali qabul qilinmagan bo'lsa. Bir ariza
+    ikki HR tomonidan ikki marta qabul qilinishining oldini oladi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE applications SET status='accepted', handled_by=? "
+            "WHERE id=? AND status!='accepted'",
+            (handled_by, aid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
 async def _conn():
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
@@ -280,8 +320,9 @@ async def add_vacancy(data, created_by):
         cur = await db.execute(
             """INSERT INTO vacancies
             (title, branch_id, job_type, shift, salary, work_time,
-             requirements, responsibilities, conditions, is_active, created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+             requirements, responsibilities, conditions, staff_count, experience,
+             manager_request_id, is_active, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("title"),
                 data.get("branch_id"),
@@ -292,6 +333,9 @@ async def add_vacancy(data, created_by):
                 data.get("requirements"),
                 data.get("responsibilities"),
                 data.get("conditions"),
+                data.get("staff_count"),
+                data.get("experience"),
+                data.get("manager_request_id"),
                 1 if data.get("is_active", True) else 0,
                 created_by,
             ),
@@ -335,6 +379,8 @@ async def update_vacancy_field(vid, field, value):
     allowed = {
         "title", "branch_id", "job_type", "shift", "salary", "work_time",
         "requirements", "responsibilities", "conditions", "is_active",
+        "staff_count", "experience", "channel_chat_id", "channel_message_id",
+        "filled",
     }
     if field not in allowed:
         raise ValueError("Ruxsat etilmagan maydon")
@@ -362,7 +408,7 @@ APP_FIELDS = [
     "shift", "education", "exp_years", "prev_years", "criminal", "marital",
     "children", "prev_salary", "expected_salary", "word_level", "excel_level",
     "languages", "work_intent", "reason", "phone", "resume_file_id",
-    "resume_type",
+    "resume_type", "photo_file_id",
 ]
 
 
@@ -749,14 +795,17 @@ async def add_manager_request(data):
     try:
         cur = await db.execute(
             """INSERT INTO manager_requests
-               (manager_user_id, branch_id, kind, title, staff_count, details)
-               VALUES (?,?,?,?,?,?)""",
+               (manager_user_id, branch_id, kind, title, staff_count, shift,
+                experience, details)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 data.get("manager_user_id"),
                 data.get("branch_id"),
                 data.get("kind"),
                 data.get("title"),
                 data.get("staff_count"),
+                data.get("shift"),
+                data.get("experience"),
                 data.get("details"),
             ),
         )
@@ -2409,5 +2458,219 @@ async def probation_attendance_stats(user_id, start_iso, end_iso):
         )
         row = await cur.fetchone()
         return dict(row) if row else {"present_days": 0, "lates": 0, "earlies": 0}
+    finally:
+        await db.close()
+
+
+# ==================== VAKANSIYA (kanal / yakunlash) ====================
+async def set_vacancy_channel(vid, chat_id, message_id):
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE vacancies SET channel_chat_id=?, channel_message_id=? WHERE id=?",
+            (str(chat_id), message_id, vid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def mark_vacancy_filled(vid):
+    """Vakansiyani yakunlaydi: hodimlar soni to'ldi (filled=1, faol emas)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE vacancies SET filled=1, is_active=0 WHERE id=?", (vid,)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_vacancies_by_creator(created_by, limit=30):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT v.*, b.name AS branch_name
+               FROM vacancies v LEFT JOIN branches b ON b.id=v.branch_id
+               WHERE v.created_by=?
+               ORDER BY v.id DESC LIMIT ?""",
+            (created_by, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_vacancies_by_manager_request_creator(manager_user_id, limit=30):
+    """Rahbar so'rovi asosida ochilgan vakansiyalar (rahbar o'z so'rovlaridan)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT v.*, b.name AS branch_name
+               FROM vacancies v
+               JOIN manager_requests mr ON mr.id=v.manager_request_id
+               LEFT JOIN branches b ON b.id=v.branch_id
+               WHERE mr.manager_user_id=?
+               ORDER BY v.id DESC LIMIT ?""",
+            (manager_user_id, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+# ==================== KUNLIK DAM OLISH REJASI ====================
+async def create_dayoff_plan(branch_id, plan_date, weekday):
+    """Filial+sana uchun reja yaratadi. Mavjud bo'lsa None qaytaradi."""
+    db = await _conn()
+    try:
+        try:
+            cur = await db.execute(
+                """INSERT INTO dayoff_plans (branch_id, plan_date, weekday)
+                   VALUES (?,?,?)""",
+                (branch_id, plan_date, weekday),
+            )
+            await db.commit()
+            return cur.lastrowid
+        except aiosqlite.IntegrityError:
+            return None
+    finally:
+        await db.close()
+
+
+async def add_dayoff_plan_item(plan_id, user_id, full_name, position, day_status="off"):
+    db = await _conn()
+    try:
+        await db.execute(
+            """INSERT INTO dayoff_plan_items
+               (plan_id, user_id, full_name, position, day_status)
+               VALUES (?,?,?,?,?)""",
+            (plan_id, user_id, full_name, position, day_status),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_dayoff_plan(plan_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT dp.*, b.name AS branch_name
+               FROM dayoff_plans dp LEFT JOIN branches b ON b.id=dp.branch_id
+               WHERE dp.id=?""",
+            (plan_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_dayoff_plan_by_branch_date(branch_id, plan_date):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM dayoff_plans WHERE branch_id=? AND plan_date=?",
+            (branch_id, plan_date),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_dayoff_plan_items(plan_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM dayoff_plan_items WHERE plan_id=? ORDER BY full_name",
+            (plan_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def toggle_dayoff_plan_item(item_id):
+    """Item holatini off<->work almashtiradi. Yangi holatni qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT day_status FROM dayoff_plan_items WHERE id=?", (item_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        new_status = "work" if row[0] == "off" else "off"
+        await db.execute(
+            "UPDATE dayoff_plan_items SET day_status=? WHERE id=?",
+            (new_status, item_id),
+        )
+        await db.commit()
+        return new_status
+    finally:
+        await db.close()
+
+
+async def get_dayoff_plan_item(item_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM dayoff_plan_items WHERE id=?", (item_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_dayoff_plan_status(plan_id, status, confirmed_by=None):
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE dayoff_plans
+               SET status=?, confirmed_by=?,
+                   confirmed_at=datetime('now','+5 hours')
+               WHERE id=?""",
+            (status, confirmed_by, plan_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_dayoff_plans_for_date(plan_date, status=None):
+    db = await _conn()
+    try:
+        sql = """SELECT dp.*, b.name AS branch_name
+                 FROM dayoff_plans dp LEFT JOIN branches b ON b.id=dp.branch_id
+                 WHERE dp.plan_date=?"""
+        params = [plan_date]
+        if status:
+            sql += " AND dp.status=?"
+            params.append(status)
+        sql += " ORDER BY b.name"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def count_dayoff_off_items(plan_id):
+    """Rejada 'off' (dam oladigan) va 'work' (keladigan) itemlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT
+                 SUM(CASE WHEN day_status='off' THEN 1 ELSE 0 END) AS off_cnt,
+                 SUM(CASE WHEN day_status='work' THEN 1 ELSE 0 END) AS work_cnt,
+                 COUNT(*) AS total
+               FROM dayoff_plan_items WHERE plan_id=?""",
+            (plan_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else {"off_cnt": 0, "work_cnt": 0, "total": 0}
     finally:
         await db.close()

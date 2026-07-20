@@ -33,6 +33,7 @@ class Apply(StatesGroup):
     work_intent = State()      # 19
     reason = State()           # 20
     phone = State()            # 21
+    photo = State()            # 21b oxirgi 10 kunda tushgan rasm (majburiy)
     resume = State()           # 22
     confirm = State()          # yakuniy tasdiqlash
     edit_field = State()       # bitta maydonni tahrirlash
@@ -156,9 +157,12 @@ class RoleForm(StatesGroup):
 
 class ManagerVacancyForm(StatesGroup):
     """Filial rahbari HR ga xodim kerakligi haqida so'rov yuboradi."""
-    title = State()
-    staff_count = State()
-    details = State()
+    position = State()      # yo'nalish (lavozim)
+    staff_count = State()   # nechta xodim kerak
+    shift = State()         # smena (ertalabki/kechki)
+    experience = State()    # talab qilinadigan tajriba
+    details = State()       # qo'shimcha izoh (ixtiyoriy)
+    confirm = State()       # yakuniy tasdiqlash
 
 
 class TechIssueForm(StatesGroup):
@@ -187,6 +191,7 @@ class SettingsForm(StatesGroup):
     """Admin bot sozlamalarini o'zgartiradi."""
     welcome = State()
     secret_channel = State()   # maxfiy kanal chat_id
+    vacancy_channel = State()  # vakansiyalar joylanadigan kanal chat_id
     match_threshold = State()  # moslik (tavsiya) foizi
     avans_prompt_day = State()  # avans so'rovi yuboriladigan kun
     avans_pay_day = State()     # avans to'lov sanasi

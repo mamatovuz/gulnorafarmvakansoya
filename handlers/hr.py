@@ -17,8 +17,8 @@ from states import (
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
-    fine_text, manager_request_text, send_application_resume,
-    post_application_to_channel, parse_date_input, add_days_iso,
+    fine_text, manager_request_text, send_application_resume, send_application_photo,
+    post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text,
 )
 from services import export
@@ -52,7 +52,7 @@ ROLE_LABELS = {
     ROLE_MANAGER: "Filial rahbari",
     ROLE_PHARMACIST: "Farmatsevt",
     ROLE_DIRECTOR: "Direktor",
-    ROLE_ACCOUNTANT: "Buxgalter",
+    ROLE_ACCOUNTANT: "Moliya bo'limi",
     ROLE_EMPLOYEE: "Xodim",
 }
 
@@ -308,6 +308,7 @@ async def app_view(call: CallbackQuery, bot: Bot):
         application_text(a, full=True),
         reply_markup=kb.application_actions_kb(aid, favorite=bool(a.get("favorite"))),
     )
+    await send_application_photo(bot, call.message.chat.id, a)
     await send_application_resume(bot, call.message.chat.id, a)
     await call.answer()
 
@@ -442,7 +443,12 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
                            start_iso, kind, days=None):
     """Arizani qabul qiladi. kind: hire (doimiy) / trial (sinov) / learner (o'rganuvchi)."""
     meta = ACCEPT_KINDS.get(kind, ACCEPT_KINDS["trial"])
-    await q.set_application_status(aid, ST_ACCEPTED, handled_by=me["id"])
+    # ATOMIK — bir ariza faqat bir marta qabul qilinadi
+    if not await q.accept_application_once(aid, me["id"]):
+        await message.answer(
+            "⚠️ Bu ariza allaqachon qabul qilingan (ehtimol boshqa HR tomonidan)."
+        )
+        return
     a = await q.get_application(aid)
     if not a:
         await message.answer("Ariza topilmadi.")
@@ -1019,6 +1025,19 @@ async def manager_request_view(call: CallbackQuery):
     await call.answer()
 
 
+async def _already_handled(call: CallbackQuery, who=None):
+    """So'rov allaqachon ko'rib chiqilgan — tugmalarni olib tashlab, xabar beramiz."""
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    suffix = f" ({who})" if who else ""
+    await call.answer(
+        f"Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan{suffix}.",
+        show_alert=True,
+    )
+
+
 @router.callback_query(F.data.startswith("mracc:"))
 async def manager_request_accept(call: CallbackQuery, bot: Bot):
     if not await is_staff(call.from_user.id):
@@ -1030,20 +1049,34 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     me = await actor(call.from_user.id)
+    # ATOMIK egallash — faqat bitta HR/admin qabul qila oladi
+    if not await q.claim_request("manager_requests", rid, "accepted", me["id"], "new"):
+        await _already_handled(call)
+        return
     extra = ""
     if req["kind"] == "vacancy":
+        shift = req.get("shift") or "Kelishiladi"
+        # Smena matnidan ish vaqtini ajratib olamiz (qavs ichidagi)
+        work_time = shift
+        if "(" in shift and ")" in shift:
+            work_time = shift[shift.find("(") + 1:shift.find(")")].strip()
+        req_lines = [f"Kerakli soni: {req.get('staff_count') or '-'} nafar"]
+        if req.get("experience"):
+            req_lines.append(f"Tajriba: {req['experience']}")
+        if req.get("details"):
+            req_lines.append(req["details"])
         vid = await q.add_vacancy(
             {
                 "title": req.get("title") or "Yangi xodim",
                 "branch_id": req.get("branch_id"),
                 "job_type": "Filial rahbari so'rovi",
-                "shift": "Kelishiladi",
+                "shift": shift,
                 "salary": "Kelishiladi",
-                "work_time": "Kelishiladi",
-                "requirements": (
-                    f"Kerakli soni: {req.get('staff_count') or '-'}\n"
-                    f"{req.get('details') or '-'}"
-                ),
+                "work_time": work_time,
+                "staff_count": req.get("staff_count"),
+                "experience": req.get("experience"),
+                "manager_request_id": rid,
+                "requirements": "\n".join(req_lines),
                 "responsibilities": "HR suhbatida aniqlanadi.",
                 "conditions": f"Rahbar so'rovi #{rid} asosida ochildi.",
                 "is_active": True,
@@ -1051,7 +1084,16 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
             created_by=me["id"],
         )
         extra = f"\n💼 Vakansiya ochildi: #{vid}"
-    await q.set_manager_request_status(rid, "accepted", handled_by=me["id"])
+        # Vakansiya kanaliga joylash (bo'lmasa maxfiy kanalga)
+        channel = await q.get_setting("vacancy_channel") or await q.get_setting("secret_channel")
+        if channel:
+            v = await q.get_vacancy(vid)
+            chat_id, msg_id = await post_vacancy_to_channel(bot, channel, v)
+            if msg_id:
+                await q.set_vacancy_channel(vid, chat_id, msg_id)
+                extra += " · 📣 kanalga joylandi"
+            else:
+                extra += " · ⚠️ kanalga joylab bo'lmadi (botni kanalga admin qiling)"
     await q.add_log(call.from_user.id, me["full_name"], "rahbar_sorovi_qabul", f"#{rid}")
     await call.message.answer(f"✅ So'rov #{rid} qabul qilindi.{extra}")
     await safe_send(
@@ -1072,7 +1114,9 @@ async def manager_request_close(call: CallbackQuery, bot: Bot):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     me = await actor(call.from_user.id)
-    await q.set_manager_request_status(rid, "closed", handled_by=me["id"])
+    if not await q.claim_request("manager_requests", rid, "closed", me["id"], "new"):
+        await _already_handled(call)
+        return
     await q.add_log(call.from_user.id, me["full_name"], "rahbar_sorovi_yopildi", f"#{rid}")
     await call.message.answer(f"❌ So'rov #{rid} yopildi.")
     await safe_send(bot, req["manager_tg"], f"❌ Siz yuborgan so'rov #{rid} yopildi.")
@@ -1094,7 +1138,10 @@ async def termination_accept(call: CallbackQuery, bot: Bot):
         await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
         return
     me = await actor(call.from_user.id)
-    await q.set_termination_request_status(rid, "approved", handled_by=me["id"])
+    # ATOMIK egallash — bir marta tasdiqlanadi
+    if not await q.claim_request("termination_requests", rid, "approved", me["id"], "new"):
+        await _already_handled(call)
+        return
     # Kadrlar harakati (IT hisoboti): ishdan ketdi — profil o'chishidan oldin yozamiz
     await q.add_hr_event(
         "left", user_id=req["employee_user_id"], full_name=req.get("employee_name"),
@@ -1178,6 +1225,9 @@ async def termination_reject_reason(message: Message, state: FSMContext, bot: Bo
         return
     me = await actor(message.from_user.id)
     reason = message.text.strip()
+    if not await q.claim_request("termination_requests", rid, "rejected", me["id"], "new"):
+        await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
+        return
     await q.set_termination_request_status(rid, "rejected", handled_by=me["id"], comment=reason)
     await q.add_log(
         message.from_user.id, me["full_name"], "ishdan_boshatish_rad",

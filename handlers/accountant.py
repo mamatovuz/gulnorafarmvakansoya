@@ -24,13 +24,13 @@ async def _is_accountant(tg_id):
     return u and u["role"] in (ROLE_ACCOUNTANT, ROLE_ADMIN)
 
 
-@router.message(F.text == "🧮 Buxgalter panel")
+@router.message(F.text == "🧮 Moliya bo'limi")
 async def accountant_panel(message: Message):
     if not await _is_accountant(message.from_user.id):
-        await message.answer("⛔ Sizda buxgalter paneli uchun ruxsat yo'q.")
+        await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
         return
     await message.answer(
-        "🧮 <b>Buxgalter paneli</b>\nKerakli bo'limni tanlang:",
+        "🧮 <b>Moliya bo'limi paneli</b>\nKerakli bo'limni tanlang:",
         reply_markup=kb.accountant_menu(),
     )
 

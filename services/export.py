@@ -183,6 +183,214 @@ def build_advance_xlsx(rows, period, pay_date=None):
     return _finish(wb, f"avans_{period}")
 
 
+def _styled_header_row(ws, row_i, headers, border, center):
+    for i, h in enumerate(headers, start=1):
+        cell = ws.cell(row=row_i, column=i, value=h)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = center
+        cell.border = border
+    ws.row_dimensions[row_i].height = 22
+
+
+def build_dayoff_xlsx(branches_data, date_display):
+    """Kunlik dam olish hisoboti — filial bo'lim-bo'lim, chiroyli dizayn.
+
+    branches_data — [{branch_name, items:[{full_name, position, day_status}]}].
+    """
+    thin = Side(style="thin", color="BBBBBB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_fill = PatternFill("solid", fgColor="1B5E20")
+    title_font = Font(bold=True, color="FFFFFF", size=16)
+    sub_font = Font(bold=True, color="1B5E20", size=11)
+    branch_fill = PatternFill("solid", fgColor="C8E6C9")
+    branch_font = Font(bold=True, color="1B5E20", size=12)
+    off_fill = PatternFill("solid", fgColor="FFF3E0")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    headers = ["№", "Ism-familiya", "Lavozim", "Holat"]
+    ncols = len(headers)
+    last_col = get_column_letter(ncols)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dam olish"
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells(f"A1:{last_col}1")
+    c = ws["A1"]
+    c.value = "GULNORA FARM — KUNLIK DAM OLISH HISOBOTI"
+    c.fill = title_fill
+    c.font = title_font
+    c.alignment = center
+    ws.row_dimensions[1].height = 30
+
+    total_off = sum(
+        sum(1 for it in b["items"] if it.get("day_status") == "off")
+        for b in branches_data
+    )
+    ws.merge_cells(f"A2:{last_col}2")
+    c2 = ws["A2"]
+    c2.value = (f"Sana: {date_display}    |    Filiallar: {len(branches_data)}"
+                f"    |    Jami dam oluvchi: {total_off} nafar")
+    c2.font = sub_font
+    c2.alignment = center
+    ws.row_dimensions[2].height = 20
+
+    row_i = 4
+    for b in branches_data:
+        off_items = [it for it in b["items"] if it.get("day_status") == "off"]
+        # Filial sarlavhasi
+        ws.merge_cells(start_row=row_i, start_column=1, end_row=row_i, end_column=ncols)
+        bc = ws.cell(row=row_i, column=1,
+                     value=f"🏢 {b['branch_name']}  —  dam oluvchi: {len(off_items)} nafar")
+        bc.fill = branch_fill
+        bc.font = branch_font
+        bc.alignment = left
+        for col_i in range(1, ncols + 1):
+            ws.cell(row=row_i, column=col_i).border = border
+        ws.row_dimensions[row_i].height = 20
+        row_i += 1
+        # Ustun sarlavhalari
+        _styled_header_row(ws, row_i, headers, border, center)
+        row_i += 1
+        if not off_items:
+            ws.merge_cells(start_row=row_i, start_column=1, end_row=row_i, end_column=ncols)
+            ec = ws.cell(row=row_i, column=1, value="— Bu filialda ertaga dam oluvchi yo'q —")
+            ec.alignment = center
+            for col_i in range(1, ncols + 1):
+                ws.cell(row=row_i, column=col_i).border = border
+            row_i += 2
+            continue
+        for idx, it in enumerate(off_items, start=1):
+            values = [idx, it.get("full_name") or "-", it.get("position") or "-", "🛌 Dam oladi"]
+            for col_i, val in enumerate(values, start=1):
+                cell = ws.cell(row=row_i, column=col_i, value=val)
+                cell.border = border
+                cell.alignment = center if col_i in (1, 4) else left
+                cell.fill = off_fill
+            row_i += 1
+        row_i += 1  # bo'lim orasida bo'sh qator
+
+    widths = [6, 30, 24, 16]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    return _finish(wb, "dam_olish")
+
+
+def build_daily_attendance_xlsx(branches_data, date_display):
+    """Direktor uchun kunlik davomat hisoboti — filial bo'lim-bo'lim.
+
+    branches_data — [{branch_name, total, present, absent,
+                      detail:[{full_name, came, out, late, early}]}].
+    """
+    thin = Side(style="thin", color="BBBBBB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_fill = PatternFill("solid", fgColor="0D47A1")
+    title_font = Font(bold=True, color="FFFFFF", size=16)
+    sub_font = Font(bold=True, color="0D47A1", size=11)
+    branch_fill = PatternFill("solid", fgColor="BBDEFB")
+    branch_font = Font(bold=True, color="0D47A1", size=12)
+    alt_fill = PatternFill("solid", fgColor="E3F2FD")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    headers = ["№", "Ism-familiya", "Keldi", "Ketdi", "Izoh"]
+    ncols = len(headers)
+    last_col = get_column_letter(ncols)
+
+    wb = Workbook()
+
+    # 1-varaq: Umumiy jadval (filiallar kesimi)
+    ws0 = wb.active
+    ws0.title = "Umumiy"
+    ws0.sheet_view.showGridLines = False
+    ws0.merge_cells("A1:D1")
+    c = ws0["A1"]
+    c.value = "GULNORA FARM — KUNLIK DAVOMAT HISOBOTI"
+    c.fill = title_fill
+    c.font = title_font
+    c.alignment = center
+    ws0.row_dimensions[1].height = 30
+    ws0.merge_cells("A2:D2")
+    c2 = ws0["A2"]
+    c2.value = f"Sana: {date_display}"
+    c2.font = sub_font
+    c2.alignment = center
+    _styled_header_row(ws0, 4, ["Filial", "Jami xodim", "Kelgan", "Kelmagan"], border, center)
+    r = 5
+    tot_e = tot_p = tot_a = 0
+    for b in branches_data:
+        tot_e += b["total"]; tot_p += b["present"]; tot_a += b["absent"]
+        vals = [b["branch_name"], b["total"], b["present"], b["absent"]]
+        for col_i, val in enumerate(vals, start=1):
+            cell = ws0.cell(row=r, column=col_i, value=val)
+            cell.border = border
+            cell.alignment = left if col_i == 1 else center
+            if r % 2 == 0:
+                cell.fill = alt_fill
+        r += 1
+    for col_i, val in enumerate(["JAMI", tot_e, tot_p, tot_a], start=1):
+        cell = ws0.cell(row=r, column=col_i, value=val)
+        cell.font = Font(bold=True)
+        cell.border = border
+        cell.alignment = left if col_i == 1 else center
+    for i, w in enumerate([28, 14, 12, 12], start=1):
+        ws0.column_dimensions[get_column_letter(i)].width = w
+
+    # 2-varaq: Filial bo'lim-bo'lim tafsilot
+    ws = wb.create_sheet("Tafsilot")
+    ws.sheet_view.showGridLines = False
+    row_i = 1
+    for b in branches_data:
+        ws.merge_cells(start_row=row_i, start_column=1, end_row=row_i, end_column=ncols)
+        bc = ws.cell(
+            row=row_i, column=1,
+            value=(f"🏢 {b['branch_name']}  —  Jami: {b['total']} | "
+                   f"Kelgan: {b['present']} | Kelmagan: {b['absent']}"),
+        )
+        bc.fill = branch_fill
+        bc.font = branch_font
+        bc.alignment = left
+        for col_i in range(1, ncols + 1):
+            ws.cell(row=row_i, column=col_i).border = border
+        ws.row_dimensions[row_i].height = 20
+        row_i += 1
+        _styled_header_row(ws, row_i, headers, border, center)
+        row_i += 1
+        detail = b.get("detail") or []
+        if not detail:
+            ws.merge_cells(start_row=row_i, start_column=1, end_row=row_i, end_column=ncols)
+            ec = ws.cell(row=row_i, column=1, value="— Bugun hech kim kelmagan —")
+            ec.alignment = center
+            for col_i in range(1, ncols + 1):
+                ws.cell(row=row_i, column=col_i).border = border
+            row_i += 2
+            continue
+        for idx, d in enumerate(detail, start=1):
+            note = []
+            if d.get("late"):
+                note.append("kech keldi")
+            if d.get("early"):
+                note.append("erta ketdi")
+            values = [
+                idx, d.get("full_name") or "-", d.get("came") or "-",
+                d.get("out") or "hali ishda", ", ".join(note) or "-",
+            ]
+            for col_i, val in enumerate(values, start=1):
+                cell = ws.cell(row=row_i, column=col_i, value=val)
+                cell.border = border
+                cell.alignment = center if col_i in (1, 3, 4) else left
+                if idx % 2 == 0:
+                    cell.fill = alt_fill
+            row_i += 1
+        row_i += 1
+    for i, w in enumerate([6, 30, 12, 14, 22], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    return _finish(wb, "kunlik_davomat")
+
+
 def build_report_xlsx(stats, branches, vacancies):
     """Umumiy hisobot: statistika + filiallar + lavozimlar kesimi."""
     wb = Workbook()

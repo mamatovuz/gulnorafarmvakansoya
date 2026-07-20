@@ -169,7 +169,14 @@ async def dayoff_approve(call: CallbackQuery, bot: Bot):
     if req.get("status") != "new":
         await call.answer("Allaqachon ko'rib chiqilgan.", show_alert=True)
         return
-    await q.set_dayoff_status(rid, "approved", handled_by=user["id"])
+    if not await q.claim_request("dayoff_requests", rid, "approved", user["id"], "new"):
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
+                          show_alert=True)
+        return
     # Yangi dam olish kunini profilga yozamiz
     if req.get("to_day"):
         await q.update_rest_day(req["user_id"], req["to_day"])
@@ -202,7 +209,14 @@ async def dayoff_reject(call: CallbackQuery, bot: Bot):
     if req.get("status") != "new":
         await call.answer("Allaqachon ko'rib chiqilgan.", show_alert=True)
         return
-    await q.set_dayoff_status(rid, "rejected", handled_by=user["id"])
+    if not await q.claim_request("dayoff_requests", rid, "rejected", user["id"], "new"):
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
+                          show_alert=True)
+        return
     await q.add_log(call.from_user.id, user["full_name"], "dam_olish_rad", f"#{rid}")
     try:
         await call.message.edit_reply_markup(reply_markup=None)

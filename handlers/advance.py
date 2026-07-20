@@ -238,7 +238,7 @@ async def hr_advance_send(call: CallbackQuery, bot: Bot):
             "💵 <b>Yangi avans ro'yxati keldi!</b>\n"
             f"📆 Davr: <b>{period}</b>\n"
             f"👥 Jami: <b>{cnt}</b> nafar\n\n"
-            "Buxgalter panelidagi «💵 Avans oluvchilar» tugmasi orqali "
+            "Moliya bo'limi panelidagi «💵 Avans oluvchilar» tugmasi orqali "
             "Excel faylni yuklab oling.",
         )
     try:

@@ -190,6 +190,7 @@ def application_summary(d):
         f"📅 Ishlash niyati: {g('work_intent')}\n"
         f"✍️ Sababi: {g('reason')}\n"
         f"📱 Telefon: {g('phone')}\n"
+        f"📸 Rasm (oxirgi 10 kun): {'✅ biriktirilgan' if d.get('photo_file_id') else '— yo`q'}\n"
         f"📄 Rezyume: {'✅ biriktirilgan' if d.get('resume_file_id') else '— yo`q'}"
     )
 
@@ -261,19 +262,28 @@ def fine_text(fine):
 
 
 def manager_request_text(req):
-    kind = "➕ Xodim kerak" if req.get("kind") == "vacancy" else "🔧 Texnik nosozlik"
-    return (
-        f"📨 <b>So'rov #{req['id']}</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"{kind}\n"
-        f"🏢 Filial: {_v(req, 'branch_name')}\n"
-        f"👤 Rahbar: {_v(req, 'manager_name')}\n"
-        f"📌 Mavzu/lavozim: {_v(req, 'title')}\n"
-        f"👥 Kerakli soni: {_v(req, 'staff_count')}\n"
-        f"📝 Tafsilot: {_v(req, 'details')}\n"
-        f"Holati: {_v(req, 'status')}\n"
-        f"🕐 Sana: {_v(req, 'created_at')}"
-    )
+    is_vacancy = req.get("kind") == "vacancy"
+    kind = "➕ Xodim kerak" if is_vacancy else "🔧 Texnik nosozlik"
+    lines = [
+        f"📨 <b>So'rov #{req['id']}</b>",
+        "━━━━━━━━━━━━",
+        kind,
+        f"🏢 Filial: {_v(req, 'branch_name')}",
+        f"👤 Rahbar: {_v(req, 'manager_name')}",
+        f"📌 {'Yo`nalish' if is_vacancy else 'Mavzu'}: {_v(req, 'title')}",
+    ]
+    if is_vacancy:
+        lines.append(f"👥 Kerakli soni: {_v(req, 'staff_count')}")
+        if req.get("shift"):
+            lines.append(f"🕒 Smena: {req['shift']}")
+        if req.get("experience"):
+            lines.append(f"📈 Tajriba: {req['experience']}")
+    lines += [
+        f"📝 Tafsilot: {_v(req, 'details')}",
+        f"Holati: {_v(req, 'status')}",
+        f"🕐 Sana: {_v(req, 'created_at')}",
+    ]
+    return "\n".join(lines)
 
 
 async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs):
@@ -295,6 +305,20 @@ async def send_application_resume(bot: Bot, chat_id: int, app):
             await bot.send_photo(chat_id, file_id, caption=caption)
         else:
             await bot.send_document(chat_id, file_id, caption=caption)
+        return True
+    except Exception:
+        return False
+
+
+async def send_application_photo(bot: Bot, chat_id: int, app):
+    """Arizadagi oxirgi 10 kunda tushgan rasmni yuboradi (bo'lsa)."""
+    file_id = app.get("photo_file_id")
+    if not file_id:
+        return False
+    try:
+        await bot.send_photo(
+            chat_id, file_id, caption=f"📸 Ariza #{app['id']} — nomzod rasmi (oxirgi 10 kun)"
+        )
         return True
     except Exception:
         return False
@@ -329,6 +353,62 @@ def normalize_chat_id(val):
         return val
 
 
+def vacancy_channel_text(v):
+    """Kanalga joylash uchun chiroyli vakansiya matni."""
+    lines = [
+        "🆕 <b>YANGI VAKANSIYA</b>",
+        "━━━━━━━━━━━━",
+        f"💼 <b>Lavozim:</b> {_v(v, 'title')}",
+        f"🏢 <b>Filial:</b> {_v(v, 'branch_name')}",
+    ]
+    if v.get("staff_count"):
+        lines.append(f"👥 <b>Kerakli xodim:</b> {v['staff_count']} nafar")
+    if v.get("shift"):
+        lines.append(f"🕒 <b>Smena:</b> {v['shift']}")
+    if v.get("work_time") and v.get("work_time") != v.get("shift"):
+        lines.append(f"⏰ <b>Ish vaqti:</b> {v['work_time']}")
+    if v.get("experience"):
+        lines.append(f"📈 <b>Tajriba:</b> {v['experience']}")
+    if v.get("salary"):
+        lines.append(f"💰 <b>Maosh:</b> {v['salary']}")
+    if v.get("requirements"):
+        lines.append(f"\n📋 <b>Talablar:</b>\n{v['requirements']}")
+    if v.get("responsibilities") and v["responsibilities"] != "HR suhbatida aniqlanadi.":
+        lines.append(f"\n🎯 <b>Vazifalar:</b>\n{v['responsibilities']}")
+    lines.append("\n📩 <b>Ariza berish:</b> botda «📝 Ishga ariza topshirish» tugmasi orqali.")
+    return "\n".join(lines)
+
+
+async def post_vacancy_to_channel(bot: Bot, chat_id, vacancy):
+    """Vakansiyani kanalga joylaydi. (chat_id, message_id) yoki (None, None) qaytaradi."""
+    chat_id = normalize_chat_id(chat_id)
+    if not chat_id:
+        return None, None
+    try:
+        msg = await bot.send_message(chat_id, vacancy_channel_text(vacancy))
+        return chat_id, msg.message_id
+    except Exception:
+        return None, None
+
+
+async def mark_vacancy_channel_filled(bot: Bot, vacancy):
+    """Kanaldagi vakansiya postini «hodimlar soni to'ldi» holatiga yangilaydi."""
+    chat_id = vacancy.get("channel_chat_id")
+    msg_id = vacancy.get("channel_message_id")
+    if not chat_id or not msg_id:
+        return False
+    chat_id = normalize_chat_id(chat_id)
+    text = (
+        vacancy_channel_text(vacancy)
+        + "\n\n✅ <b>HODIMLAR SONI TO'LDI — vakansiya yopildi.</b>"
+    )
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=int(msg_id))
+        return True
+    except Exception:
+        return False
+
+
 async def post_application_to_channel(bot: Bot, chat_id, app, header=None):
     """Ariza matnini (va bo'lsa rezyumesini) maxfiy kanalga joylashtiradi."""
     chat_id = normalize_chat_id(chat_id)
@@ -339,6 +419,7 @@ async def post_application_to_channel(bot: Bot, chat_id, app, header=None):
         text = f"{header}\n\n{text}"
     try:
         await bot.send_message(chat_id, text)
+        await send_application_photo(bot, chat_id, app)
         await send_application_resume(bot, chat_id, app)
         return True
     except Exception:

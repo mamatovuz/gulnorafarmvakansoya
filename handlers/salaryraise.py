@@ -255,8 +255,18 @@ async def hr_raise_approve(call: CallbackQuery, bot: Bot):
     if not req or req.get("status") != "pending":
         await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
         return
-    final = req.get("requested_amount")
     me = await q.get_user(call.from_user.id)
+    # ATOMIK — bir marta tasdiqlanadi
+    if not await q.claim_request("salary_raise_requests", rid, "agreed",
+                                 me["id"] if me else None, "pending"):
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
+                          show_alert=True)
+        return
+    final = req.get("requested_amount")
     await q.agree_raise(rid, final, handled_by=me["id"] if me else None)
     await q.update_monthly_salary(req["user_id"], final)
     await q.add_log(
@@ -417,6 +427,10 @@ async def hr_raise_reject_reason(message: Message, state: FSMContext, bot: Bot):
         await message.answer("Bu so'rov allaqachon yopilgan.")
         return
     me = await q.get_user(message.from_user.id)
+    if not await q.claim_request("salary_raise_requests", rid, "rejected",
+                                 me["id"] if me else None, "pending"):
+        await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
+        return
     await q.reject_raise(rid, reason, handled_by=me["id"] if me else None)
     await q.add_log(
         message.from_user.id, me["full_name"] if me else "?",
