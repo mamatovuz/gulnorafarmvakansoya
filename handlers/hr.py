@@ -899,6 +899,59 @@ async def hr_uniform(message: Message):
     )
 
 
+# ---------------- MA'LUMOT / DIPLOM STATISTIKASI (HR + Direktor) ----------------
+@router.message(F.text == "🎓 Diplom statistikasi")
+async def education_stats_report(message: Message):
+    """Xodimlarning nechtasida diplom bor, nechtasida yo'q — HR va Direktor panelida."""
+    user = await q.get_user(message.from_user.id)
+    if not user or user["role"] not in (ROLE_HR, ROLE_ADMIN, ROLE_DIRECTOR):
+        await message.answer("⛔ Sizda bu hisobotni ko'rish huquqi yo'q.")
+        return
+    s = await q.education_stats()
+    lines = [
+        "🎓 <b>Xodimlar ma'lumoti (diplom) statistikasi</b>",
+        "━━━━━━━━━━━━",
+        f"👥 Jami xodimlar: <b>{s.get('total') or 0}</b>",
+        f"✅ Diplomi bor: <b>{s.get('has_diploma') or 0}</b>",
+        f"❌ Diplomi yo'q: <b>{s.get('no_diploma') or 0}</b>",
+        f"➖ Ko'rsatilmagan: <b>{s.get('unknown') or 0}</b>",
+    ]
+    breakdown = await q.education_breakdown()
+    if breakdown:
+        lines.append("\n<b>Ma'lumot turlari bo'yicha:</b>")
+        for r in breakdown:
+            lines.append(f"  • {r['education']}: <b>{r['cnt']}</b>")
+    by_branch = await q.education_by_branch()
+    if by_branch:
+        lines.append("\n<b>Filiallar bo'yicha:</b>")
+        for r in by_branch:
+            lines.append(
+                f"  • {r['name']}: ✅ {r.get('has_diploma') or 0} · "
+                f"❌ {r.get('no_diploma') or 0} (jami {r.get('total') or 0})"
+            )
+    await message.answer("\n".join(lines))
+
+    without = await q.list_employees_without_diploma()
+    if not without:
+        return
+    if user["role"] == ROLE_DIRECTOR:
+        # Direktorda «empview» kartochkasi ochilmaydi — ro'yxatni matn bilan beramiz
+        rows = "\n".join(
+            f"  • {w.get('full_name') or w.get('tg_id')}"
+            f" · {w.get('position') or '-'} · {w.get('branch_name') or '-'}"
+            for w in without[:40]
+        )
+        await message.answer(
+            f"❌ <b>Diplomi yo'q xodimlar</b> — {len(without)} ta\n{rows}"
+        )
+        return
+    await message.answer(
+        f"❌ <b>Diplomi yo'q xodimlar</b> — {len(without)} ta\n"
+        "Batafsil ko'rish uchun tanlang:",
+        reply_markup=kb.employee_profiles_list_kb(without[:30], prefix="empview"),
+    )
+
+
 @router.callback_query(F.data.startswith("empview:"))
 async def employee_profile_view(call: CallbackQuery):
     if not await is_staff(call.from_user.id):

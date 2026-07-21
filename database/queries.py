@@ -7,6 +7,7 @@ from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER
 _CLAIMABLE_TABLES = {
     "manager_requests", "dayoff_requests", "termination_requests",
     "salary_raise_requests", "advance_requests", "staff_regs",
+    "work_hour_requests",
 }
 
 
@@ -406,7 +407,7 @@ APP_FIELDS = [
     "user_id", "vacancy_id", "branch_id", "full_name", "birth_date", "city",
     "district", "address", "position", "position_extra", "uniform_status",
     "shift", "education", "exp_years", "prev_years", "criminal", "marital",
-    "children", "prev_salary", "expected_salary", "word_level", "excel_level",
+    "children", "prev_salary", "expected_salary", "computer_level",
     "languages", "work_intent", "reason", "phone", "resume_file_id",
     "resume_type", "photo_file_id",
 ]
@@ -585,6 +586,7 @@ async def upsert_employee_profile(
     user_id, application_id, role, position, branch_id=None, uniform_status=None,
     monthly_salary=None, birth_date=None, address=None, work_hours=None,
     rest_day=None, photo_file_id=None, extra_info=None, since=None,
+    education=None,
 ):
     """Xodim profilini yaratadi yoki yangilaydi.
     None berilgan qo'shimcha maydonlar mavjud qiymatni o'zgartirmaydi (COALESCE)."""
@@ -609,22 +611,23 @@ async def upsert_employee_profile(
                        photo_file_id=COALESCE(?, photo_file_id),
                        extra_info=COALESCE(?, extra_info),
                        since=COALESCE(?, since),
+                       education=COALESCE(?, education),
                        updated_at=datetime('now','+5 hours')
                    WHERE user_id=?""",
                 (application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, user_id),
+                 photo_file_id, extra_info, since, education, user_id),
             )
         else:
             await db.execute(
                 """INSERT INTO employee_profiles
                    (user_id, application_id, role, position, branch_id, uniform_status,
                     monthly_salary, birth_date, address, work_hours, rest_day,
-                    photo_file_id, extra_info, since)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    photo_file_id, extra_info, since, education)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (user_id, application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since),
+                 photo_file_id, extra_info, since, education),
             )
         await db.commit()
     finally:
@@ -706,6 +709,90 @@ async def uniform_stats(role=None):
         cur = await db.execute(sql, params)
         row = await cur.fetchone()
         return dict(row)
+    finally:
+        await db.close()
+
+
+# ---------------- MA'LUMOTI / DIPLOM STATISTIKASI ----------------
+NO_DIPLOMA = "❌ Diplom yo'q"
+
+
+async def education_stats(branch_id=None):
+    """Xodimlar ma'lumoti bo'yicha umumiy hisob: jami / diplomi bor / yo'q / noma'lum."""
+    db = await _conn()
+    try:
+        sql = f"""SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN education IS NOT NULL AND education!=''
+                              AND education!=? THEN 1 ELSE 0 END) AS has_diploma,
+                    SUM(CASE WHEN education=? THEN 1 ELSE 0 END) AS no_diploma,
+                    SUM(CASE WHEN education IS NULL OR education=''
+                             THEN 1 ELSE 0 END) AS unknown
+                  FROM employee_profiles"""
+        params = [NO_DIPLOMA, NO_DIPLOMA]
+        if branch_id:
+            sql += " WHERE branch_id=?"
+            params.append(branch_id)
+        cur = await db.execute(sql, params)
+        return dict(await cur.fetchone())
+    finally:
+        await db.close()
+
+
+async def education_breakdown(branch_id=None):
+    """Ma'lumot turlari kesimida: [{'education': ..., 'cnt': n}, ...]."""
+    db = await _conn()
+    try:
+        sql = """SELECT COALESCE(NULLIF(education,''), '➖ Ko''rsatilmagan') AS education,
+                        COUNT(*) AS cnt
+                 FROM employee_profiles"""
+        params = []
+        if branch_id:
+            sql += " WHERE branch_id=?"
+            params.append(branch_id)
+        sql += " GROUP BY 1 ORDER BY cnt DESC"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def education_by_branch():
+    """Filiallar kesimida diplomi bor / yo'q xodimlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COALESCE(b.name, 'Filialsiz') AS name,
+                      COUNT(*) AS total,
+                      SUM(CASE WHEN ep.education IS NOT NULL AND ep.education!=''
+                                AND ep.education!=? THEN 1 ELSE 0 END) AS has_diploma,
+                      SUM(CASE WHEN ep.education=? THEN 1 ELSE 0 END) AS no_diploma
+               FROM employee_profiles ep
+               LEFT JOIN branches b ON b.id=ep.branch_id
+               GROUP BY 1 ORDER BY total DESC""",
+            (NO_DIPLOMA, NO_DIPLOMA),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_employees_without_diploma(branch_id=None, limit=50):
+    """Diplomi yo'q xodimlar ro'yxati."""
+    db = await _conn()
+    try:
+        sql = """SELECT ep.*, u.full_name, u.tg_id, b.name AS branch_name
+                 FROM employee_profiles ep
+                 JOIN users u ON u.id=ep.user_id
+                 LEFT JOIN branches b ON b.id=ep.branch_id
+                 WHERE ep.education=?"""
+        params = [NO_DIPLOMA]
+        if branch_id:
+            sql += " AND ep.branch_id=?"
+            params.append(branch_id)
+        sql += f" ORDER BY u.full_name LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
 
@@ -1385,7 +1472,7 @@ async def branch_ranking():
 STAFF_REG_FIELDS = [
     "user_id", "full_name", "birth_date", "phone", "role", "position", "address",
     "branch_id", "branch_name", "work_hours", "salary", "rest_day",
-    "uniform_status", "photo_file_id", "since", "extra_info",
+    "uniform_status", "photo_file_id", "since", "extra_info", "education",
 ]
 
 
@@ -1442,12 +1529,13 @@ async def list_staff_regs(status=None, limit=30):
         await db.close()
 
 
-async def set_staff_reg_status(rid, status, handled_by=None):
+async def set_staff_reg_status(rid, status, handled_by=None, reject_reason=None):
     db = await _conn()
     try:
         await db.execute(
-            "UPDATE staff_regs SET status=?, handled_by=? WHERE id=?",
-            (status, handled_by, rid),
+            "UPDATE staff_regs SET status=?, handled_by=?, "
+            "reject_reason=COALESCE(?, reject_reason) WHERE id=?",
+            (status, handled_by, reject_reason, rid),
         )
         await db.commit()
     finally:
@@ -1478,6 +1566,28 @@ async def get_attendance_today(tg_id):
             """SELECT a.* FROM attendance a
                JOIN users u ON u.id = a.user_id
                WHERE u.tg_id=? AND a.date=date('now','+5 hours')
+               ORDER BY a.id DESC LIMIT 1""",
+            (tg_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_open_attendance(tg_id):
+    """Hali yakunlanmagan (ishdan ketilmagan) davomat yozuvi.
+
+    Bugungi yoki kechagi (tungi smena yarim tundan o'tib ketgan) yozuvni topadi —
+    shuning uchun tanaffus/ishdan ketish soat 00:00 dan keyin ham ishlaydi.
+    Topilmasa None."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT a.* FROM attendance a
+               JOIN users u ON u.id = a.user_id
+               WHERE u.tg_id=? AND a.status='present' AND a.out_time IS NULL
+                 AND a.date >= date('now','+5 hours','-1 day')
                ORDER BY a.id DESC LIMIT 1""",
             (tg_id,),
         )
@@ -2408,6 +2518,105 @@ async def list_pending_raise_requests(limit=30):
             (limit,),
         )
         return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+# ---------------- ISH VAQTINI O'ZGARTIRISH SO'ROVI (xodim → HR) ----------------
+async def update_work_hours(user_id, work_hours):
+    """Xodim profilidagi ish vaqtini yangilaydi (davomat shu vaqtdan hisoblanadi)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE employee_profiles
+               SET work_hours=?, updated_at=datetime('now','+5 hours')
+               WHERE user_id=?""",
+            (work_hours, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_pending_work_hour_for_user(user_id):
+    """Xodimning hali javob berilmagan ish vaqti so'rovi (bo'lmasa None)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM work_hour_requests "
+            "WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def add_work_hour_request(user_id, branch_id, position, current_hours,
+                                requested_hours):
+    """Yangi ish vaqti o'zgartirish so'rovini yaratadi. id qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "INSERT INTO work_hour_requests "
+            "(user_id, branch_id, position, current_hours, requested_hours, status) "
+            "VALUES (?,?,?,?,?, 'pending')",
+            (user_id, branch_id, position, current_hours, requested_hours),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_work_hour_request(rid):
+    """So'rovni xodim tg_id, ism va filial nomi bilan birga qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.tg_id AS user_tg, u.full_name, b.name AS branch_name
+               FROM work_hour_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches b ON b.id=r.branch_id
+               WHERE r.id=?""",
+            (rid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_pending_work_hour_requests(limit=30):
+    """HR paneli uchun ochiq ish vaqti so'rovlari ro'yxati."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.full_name, b.name AS branch_name
+               FROM work_hour_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches b ON b.id=r.branch_id
+               WHERE r.status='pending'
+               ORDER BY r.id DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def close_work_hour_request(rid, status, reason=None, handled_by=None):
+    """So'rovni yopadi (approved/rejected) va sababini yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE work_hour_requests SET status=?, reject_reason=COALESCE(?, reject_reason), "
+            "handled_by=COALESCE(?, handled_by), updated_at=datetime('now','+5 hours') "
+            "WHERE id=?",
+            (status, reason, handled_by, rid),
+        )
+        await db.commit()
     finally:
         await db.close()
 

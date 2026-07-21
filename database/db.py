@@ -105,8 +105,9 @@ CREATE TABLE IF NOT EXISTS applications (
     children TEXT,
     prev_salary TEXT,
     expected_salary TEXT,
-    word_level TEXT,
-    excel_level TEXT,
+    word_level TEXT,              -- eski bazalar uchun qoldirilgan
+    excel_level TEXT,             -- eski bazalar uchun qoldirilgan
+    computer_level TEXT,          -- kompyuter savodxonligi (Word/Excel o'rniga)
     languages TEXT,
     work_intent TEXT,
     reason TEXT,
@@ -164,6 +165,7 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     photo_file_id TEXT,
     extra_info TEXT,
     since TEXT,
+    education TEXT,               -- ma'lumoti / diplomi (staff_regs dan ko'chiriladi)
     created_at TEXT DEFAULT (datetime('now','+5 hours')),
     updated_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
@@ -186,7 +188,9 @@ CREATE TABLE IF NOT EXISTS staff_regs (
     photo_file_id TEXT,
     since TEXT,
     extra_info TEXT,
+    education TEXT,               -- ma'lumoti: o'rta maxsus / oliy farmatsevt / boshqa / diplom yo'q
     status TEXT NOT NULL DEFAULT 'new',
+    reject_reason TEXT,           -- HR rad etganda yozgan sabab
     handled_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
@@ -272,6 +276,20 @@ CREATE TABLE IF NOT EXISTS salary_raise_requests (
     last_offer_by TEXT,                -- 'employee' / 'hr'
     status TEXT NOT NULL DEFAULT 'pending',  -- pending / agreed / rejected
     final_amount TEXT,                 -- kelishilgan yakuniy summa
+    reject_reason TEXT,
+    handled_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    updated_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS work_hour_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,          -- users.id (ichki)
+    branch_id INTEGER,
+    position TEXT,
+    current_hours TEXT,                -- so'rov paytidagi ish vaqti (snapshot)
+    requested_hours TEXT,              -- xodim so'ragan yangi ish vaqti «08:00 - 17:00»
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending / approved / rejected
     reject_reason TEXT,
     handled_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours')),
@@ -426,6 +444,7 @@ APP_COLUMNS = {
     "exp_years": "TEXT", "prev_years": "TEXT", "criminal": "TEXT",
     "marital": "TEXT", "children": "TEXT", "prev_salary": "TEXT",
     "expected_salary": "TEXT", "word_level": "TEXT", "excel_level": "TEXT",
+    "computer_level": "TEXT",
     "languages": "TEXT", "work_intent": "TEXT", "reason": "TEXT",
     "resume_file_id": "TEXT", "resume_type": "TEXT",
     "favorite": "INTEGER NOT NULL DEFAULT 0",
@@ -477,6 +496,7 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "photo_file_id": "TEXT",
     "extra_info": "TEXT",
     "since": "TEXT",
+    "education": "TEXT",
 }
 
 ATTENDANCE_COLUMNS = {
@@ -494,6 +514,8 @@ ATTENDANCE_COLUMNS = {
 
 STAFF_REG_COLUMNS = {
     "phone": "TEXT",
+    "reject_reason": "TEXT",
+    "education": "TEXT",
 }
 
 

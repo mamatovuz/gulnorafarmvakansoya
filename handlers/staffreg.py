@@ -16,9 +16,12 @@ from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_PHARMACIST,
     ROLE_EMPLOYEE,
 )
-from states import StaffReg
+from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
-from utils import safe_send, staff_reg_text, uniform_label, now_tk
+from utils import (
+    safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
+    post_staff_reg_to_channel,
+)
 
 router = Router()
 
@@ -64,10 +67,6 @@ def uniform_status_from_text(text):
     return "unknown"
 
 
-def _needs_since(role):
-    return role in (ROLE_MANAGER, ROLE_DIRECTOR)
-
-
 def _extra_prompt(role, position):
     if role == ROLE_MANAGER:
         return "🧩 Nechta xodimdan iborat jamoani boshqarasiz? (masalan: <i>8 xodim</i>)"
@@ -92,9 +91,10 @@ def _reg_summary(d):
         f"💰 Oylik: {g('salary')}",
         f"🛌 Dam olish kuni: {g('rest_day')}",
         f"👕 Forma: {uniform_label(d.get('uniform_status'))}",
+        f"🎓 Ma'lumoti: {g('education')}",
     ]
     if d.get("since"):
-        lines.append(f"⏳ Staj: {d['since']}")
+        lines.append(f"⏳ Gulnora Farmda: {d['since']}")
     if d.get("extra_info"):
         lines.append(f"🧩 Qo'shimcha: {d['extra_info']}")
     lines.append(f"🖼 Rasm: {'✅ biriktirilgan' if d.get('photo_file_id') else '— yo`q'}")
@@ -121,8 +121,8 @@ async def staff_reg_start(message: Message, state: FSMContext):
 @router.message(StateFilter(
     StaffReg.full_name, StaffReg.birth_date, StaffReg.phone, StaffReg.role,
     StaffReg.address, StaffReg.branch, StaffReg.shift, StaffReg.work_hours,
-    StaffReg.salary, StaffReg.rest_day, StaffReg.uniform, StaffReg.since,
-    StaffReg.extra, StaffReg.photo,
+    StaffReg.salary, StaffReg.rest_day, StaffReg.uniform, StaffReg.education,
+    StaffReg.since, StaffReg.extra, StaffReg.photo,
 ), F.text == kb.CANCEL_BTN)
 async def staff_reg_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -159,24 +159,23 @@ async def sr_birth(message: Message, state: FSMContext):
     await state.set_state(StaffReg.phone)
     await message.answer(
         "<b>3-savol</b>\n📱 Telefon raqamingizni <b>qo'lda yozing</b>.\n"
+        "Faqat <b>bitta</b> raqam, <b>+998</b> bilan va orada bo'sh joysiz.\n"
         "Misol: <code>+998932303410</code>",
         reply_markup=kb.staff_photo_kb(),
     )
 
 
-# 3) Telefon raqam (qo'lda yoziladi)
+# 3) Telefon raqam (qo'lda yoziladi) — faqat +998XXXXXXXXX
 @router.message(StaffReg.phone, F.text)
 async def sr_phone(message: Message, state: FSMContext):
-    text = message.text.strip()
-    digits = "".join(c for c in text if c.isdigit())
-    if len(digits) < 9:
+    phone = normalize_phone(message.text)
+    if not phone:
         await message.answer(
-            "❗️ Telefon raqam noto'g'ri. To'liq raqamni yozing.\n"
-            "Misol: <code>+998932303410</code>",
+            "❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT,
             reply_markup=kb.staff_photo_kb(),
         )
         return
-    await state.update_data(phone=text)
+    await state.update_data(phone=phone)
     await state.set_state(StaffReg.role)
     names = await q.list_position_names()
     await message.answer(
@@ -312,19 +311,32 @@ async def sr_rest(message: Message, state: FSMContext):
 @router.message(StaffReg.uniform, F.text)
 async def sr_uniform(message: Message, state: FSMContext):
     await state.update_data(uniform_status=uniform_status_from_text(message.text))
-    data = await state.get_data()
-    if _needs_since(data.get("role")):
-        await state.set_state(StaffReg.since)
-        role_word = "filial rahbari" if data.get("role") == ROLE_MANAGER else "direktor"
+    await state.set_state(StaffReg.education)
+    await message.answer(
+        "<b>12-savol</b>\n🎓 Ma'lumotingiz qanday? Tanlang:",
+        reply_markup=kb.staff_education_kb(),
+    )
+
+
+# 9b) Ma'lumoti / diplomi
+@router.message(StaffReg.education, F.text)
+async def sr_education(message: Message, state: FSMContext):
+    text = message.text.strip()
+    if text not in kb.STAFF_EDUCATION:
         await message.answer(
-            f"<b>12-savol</b>\n⏳ Qachondan beri {role_word}siz?",
-            reply_markup=kb.staff_since_kb(),
+            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            reply_markup=kb.staff_education_kb(),
         )
-    else:
-        await _ask_photo(message, state)
+        return
+    await state.update_data(education=text)
+    await state.set_state(StaffReg.since)
+    await message.answer(
+        "<b>13-savol</b>\n⏳ Necha yildan beri Gulnora Farmda ishlaysiz?",
+        reply_markup=kb.staff_since_kb(),
+    )
 
 
-# 10) Staj (faqat rahbar/direktor)
+# 10) Necha yildan beri Gulnora Farmda ishlaydi (barcha yo'nalishlar uchun)
 @router.message(StaffReg.since, F.text)
 async def sr_since(message: Message, state: FSMContext):
     await state.update_data(since=message.text.replace("🟡", "").replace("🟠", "")
@@ -333,7 +345,7 @@ async def sr_since(message: Message, state: FSMContext):
     prompt = _extra_prompt(data.get("role"), data.get("position"))
     if prompt:
         await state.set_state(StaffReg.extra)
-        await message.answer("<b>13-savol</b>\n" + prompt, reply_markup=kb.staff_photo_kb())
+        await message.answer("<b>14-savol</b>\n" + prompt, reply_markup=kb.staff_photo_kb())
     else:
         await _ask_photo(message, state)
 
@@ -426,6 +438,7 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         "photo_file_id": data.get("photo_file_id"),
         "since": data.get("since"),
         "extra_info": data.get("extra_info"),
+        "education": data.get("education"),
     }
     rid = await q.add_staff_reg(reg)
     # Foydalanuvchi telefon raqamini ham yangilab qo'yamiz
@@ -551,6 +564,7 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         photo_file_id=reg.get("photo_file_id"),
         extra_info=reg.get("extra_info"),
         since=reg.get("since"),
+        education=reg.get("education"),
     )
     await q.add_log(call.from_user.id, me["full_name"], "hodim_tasdiqlandi", f"#{rid}")
     # Kadrlar harakati (IT hisoboti): ishga kirdi
@@ -578,9 +592,28 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         reply_markup=kb.main_menu(role),
     )
 
+    # Ma'lumotlarni kanalga joylash (admin «⚙️ Sozlamalar»da maxfiy kanalni ulagan bo'lsa)
+    reg = await q.get_staff_reg(rid)
+    posted = await post_staff_reg_to_channel(
+        bot,
+        await q.get_setting("secret_channel"),
+        reg,
+        header=(
+            "🏢 <b>YANGI XODIM — TASDIQLANDI</b>\n"
+            f"🎯 Rol: {ROLE_LABELS.get(role, role)}\n"
+            f"👔 Tasdiqladi: {me['full_name']}"
+        ),
+    )
+    if posted is False:
+        await call.message.answer(
+            "⚠️ Xodim ma'lumotlari kanalga joylanmadi. Bot kanalda administrator "
+            "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
+        )
+
 
 @router.callback_query(F.data.startswith("srrej:"))
-async def sr_reject(call: CallbackQuery, bot: Bot):
+async def sr_reject_start(call: CallbackQuery, state: FSMContext):
+    """Rad etish — avval HR dan sabab so'raladi, keyingina so'rov yopiladi."""
     if not await _is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
@@ -592,17 +625,45 @@ async def sr_reject(call: CallbackQuery, bot: Bot):
     if reg.get("status") != "new":
         await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
         return
-    me = await q.get_user(call.from_user.id)
-    await q.set_staff_reg_status(rid, "rejected", handled_by=me["id"])
-    await q.add_log(call.from_user.id, me["full_name"], "hodim_rad", f"#{rid}")
+    await state.set_state(StaffRegRejectForm.reason)
+    await state.update_data(sreg_rid=rid)
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await call.message.answer(f"❌ Xodim so'rovi #{rid} rad etildi.")
-    await call.answer("Rad etildi")
+    await call.message.answer(
+        f"✍️ <b>Rad etish sababini yozing</b> (so'rov #{rid}).\n"
+        "Yozgan sababingiz xodimga yuboriladi."
+    )
+    await call.answer()
+
+
+@router.message(StaffRegRejectForm.reason, F.text)
+async def sr_reject_reason(message: Message, state: FSMContext, bot: Bot):
+    if not await _is_staff(message.from_user.id):
+        await state.clear()
+        return
+    reason = message.text.strip()
+    data = await state.get_data()
+    rid = data.get("sreg_rid")
+    await state.clear()
+    reg = await q.get_staff_reg(rid)
+    if not reg:
+        await message.answer("So'rov topilmadi.")
+        return
+    me = await q.get_user(message.from_user.id)
+    # ATOMIK — bir marta rad etiladi
+    if not await q.claim_request("staff_regs", rid, "rejected", me["id"], "new"):
+        await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
+        return
+    await q.set_staff_reg_status(rid, "rejected", handled_by=me["id"], reject_reason=reason)
+    await q.add_log(message.from_user.id, me["full_name"], "hodim_rad", f"#{rid}: {reason}")
+    await message.answer(
+        f"❌ Xodim so'rovi #{rid} rad etildi.\n✍️ Sabab: {reason}"
+    )
     await safe_send(
         bot, reg["user_tg"],
-        "😔 Gulnora Farm hodimi sifatida yuborgan so'rovingiz tasdiqlanmadi.\n"
+        f"😔 <b>Sizning #{rid} raqamli arizangiz rad etildi.</b>\n\n"
+        f"✍️ Sabab: {reason}\n\n"
         "Savollar bo'lsa HR bo'limi bilan bog'laning.",
     )

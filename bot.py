@@ -18,6 +18,7 @@ from config import BOT_TOKEN, SUPER_ADMINS
 from database.db import init_db
 from database import queries as q
 from handlers import register_all
+from keyboards import MENU_ESCAPE_BUTTONS
 from services.reminders import (
     interview_reminder_loop, probation_reminder_loop, location_check_loop,
     advance_prompt_loop, it_report_loop, dayoff_prompt_loop, dayoff_report_loop,
@@ -38,6 +39,21 @@ class BlockMiddleware(BaseMiddleware):
                 pass
         return await handler(event, data)
 
+class MenuEscapeMiddleware(BaseMiddleware):
+    """Asosiy menyu tugmasi bosilsa — yarim qolgan anketani (FSM) bekor qiladi.
+
+    Aks holda, masalan, xodim anketani tugatmay «⏸ Tanaffus» ni bossa, tugma
+    matni ochiq savolga javob sifatida qabul qilinib, tugma ishlamay qolardi."""
+
+    async def __call__(self, handler, event, data):
+        text = getattr(event, "text", None)
+        state = data.get("state")
+        if text and text in MENU_ESCAPE_BUTTONS and state is not None:
+            if await state.get_state() is not None:
+                await state.clear()
+        return await handler(event, data)
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -55,6 +71,7 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(BlockMiddleware())
+    dp.message.outer_middleware(MenuEscapeMiddleware())
     register_all(dp)
 
     me = await bot.get_me()

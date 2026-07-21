@@ -25,6 +25,20 @@ EMPLOYEE_ROLES = (
     ROLE_MANAGER, ROLE_PHARMACIST, ROLE_DIRECTOR, ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
 )
 
+# Xodim menyusidagi «HR ga murojaat» tugmasi (ish vaqti / maosh / boshqa masala)
+HR_REQUEST_BTN = "📩 HR ga murojaat"
+
+# Asosiy menyu tugmalari — bosilganda yarim qolgan FSM oqimi bekor qilinadi
+# (aks holda tugma matni ochiq anketa savoliga javob sifatida ketib qoladi).
+MENU_ESCAPE_BUTTONS = {
+    "📍 Ishga keldim", "🏁 Ishdan ketdim", "⏸ Tanaffus", "▶️ Ishni davom ettirish",
+    "👤 Mening profilim", "🔄 Dam olish kunini almashtirish", HR_REQUEST_BTN,
+    "💸 HR ga so'rov",  # eski nomdagi tugma (kesh qolgan klaviaturalar uchun)
+    "💼 Vakansiyalar", "📄 Mening arizalarim", "🏠 Asosiy menyu",
+    "👨‍💼 HR panel", "👑 Admin panel", "📈 Direktor panel", "🧮 Moliya bo'limi",
+    "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
+}
+
 
 def main_menu(role, has_applied=False):
     """Rolga qarab asosiy menyu.
@@ -51,7 +65,7 @@ def main_menu(role, has_applied=False):
         b.button(text="▶️ Ishni davom ettirish")
         b.button(text="👤 Mening profilim")
         b.button(text="🔄 Dam olish kunini almashtirish")
-        b.button(text="💸 HR ga so'rov")
+        b.button(text=HR_REQUEST_BTN)
     if role == ROLE_MANAGER:
         b.button(text="🏢 Filial rahbari panel")
     if role == ROLE_PHARMACIST:
@@ -230,6 +244,14 @@ def apply_level_kb():
     return _choices(["❌ Bilmayman", "🟡 Bazaviy", "🟠 O'rtacha", "🟢 Yaxshi"], row=2)
 
 
+# Kompyuter savodxonligi — Word/Excel savollari o'rniga bitta savol
+COMPUTER_LEVELS = ["✅ Ha", "🟠 O'rtacha", "❌ Yo'q"]
+
+
+def apply_computer_kb():
+    return _choices(COMPUTER_LEVELS, row=3)
+
+
 def apply_experience_kb():
     return _choices(["🚫 Tajribam yo'q", "🟡 1 yilgacha", "🟠 1-3 yil", "🟢 3+ yil"], row=2)
 
@@ -309,8 +331,7 @@ EDIT_FIELDS = [
     ("children", "👶 Farzand"),
     ("prev_salary", "💰 Oldingi maosh"),
     ("expected_salary", "💵 Kutilayotgan maosh"),
-    ("word_level", "📝 Word"),
-    ("excel_level", "📊 Excel"),
+    ("computer_level", "💻 Kompyuter savodxonligi"),
     ("languages", "🌍 Tillar"),
     ("work_intent", "📅 Ishlash niyati"),
     ("reason", "✍️ Sabab"),
@@ -412,6 +433,7 @@ def hr_menu():
     b.button(text="💼 Vakansiyalar (HR)")
     b.button(text="🏷 Yo'nalishlar")
     b.button(text="👕 Forma nazorati")
+    b.button(text="🎓 Diplom statistikasi")
     b.button(text="💊 Farmatsevtlar")
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
@@ -422,11 +444,12 @@ def hr_menu():
     b.button(text="💵 Avans")
     b.button(text="💵 Avans sozlamalari")
     b.button(text="💸 Maosh so'rovlari")
+    b.button(text="🕒 Ish vaqti so'rovlari")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -517,6 +540,49 @@ def hr_salary_offer_kb(aid):
     b.button(text="✅ Tasdiqlash", callback_data=f"hrsal_ok:{aid}")
     b.button(text="✏️ Boshqa summa", callback_data=f"hrsal_other:{aid}")
     b.adjust(2)
+    return b.as_markup()
+
+
+# ---------------- HR GA MUROJAAT (xodim) ----------------
+def hr_request_menu_kb():
+    """Xodim «📩 HR ga murojaat» tugmasini bosganda chiqadigan 3 ta yo'nalish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🕒 Ish soatini o'zgartirish", callback_data="hrreq:hours")
+    b.button(text="💸 Maoshni oshirishni so'rash", callback_data="hrreq:salary")
+    b.button(text="✉️ Boshqa masalada", callback_data="hrreq:other")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- ISH VAQTINI O'ZGARTIRISH SO'ROVI (xodim ⇄ HR) ----------------
+def work_hours_confirm_kb():
+    """Xodim yozgan ish vaqtini: tasdiqlash / tahrirlash / bekor qilish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data="wh_ok")
+    b.button(text="✏️ Tahrirlash", callback_data="wh_edit")
+    b.button(text="❌ Bekor qilish", callback_data="wh_cancel")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def hr_work_hours_actions_kb(rid):
+    """HR ga: ish vaqti so'rovini tasdiqlash / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"hrwh_ok:{rid}")
+    b.button(text="❌ Rad etish", callback_data=f"hrwh_rej:{rid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def work_hour_requests_list_kb(requests, prefix="whview"):
+    """HR paneli: ochiq ish vaqti so'rovlari ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for r in requests:
+        b.button(
+            text=f"🕒 {r.get('full_name') or '-'} · {r.get('requested_hours') or '-'}",
+            callback_data=f"{prefix}:{r['id']}",
+        )
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -862,6 +928,7 @@ def director_menu():
     b = ReplyKeyboardBuilder()
     b.button(text="📊 Direktor statistikasi")
     b.button(text="👥 Xodimlar statistikasi")
+    b.button(text="🎓 Diplom statistikasi")
     b.button(text="👥 Filial xodimlari")
     b.button(text="🏢 Filiallar kesimi")
     b.button(text="📥 Arizalar kesimi")
@@ -872,7 +939,7 @@ def director_menu():
     b.button(text="📈 Taqqoslash")
     b.button(text="📑 Hisobot (Excel)")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1142,6 +1209,20 @@ def staff_rest_day_kb():
     b.button(text=CANCEL_BTN)
     b.adjust(2)
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+# Xodim ma'lumoti (diplomi) — «Gulnora Farm hodimi» anketasida so'raladi
+STAFF_NO_DIPLOMA = "❌ Diplom yo'q"
+STAFF_EDUCATION = [
+    "📘 O'rta maxsus farmatsevt",
+    "🎓 Oliy ma'lumotli farmatsevt",
+    "🔀 Boshqa yo'nalishda",
+    STAFF_NO_DIPLOMA,
+]
+
+
+def staff_education_kb():
+    return _choices(STAFF_EDUCATION, row=1)
 
 
 def staff_since_kb():

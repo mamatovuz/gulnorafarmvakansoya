@@ -1,6 +1,6 @@
 """Xodim maosh oshirishni so'raydi — xodim ⇄ HR kelishuvi.
 
-Xodim asosiy menyudagi «💸 HR ga so'rov» tugmasi orqali kiradi.
+Xodim «📩 HR ga murojaat» → «💸 Maoshni oshirishni so'rash» orqali kiradi.
 Hozirgi maoshini ko'radi, yangi summa taklif qiladi. So'rov HR bo'limiga boradi.
 HR tasdiqlashi, o'z summasini taklif qilishi (qarshi taklif) yoki sabab bilan
 rad etishi mumkin. Qarshi taklif xodimga qaytadi — u tasdiqlaydi yoki yana boshqa
@@ -61,9 +61,13 @@ def _hr_request_text(req):
 
 
 # ================= XODIM: SO'ROV BOSHLASH =================
-@router.message(F.text == "💸 HR ga so'rov")
-async def raise_start(message: Message, state: FSMContext):
-    profile = await q.get_employee_profile_by_tg(message.from_user.id)
+async def start_raise_flow(message: Message, state: FSMContext, tg_id):
+    """Maosh oshirish so'rovini boshlaydi.
+
+    «📩 HR ga murojaat» menyusidagi «💸 Maoshni oshirishni so'rash» tugmasidan
+    chaqiriladi (handlers/hrrequest.py). Callback ichida `message.from_user` —
+    bot bo'lgani uchun xodim tg_id alohida uzatiladi."""
+    profile = await q.get_employee_profile_by_tg(tg_id)
     if not profile:
         await message.answer("⛔ Bu bo'lim faqat tasdiqlangan xodimlar uchun.")
         return

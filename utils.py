@@ -23,6 +23,37 @@ def now_tk_hm():
     return now_tk().strftime("%H:%M")
 
 
+# ---------------- TELEFON RAQAM ----------------
+# Majburiy format: +998 va 9 ta raqam, orada bo'sh joysiz, faqat BITTA raqam.
+PHONE_RE = re.compile(r"^\+998\d{9}$")
+PHONE_HINT = (
+    "📱 Telefon raqamni <b>+998</b> bilan, bo'sh joysiz va bitta raqam qilib yozing.\n"
+    "Misol: <code>+998932303410</code>"
+)
+
+
+def normalize_phone(text):
+    """Qo'lda yozilgan raqamni tekshiradi (QAT'IY).
+
+    Faqat `+998XXXXXXXXX` ko'rinishi — orada bo'sh joy yo'q, bitta raqam.
+    To'g'ri bo'lsa o'zini, aks holda None qaytaradi."""
+    t = (text or "").strip()
+    return t if PHONE_RE.match(t) else None
+
+
+def phone_from_contact(number):
+    """Telegram contact raqamini `+998XXXXXXXXX` ko'rinishiga keltiradi.
+
+    Contact raqamini foydalanuvchi yozmaydi — Telegram beradi, shuning uchun
+    formatlashga yo'l qo'yiladi. O'zbek raqami bo'lmasa None."""
+    digits = "".join(c for c in str(number or "") if c.isdigit())
+    if len(digits) == 9:
+        digits = "998" + digits
+    if len(digits) == 12 and digits.startswith("998"):
+        return "+" + digits
+    return None
+
+
 def fmt_duration(seconds):
     """Sekundlarni 'X soat Y daqiqa' ko'rinishiga o'giradi."""
     seconds = int(seconds or 0)
@@ -120,6 +151,16 @@ def uniform_label(status):
     }.get(status, status or "➖ Noma'lum")
 
 
+def computer_level_label(a):
+    """Kompyuter savodxonligi. Eski arizalarda Word/Excel alohida yozilgan —
+    ular ham ko'rinsin (yangi ustun bo'sh bo'lsa)."""
+    level = a.get("computer_level")
+    if level:
+        return level
+    old = [x for x in (a.get("word_level"), a.get("excel_level")) if x]
+    return " · ".join(old) if old else "-"
+
+
 def application_text(a, full=False):
     status = STATUS_LABELS.get(a["status"], a["status"])
     parts = [
@@ -149,8 +190,7 @@ def application_text(a, full=False):
             f"👶 Farzandlari: {_v(a, 'children')}",
             f"💰 Oldingi maosh: {_v(a, 'prev_salary')}",
             f"💵 Kutilayotgan maosh: {_v(a, 'expected_salary')}",
-            f"📝 Word: {_v(a, 'word_level')}",
-            f"📊 Excel: {_v(a, 'excel_level')}",
+            f"💻 Kompyuter savodxonligi: {computer_level_label(a)}",
             f"🌍 Tillar: {_v(a, 'languages')}",
             f"📅 Ishlash niyati: {_v(a, 'work_intent')}",
             f"✍️ Sababi: {_v(a, 'reason')}",
@@ -184,8 +224,7 @@ def application_summary(d):
         f"👶 Farzandlari: {g('children')}\n"
         f"💰 Oldingi maosh: {g('prev_salary')}\n"
         f"💵 Kutilayotgan maosh: {g('expected_salary')}\n"
-        f"📝 Word: {g('word_level')}\n"
-        f"📊 Excel: {g('excel_level')}\n"
+        f"💻 Kompyuter savodxonligi: {g('computer_level')}\n"
         f"🌍 Tillar: {g('languages')}\n"
         f"📅 Ishlash niyati: {g('work_intent')}\n"
         f"✍️ Sababi: {g('reason')}\n"
@@ -212,9 +251,11 @@ def employee_profile_text(profile):
     if profile.get("rest_day"):
         parts.append(f"🛌 Dam olish kuni: {profile['rest_day']}")
     parts.append(f"👕 Forma: {uniform_label(profile.get('uniform_status'))}")
+    if profile.get("education"):
+        parts.append(f"🎓 Ma'lumoti: {profile['education']}")
     parts.append(f"💰 Oylik: {_v(profile, 'monthly_salary')}")
     if profile.get("since"):
-        parts.append(f"⏳ Ish staji: {profile['since']}")
+        parts.append(f"⏳ Gulnora Farmda: {profile['since']}")
     if profile.get("extra_info"):
         parts.append(f"🧩 Qo'shimcha: {profile['extra_info']}")
     return "\n".join(parts)
@@ -235,11 +276,14 @@ def staff_reg_text(reg):
         f"💰 Oylik: {_v(reg, 'salary')}",
         f"🛌 Dam olish kuni: {_v(reg, 'rest_day')}",
         f"👕 Forma: {uniform_label(reg.get('uniform_status'))}",
+        f"🎓 Ma'lumoti: {_v(reg, 'education')}",
     ]
     if reg.get("since"):
-        parts.append(f"⏳ Staj: {reg['since']}")
+        parts.append(f"⏳ Gulnora Farmda: {reg['since']}")
     if reg.get("extra_info"):
         parts.append(f"🧩 Qo'shimcha: {reg['extra_info']}")
+    if reg.get("reject_reason"):
+        parts.append(f"✍️ Rad etish sababi: {reg['reject_reason']}")
     parts.append(f"\n🗓 Yuborilgan: {_v(reg, 'created_at')}")
     return "\n".join(parts)
 
@@ -441,31 +485,56 @@ def _fit_caption(text, limit=CAPTION_LIMIT):
     return "\n".join(lines) + "\n…"
 
 
+SEP = "━━━━━━━━━━"
+
+
+def _clip(text, limit=140):
+    """Uzun erkin matnni qisqartiradi (kartochka tartibi buzilmasligi uchun)."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return "-"
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
 def application_caption(a, header=None):
-    """Rasm captioni uchun IXCHAM ariza matni — 1024 belgiga sig'adigan qilib
-    maydonlar bir qatorga birlashtirilgan. To'liq matn «👁 Batafsil» da."""
+    """Rasm captioni uchun TARTIBLI ariza kartochkasi.
+
+    Har bir ma'lumot alohida qatorda, bloklarga ajratilgan — kanaldagi post
+    o'qish uchun qulay bo'lsin. To'liq matn «👁 Batafsil» da."""
     status = STATUS_LABELS.get(a.get("status"), a.get("status") or "-")
     lines = [
-        f"📄 <b>Ariza #{a['id']}</b> | {status}",
-        f"👤 <b>{_v(a, 'full_name')}</b> · {_v(a, 'birth_date')}",
-        f"💼 {_v(a, 'vacancy_title')} · 🏢 {_v(a, 'branch_name')}",
-        f"📱 {_v(a, 'phone')}",
-        f"📍 {_v(a, 'city')}, {_v(a, 'district')}, {_v(a, 'address')}",
-        f"🕒 {_v(a, 'shift')} · 🎓 {_v(a, 'education')}",
-        f"💼 Tajriba: {_v(a, 'exp_years')} · oldingi joyda {_v(a, 'prev_years')}",
-        f"🧩 {_v(a, 'position_extra')}",
-        f"⚖️ Sudlangan: {_v(a, 'criminal')} · 👨‍👩‍👧 {_v(a, 'marital')} · 👶 {_v(a, 'children')}",
-        f"💰 Oldingi: {_v(a, 'prev_salary')} → 💵 Kutgani: {_v(a, 'expected_salary')}",
-        f"📝 Word: {_v(a, 'word_level')} · 📊 Excel: {_v(a, 'excel_level')}",
-        f"🌍 {_v(a, 'languages')}",
-        f"📅 Niyati: {_v(a, 'work_intent')}",
-        f"✍️ {_v(a, 'reason')}",
+        f"📄 <b>Ariza #{a['id']}</b> · {status}",
+        SEP,
+        f"👤 <b>{_v(a, 'full_name')}</b>",
+        f"🎂 Tug'ilgan: {_v(a, 'birth_date')}",
+        f"📱 Telefon: {_v(a, 'phone')}",
+        f"📍 Manzil: {_v(a, 'city')}, {_v(a, 'district')}, {_v(a, 'address')}",
+        SEP,
+        f"💼 Lavozim: {_v(a, 'vacancy_title')}",
+        f"🏢 Filial: {_v(a, 'branch_name')}",
+        f"🕒 Smena: {_v(a, 'shift')}",
+        f"🧩 Hujjat/tajriba: {_v(a, 'position_extra')}",
+        SEP,
+        f"🎓 Ma'lumoti: {_v(a, 'education')}",
+        f"💼 Umumiy tajriba: {_v(a, 'exp_years')}",
+        f"🏢 Oldingi ish joyida: {_v(a, 'prev_years')}",
+        f"💻 Kompyuter savodxonligi: {computer_level_label(a)}",
+        f"🌍 Tillar: {_clip(a.get('languages'), 90)}",
+        SEP,
+        f"⚖️ Sudlanganligi: {_v(a, 'criminal')}",
+        f"👨‍👩‍👧 Oilaviy holati: {_v(a, 'marital')}",
+        f"👶 Farzandlari: {_v(a, 'children')}",
+        SEP,
+        f"💰 Oldingi maosh: {_v(a, 'prev_salary')}",
+        f"💵 Kutayotgan maosh: {_v(a, 'expected_salary')}",
+        f"📅 Ishlash niyati: {_v(a, 'work_intent')}",
+        f"✍️ Sababi: {_clip(a.get('reason'))}",
     ]
     if a.get("hr_comment"):
-        lines.append(f"🗒 HR izohi: {a['hr_comment']}")
+        lines.append(f"🗒 HR izohi: {_clip(a.get('hr_comment'))}")
     if a.get("resume_file_id"):
         lines.append("📎 Rezyume biriktirilgan")
-    lines.append(f"🗓 {_v(a, 'created_at')}")
+    lines += [SEP, f"🗓 {_v(a, 'created_at')}"]
     text = "\n".join(lines)
     if header:
         text = f"{header}\n{text}"
@@ -523,6 +592,31 @@ async def update_application_channel(bot: Bot, app):
     # Post rasmsiz (oddiy matn) bo'lsa — matnni tahrirlaymiz
     try:
         await bot.edit_message_text(caption, chat_id=chat_id, message_id=int(msg_id))
+        return True
+    except Exception:
+        return False
+
+
+async def post_staff_reg_to_channel(bot: Bot, chat_id, reg, header=None):
+    """Tasdiqlangan «Gulnora Farm hodimi» ma'lumotlarini kanalga joylaydi.
+
+    Rasm bo'lsa — rasm + caption bitta post. Kanal ulanmagan bo'lsa None
+    (xato emas), yuborib bo'lmasa False qaytadi."""
+    chat_id = normalize_chat_id(chat_id)
+    if not chat_id:
+        return None
+    text = staff_reg_text(reg)
+    if header:
+        text = f"{header}\n{text}"
+    file_id = reg.get("photo_file_id")
+    if file_id:
+        try:
+            await bot.send_photo(chat_id, file_id, caption=_fit_caption(text))
+            return True
+        except Exception:
+            pass  # file_id eskirgan yoki caption uzun — matn bilan urinamiz
+    try:
+        await bot.send_message(chat_id, text)
         return True
     except Exception:
         return False

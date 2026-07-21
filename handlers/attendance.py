@@ -49,6 +49,29 @@ def _is_early(work_hours, now_hm):
     return now_hm < end
 
 
+async def _open_shift(tg_id):
+    """Xodimning hali yakunlanmagan ish kuni yozuvi.
+
+    Tanaffus va ishdan ketish shu yozuv ustida ishlaydi. Tungi smenada soat
+    00:00 dan o'tib ketsa ham kechagi ochiq yozuv topiladi — shuning uchun
+    «avval ishga keling» xabari noto'g'ri chiqmaydi."""
+    return await q.get_open_attendance(tg_id)
+
+
+async def _no_open_shift_reason(tg_id):
+    """Ochiq yozuv bo'lmasa — sababini tushuntiruvchi matn."""
+    last = await q.get_attendance_today(tg_id)
+    if last and last.get("out_time"):
+        return (
+            "🏁 Siz bugun <b>ishdan ketganingizni</b> allaqachon belgilagansiz "
+            f"(🕐 {last['out_time']}).\nIsh kuni yakunlangan."
+        )
+    return (
+        "❗️ Bugun <b>«📍 Ishga keldim»</b> belgilanmagan.\n"
+        "Avval «📍 Ishga keldim» tugmasini bosib, joylashuvingizni yuboring."
+    )
+
+
 # ================= ISHGA KELDIM (CHECK-IN) =================
 @router.message(F.text == "📍 Ishga keldim")
 async def checkin_start(message: Message, state: FSMContext):
@@ -159,17 +182,9 @@ async def checkout_start(message: Message, state: FSMContext):
     if not profile:
         await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
         return
-    today = await q.get_attendance_today(message.from_user.id)
-    if not today or today.get("status") != "present":
-        await message.answer(
-            "❗️ Bugun «📍 Ishga keldim» belgilanmagan. Avval kelganingizni belgilang."
-        )
-        return
-    if today.get("out_time"):
-        await message.answer(
-            f"✅ Siz bugun ishdan ketganingizni allaqachon belgilagansiz.\n"
-            f"🕐 Ketgan vaqt: {today.get('out_time')}"
-        )
+    today = await _open_shift(message.from_user.id)
+    if not today:
+        await message.answer(await _no_open_shift_reason(message.from_user.id))
         return
     await state.set_state(AttendanceForm.checkout)
     await message.answer(
@@ -195,9 +210,11 @@ async def checkout_location(message: Message, state: FSMContext):
     user = await q.get_user(message.from_user.id)
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     menu = kb.main_menu(user["role"] if user else "candidate")
-    today = await q.get_attendance_today(message.from_user.id)
+    today = await _open_shift(message.from_user.id)
     if not today:
-        await message.answer("Bugun kelish yozuvi topilmadi.", reply_markup=menu)
+        await message.answer(
+            await _no_open_shift_reason(message.from_user.id), reply_markup=menu
+        )
         return
     # Tanaffusda bo'lsa — avval tanaffusni yopamiz (vaqti hisobga olinadi)
     if today.get("on_break"):
@@ -235,16 +252,16 @@ async def checkout_need_location(message: Message):
 
 # ================= TANAFFUS (BREAK) =================
 @router.message(F.text == "⏸ Tanaffus")
-async def break_start(message: Message):
+async def break_start(message: Message, state: FSMContext):
+    # Yarim qolgan boshqa oqim tanaffusga xalaqit qilmasin
+    await state.clear()
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:
         await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
         return
-    today = await q.get_attendance_today(message.from_user.id)
-    if not today or today.get("status") != "present" or today.get("out_time"):
-        await message.answer(
-            "❗️ Avval «📍 Ishga keldim» tugmasi bilan ishni boshlang."
-        )
+    today = await _open_shift(message.from_user.id)
+    if not today:
+        await message.answer(await _no_open_shift_reason(message.from_user.id))
         return
     if today.get("on_break"):
         await message.answer("⏸ Siz allaqachon tanaffusdasiz. Ishni davom ettirish uchun "
@@ -261,13 +278,17 @@ async def break_start(message: Message):
 
 @router.message(F.text == "▶️ Ishni davom ettirish")
 async def break_end(message: Message, state: FSMContext):
+    await state.clear()
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:
         await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
         return
-    today = await q.get_attendance_today(message.from_user.id)
+    today = await _open_shift(message.from_user.id)
     if not today or not today.get("on_break"):
-        await message.answer("❗️ Siz hozir tanaffusda emassiz.")
+        await message.answer(
+            "❗️ Siz hozir tanaffusda emassiz. Tanaffus olish uchun "
+            "«⏸ Tanaffus» tugmasini bosing."
+        )
         return
     await q.end_break(today["id"])
     await q.add_log(message.from_user.id, message.from_user.full_name, "tanaffus_tugadi", "")

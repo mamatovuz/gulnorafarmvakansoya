@@ -14,9 +14,16 @@ from utils import (
     vacancy_text, application_text, application_summary, safe_send,
     send_application_resume, send_application_photo, best_vacancy_matches,
     recommendation_text, now_tk, post_application_channel, send_application_card,
+    normalize_phone, phone_from_contact, PHONE_HINT,
 )
 
 router = Router()
+
+PHONE_ASK = (
+    "📱 Telefon raqamingizni yozing.\n"
+    "Faqat <b>bitta</b> raqam, <b>+998</b> bilan va orada bo'sh joysiz.\n"
+    "Misol: <code>+998932303410</code>"
+)
 
 
 # ---------------- VAKANSIYALARNI KO'RISH ----------------
@@ -178,7 +185,7 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
     Apply.branch, Apply.position, Apply.position_extra, Apply.uniform, Apply.shift,
     Apply.education, Apply.exp_years, Apply.prev_years, Apply.criminal,
     Apply.marital, Apply.children, Apply.prev_salary, Apply.expected_salary,
-    Apply.word_level, Apply.excel_level, Apply.languages, Apply.work_intent,
+    Apply.computer_level, Apply.languages, Apply.work_intent,
     Apply.reason, Apply.phone, Apply.photo, Apply.resume, Apply.edit_field,
 ), F.text == kb.CANCEL_BTN)
 async def apply_cancel(message: Message, state: FSMContext):
@@ -322,7 +329,7 @@ async def a_shift(message: Message, state: FSMContext):
     await state.update_data(shift=message.text.strip())
     await state.set_state(Apply.education)
     await message.answer(
-        "<b>11-savol</b>\n🎓 Ma'lumot darajangizni tanlang.",
+        "<b>10-savol</b>\n🎓 Ma'lumot darajangizni tanlang.",
         reply_markup=kb.apply_education_kb(),
     )
 
@@ -333,7 +340,7 @@ async def a_education(message: Message, state: FSMContext):
     await state.update_data(education=message.text.strip())
     await state.set_state(Apply.exp_years)
     await message.answer(
-        "<b>12-savol</b>\n💼 Umumiy ish tajribangiz qancha?",
+        "<b>11-savol</b>\n💼 Umumiy ish tajribangiz qancha?",
         reply_markup=kb.apply_experience_kb(),
     )
 
@@ -344,7 +351,7 @@ async def a_exp(message: Message, state: FSMContext):
     await state.update_data(exp_years=message.text.strip())
     await state.set_state(Apply.prev_years)
     await message.answer(
-        "<b>13-savol</b>\n🏢 Oldingi ish joyingizda qancha ishlagansiz?",
+        "<b>12-savol</b>\n🏢 Oldingi ish joyingizda qancha ishlagansiz?",
         reply_markup=kb.apply_prev_years_kb(),
     )
 
@@ -355,7 +362,7 @@ async def a_prev(message: Message, state: FSMContext):
     await state.update_data(prev_years=message.text.strip())
     await state.set_state(Apply.criminal)
     await message.answer(
-        "<b>14-savol</b>\n⚖️ Sudlanganmisiz?",
+        "<b>13-savol</b>\n⚖️ Sudlanganmisiz?",
         reply_markup=kb.apply_criminal_kb(),
     )
 
@@ -366,7 +373,7 @@ async def a_criminal(message: Message, state: FSMContext):
     await state.update_data(criminal=message.text.strip())
     await state.set_state(Apply.marital)
     await message.answer(
-        "<b>15-savol</b>\n👨‍👩‍👧 Oilaviy holatingizni tanlang.",
+        "<b>14-savol</b>\n👨‍👩‍👧 Oilaviy holatingizni tanlang.",
         reply_markup=kb.apply_marital_kb(),
     )
 
@@ -388,7 +395,7 @@ async def a_children(message: Message, state: FSMContext):
     await state.update_data(children=message.text.strip())
     await state.set_state(Apply.prev_salary)
     await message.answer(
-        "<b>16-savol</b>\n💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?\n"
+        "<b>15-savol</b>\n💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?\n"
         "Misol: <i>2 000 000 so'm</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -400,7 +407,7 @@ async def a_prevsalary(message: Message, state: FSMContext):
     await state.update_data(prev_salary=message.text.strip())
     await state.set_state(Apply.expected_salary)
     await message.answer(
-        "<b>17-savol</b>\n💵 Qancha maoshga ishlashni xohlaysiz?\n"
+        "<b>16-savol</b>\n💵 Qancha maoshga ishlashni xohlaysiz?\n"
         "Misol: <i>3 000 000 so'm</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -410,31 +417,27 @@ async def a_prevsalary(message: Message, state: FSMContext):
 @router.message(Apply.expected_salary, F.text)
 async def a_expsalary(message: Message, state: FSMContext):
     await state.update_data(expected_salary=message.text.strip())
-    await state.set_state(Apply.word_level)
+    await state.set_state(Apply.computer_level)
     await message.answer(
-        "<b>18-savol</b>\n📝 Microsoft Word dasturini qay darajada bilasiz?",
-        reply_markup=kb.apply_level_kb(),
+        "<b>17-savol</b>\n💻 Kompyuter savodxonligingiz bormi?",
+        reply_markup=kb.apply_computer_kb(),
     )
 
 
-# 14) Word
-@router.message(Apply.word_level, F.text)
-async def a_word(message: Message, state: FSMContext):
-    await state.update_data(word_level=message.text.strip())
-    await state.set_state(Apply.excel_level)
-    await message.answer(
-        "<b>19-savol</b>\n📊 Microsoft Excel dasturini qay darajada bilasiz?",
-        reply_markup=kb.apply_level_kb(),
-    )
-
-
-# 15) Excel
-@router.message(Apply.excel_level, F.text)
-async def a_excel(message: Message, state: FSMContext):
-    await state.update_data(excel_level=message.text.strip())
+# 14) Kompyuter savodxonligi (Word va Excel savollari o'rniga bitta savol)
+@router.message(Apply.computer_level, F.text)
+async def a_computer(message: Message, state: FSMContext):
+    text = message.text.strip()
+    if text not in kb.COMPUTER_LEVELS:
+        await message.answer(
+            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            reply_markup=kb.apply_computer_kb(),
+        )
+        return
+    await state.update_data(computer_level=text)
     await state.set_state(Apply.languages)
     await message.answer(
-        "<b>20-savol</b>\n🌍 Qaysi tillarni bilasiz?\n"
+        "<b>18-savol</b>\n🌍 Qaysi tillarni bilasiz?\n"
         "Misol: <i>O'zbek - A'lo, Rus - O'rtacha, Ingliz - Boshlang'ich</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -446,7 +449,7 @@ async def a_languages(message: Message, state: FSMContext):
     await state.update_data(languages=message.text.strip())
     await state.set_state(Apply.work_intent)
     await message.answer(
-        "<b>21-savol</b>\n📅 «Gulnora Farm»da qancha muddat ishlash niyatingiz bor?",
+        "<b>19-savol</b>\n📅 «Gulnora Farm»da qancha muddat ishlash niyatingiz bor?",
         reply_markup=kb.apply_work_intent_kb(),
     )
 
@@ -457,7 +460,7 @@ async def a_intent(message: Message, state: FSMContext):
     await state.update_data(work_intent=message.text.strip())
     await state.set_state(Apply.reason)
     await message.answer(
-        "<b>22-savol</b>\n✍️ Nima uchun aynan Gulnora Farmda ishlashni xohlaysiz?\n"
+        "<b>20-savol</b>\n✍️ Nima uchun aynan Gulnora Farmda ishlashni xohlaysiz?\n"
         "Misol: <i>Jamoasi yaxshi, rivojlanish imkoniyati bor.</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -469,29 +472,32 @@ async def a_reason(message: Message, state: FSMContext):
     await state.update_data(reason=message.text.strip())
     await state.set_state(Apply.phone)
     await message.answer(
-        "<b>23-savol</b>\n📱 Telefon raqamingizni yuboring.",
+        "<b>21-savol</b>\n" + PHONE_ASK,
         reply_markup=kb.apply_phone_kb(),
     )
 
 
-# 19) Telefon (contact yoki matn)
+# 19) Telefon — faqat +998XXXXXXXXX (bo'sh joysiz, bitta raqam)
 @router.message(Apply.phone, F.contact)
 async def a_phone_contact(message: Message, state: FSMContext):
-    await state.update_data(phone=message.contact.phone_number)
+    phone = phone_from_contact(message.contact.phone_number)
+    if not phone:
+        await message.answer("❗️ " + PHONE_HINT, reply_markup=kb.apply_phone_kb())
+        return
+    await state.update_data(phone=phone)
     await _ask_photo(message, state)
 
 
 @router.message(Apply.phone, F.text)
 async def a_phone_text(message: Message, state: FSMContext):
-    digits = "".join(c for c in message.text if c.isdigit())
-    if len(digits) < 7:
+    phone = normalize_phone(message.text)
+    if not phone:
         await message.answer(
-            "❗️ Telefon raqam noto'g'ri. «📲 Telefon raqamni yuborish» tugmasidan "
-            "foydalaning yoki to'g'ri raqam yozing.",
+            "❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT,
             reply_markup=kb.apply_phone_kb(),
         )
         return
-    await state.update_data(phone=message.text.strip())
+    await state.update_data(phone=phone)
     await _ask_photo(message, state)
 
 
@@ -499,7 +505,7 @@ async def _ask_photo(message: Message, state: FSMContext):
     """Oxirgi 10 kunda tushgan rasm — majburiy."""
     await state.set_state(Apply.photo)
     await message.answer(
-        "<b>24-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
+        "<b>22-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
         "rasmingizni yuboring.\n\n"
         "<i>Rasm aniq va yaqinda olingan bo'lishi shart. Bu majburiy bosqich.</i>",
         reply_markup=kb.cancel_kb(),
@@ -525,7 +531,7 @@ async def a_photo_invalid(message: Message):
 async def _ask_resume(message: Message, state: FSMContext):
     await state.set_state(Apply.resume)
     await message.answer(
-        "<b>25-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
+        "<b>23-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
         "Faylni yuboring yoki «⏭️ O'tkazib yuborish» tugmasini bosing.",
         reply_markup=kb.apply_resume_kb(),
     )
@@ -611,8 +617,7 @@ EDIT_KEYBOARDS = {
     "children": kb.apply_children_kb,
     "exp_years": kb.apply_experience_kb,
     "prev_years": kb.apply_prev_years_kb,
-    "word_level": kb.apply_level_kb,
-    "excel_level": kb.apply_level_kb,
+    "computer_level": kb.apply_computer_kb,
     "work_intent": kb.apply_work_intent_kb,
 }
 
@@ -638,7 +643,8 @@ async def app_edit_field(call: CallbackQuery, state: FSMContext):
             reply_markup=kb.apply_district_kb(data.get("city")),
         )
     elif field == "phone":
-        await call.message.answer("📱 Yangi telefon raqam:", reply_markup=kb.apply_phone_kb())
+        await call.message.answer("✏️ Yangi telefon raqam.\n" + PHONE_HINT,
+                                  reply_markup=kb.apply_phone_kb())
     elif field == "position_extra":
         data = await state.get_data()
         await call.message.answer(
@@ -655,7 +661,11 @@ async def app_edit_field(call: CallbackQuery, state: FSMContext):
 
 @router.message(Apply.edit_field, F.contact)
 async def app_edit_contact(message: Message, state: FSMContext):
-    await state.update_data(phone=message.contact.phone_number)
+    phone = phone_from_contact(message.contact.phone_number)
+    if not phone:
+        await message.answer("❗️ " + PHONE_HINT, reply_markup=kb.apply_phone_kb())
+        return
+    await state.update_data(phone=phone)
     await _back_to_summary(message, state)
 
 
@@ -668,6 +678,12 @@ async def app_edit_save(message: Message, state: FSMContext):
         norm = parse_birthdate(value)
         if not norm:
             await message.answer("❗️ Sana noto'g'ri (kun.oy.yil). Qaytadan kiriting:")
+            return
+        value = norm
+    if field == "phone":
+        norm = normalize_phone(value)
+        if not norm:
+            await message.answer("❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT)
             return
         value = norm
     if field == "branch":
@@ -711,7 +727,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
         "full_name", "birth_date", "city", "district", "address", "position",
         "position_extra", "uniform_status", "shift", "education", "exp_years",
         "prev_years", "criminal", "marital", "children", "prev_salary",
-        "expected_salary", "word_level", "excel_level", "languages",
+        "expected_salary", "computer_level", "languages",
         "work_intent", "reason", "phone",
         "resume_file_id", "resume_type", "photo_file_id",
     ]

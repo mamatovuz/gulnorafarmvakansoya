@@ -27,8 +27,7 @@ class Apply(StatesGroup):
     children = State()         # 13b
     prev_salary = State()      # 14
     expected_salary = State()  # 15
-    word_level = State()       # 16
-    excel_level = State()      # 17
+    computer_level = State()   # 16 kompyuter savodxonligi (Word/Excel o'rniga)
     languages = State()        # 18
     work_intent = State()      # 19
     reason = State()           # 20
@@ -111,7 +110,8 @@ class StaffReg(StatesGroup):
     salary = State()         # 7  Oylik
     rest_day = State()       # 8  Dam olish kuni
     uniform = State()        # 9  Forma bormi
-    since = State()          # 10 (rahbar/direktor) qachondan beri
+    education = State()      # 9b Ma'lumoti / diplomi
+    since = State()          # 10 Necha yildan beri Gulnora Farmda ishlaydi
     extra = State()          # 10b rolga oid qo'shimcha savol
     photo = State()          # 11 oxirgi 10 kundagi rasm
     confirm = State()        # yakuniy tasdiqlash
@@ -246,3 +246,19 @@ class SalaryRaiseForm(StatesGroup):
     amount = State()         # xodim so'ramoqchi bo'lgan summani kiritadi/tahrirlaydi
     hr_amount = State()      # HR qarshi taklif summasini kiritadi/tahrirlaydi
     reject_reason = State()  # HR rad etish sababini yozadi
+
+
+class StaffRegRejectForm(StatesGroup):
+    """HR «Gulnora Farm hodimi» so'rovini rad etadi — sababini yozadi."""
+    reason = State()
+
+
+class WorkHoursForm(StatesGroup):
+    """Xodim ish vaqtini o'zgartirishni so'raydi; HR tasdiqlaydi/rad etadi."""
+    hours = State()          # xodim yangi ish vaqtini yozadi (dan-gacha)
+    reject_reason = State()  # HR rad etish sababini yozadi
+
+
+class HRMessageForm(StatesGroup):
+    """Xodim «boshqa masalada» HR ga murojaat yozadi."""
+    text = State()
