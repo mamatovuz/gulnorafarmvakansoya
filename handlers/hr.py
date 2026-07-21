@@ -19,7 +19,7 @@ from utils import (
     vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
     fine_text, manager_request_text, send_application_resume, send_application_photo,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
-    iso_to_display, probation_text, update_application_channel,
+    iso_to_display, probation_text, update_application_channel, send_application_card,
 )
 from services import export
 
@@ -304,11 +304,11 @@ async def app_view(call: CallbackQuery, bot: Bot):
     if not a:
         await call.answer("Topilmadi.", show_alert=True)
         return
-    await call.message.answer(
-        application_text(a, full=True),
+    # Rasm + captionda ma'lumot + tugmalar — hammasi BITTA xabarda
+    await send_application_card(
+        bot, call.message.chat.id, a,
         reply_markup=kb.application_actions_kb(aid, favorite=bool(a.get("favorite"))),
     )
-    await send_application_photo(bot, call.message.chat.id, a)
     await send_application_resume(bot, call.message.chat.id, a)
     await call.answer()
 
@@ -1415,6 +1415,9 @@ async def hr_vac_list(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("vman:"))
 async def vac_manage(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
     vid = int(call.data.split(":")[1])
     v = await q.get_vacancy(vid)
     if not v:
@@ -1428,6 +1431,9 @@ async def vac_manage(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("vclose:"))
 async def vac_close(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
     vid = int(call.data.split(":")[1])
     await q.update_vacancy_field(vid, "is_active", 0)
     me = await actor(call.from_user.id)
@@ -1439,6 +1445,9 @@ async def vac_close(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("vopen:"))
 async def vac_open(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
     vid = int(call.data.split(":")[1])
     await q.update_vacancy_field(vid, "is_active", 1)
     me = await actor(call.from_user.id)
@@ -1449,7 +1458,30 @@ async def vac_open(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("vdel:"))
+async def vac_del_confirm(call: CallbackQuery):
+    """O'chirishdan oldin tasdiq so'raymiz — amalni qaytarib bo'lmaydi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    vid = int(call.data.split(":")[1])
+    v = await q.get_vacancy(vid)
+    if not v:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    await call.message.edit_text(
+        f"🗑 <b>«{v['title']}» vakansiyasi butunlay o'chirilsinmi?</b>\n\n"
+        "Bu amalni qaytarib bo'lmaydi. Vakansiyani vaqtincha berkitmoqchi bo'lsangiz, "
+        "«❌ Yopish» dan foydalaning.",
+        reply_markup=kb.vacancy_delete_confirm_kb(vid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("vdelok:"))
 async def vac_del(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
     vid = int(call.data.split(":")[1])
     await q.delete_vacancy(vid)
     me = await actor(call.from_user.id)

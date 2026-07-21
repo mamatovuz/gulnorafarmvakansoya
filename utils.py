@@ -410,47 +410,99 @@ async def mark_vacancy_channel_filled(bot: Bot, vacancy):
 
 
 async def post_application_to_channel(bot: Bot, chat_id, app, header=None):
-    """Ariza matnini (va bo'lsa rezyumesini) maxfiy kanalga joylashtiradi."""
+    """Arizani maxfiy kanalga joylashtiradi — rasm + captionda ma'lumot (bitta post)."""
     chat_id = normalize_chat_id(chat_id)
     if not chat_id:
         return False
-    text = application_text(app, full=True)
-    if header:
-        text = f"{header}\n\n{text}"
-    try:
-        await bot.send_message(chat_id, text)
-        await send_application_photo(bot, chat_id, app)
-        await send_application_resume(bot, chat_id, app)
-        return True
-    except Exception:
+    msg = await send_application_card(bot, chat_id, app, header=header)
+    if not msg:
         return False
+    await send_application_resume(bot, chat_id, app)
+    return True
+
+
+# ---------------- ARIZA KARTOCHKASI (rasm + caption, BITTA xabar) ----------------
+CAPTION_LIMIT = 1024          # Telegram rasm captioni chegarasi
+CANDIDATE_HEADER = "📇 <b>NOMZOD — ISH QIDIRUVCHI</b>"
+
+
+def _tg_len(text):
+    """Telegram belgilarni UTF-16 birligida sanaydi (ko'p emoji = 2 birlik)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _fit_caption(text, limit=CAPTION_LIMIT):
+    """Matnni caption chegarasiga sig'diradi — oxirgi qatorlarni olib tashlaydi."""
+    if _tg_len(text) <= limit:
+        return text
+    lines = text.split("\n")
+    while lines and _tg_len("\n".join(lines) + "\n…") > limit:
+        lines.pop()
+    return "\n".join(lines) + "\n…"
+
+
+def application_caption(a, header=None):
+    """Rasm captioni uchun IXCHAM ariza matni — 1024 belgiga sig'adigan qilib
+    maydonlar bir qatorga birlashtirilgan. To'liq matn «👁 Batafsil» da."""
+    status = STATUS_LABELS.get(a.get("status"), a.get("status") or "-")
+    lines = [
+        f"📄 <b>Ariza #{a['id']}</b> | {status}",
+        f"👤 <b>{_v(a, 'full_name')}</b> · {_v(a, 'birth_date')}",
+        f"💼 {_v(a, 'vacancy_title')} · 🏢 {_v(a, 'branch_name')}",
+        f"📱 {_v(a, 'phone')}",
+        f"📍 {_v(a, 'city')}, {_v(a, 'district')}, {_v(a, 'address')}",
+        f"🕒 {_v(a, 'shift')} · 🎓 {_v(a, 'education')}",
+        f"💼 Tajriba: {_v(a, 'exp_years')} · oldingi joyda {_v(a, 'prev_years')}",
+        f"🧩 {_v(a, 'position_extra')}",
+        f"⚖️ Sudlangan: {_v(a, 'criminal')} · 👨‍👩‍👧 {_v(a, 'marital')} · 👶 {_v(a, 'children')}",
+        f"💰 Oldingi: {_v(a, 'prev_salary')} → 💵 Kutgani: {_v(a, 'expected_salary')}",
+        f"📝 Word: {_v(a, 'word_level')} · 📊 Excel: {_v(a, 'excel_level')}",
+        f"🌍 {_v(a, 'languages')}",
+        f"📅 Niyati: {_v(a, 'work_intent')}",
+        f"✍️ {_v(a, 'reason')}",
+    ]
+    if a.get("hr_comment"):
+        lines.append(f"🗒 HR izohi: {a['hr_comment']}")
+    if a.get("resume_file_id"):
+        lines.append("📎 Rezyume biriktirilgan")
+    lines.append(f"🗓 {_v(a, 'created_at')}")
+    text = "\n".join(lines)
+    if header:
+        text = f"{header}\n{text}"
+    return _fit_caption(text)
+
+
+async def send_application_card(bot: Bot, chat_id, app, reply_markup=None, header=None):
+    """Arizani BITTA xabarda yuboradi: rasm + captionda ma'lumot + tugmalar.
+    Rasm bo'lmasa oddiy matn yuboradi. Yuborilgan Message (yoki None) qaytadi."""
+    caption = application_caption(app, header=header)
+    file_id = app.get("photo_file_id")
+    if file_id:
+        try:
+            return await bot.send_photo(
+                chat_id, file_id, caption=caption, reply_markup=reply_markup
+            )
+        except Exception:
+            pass  # file_id eskirgan bo'lishi mumkin — matn bilan urinamiz
+    try:
+        return await bot.send_message(chat_id, caption, reply_markup=reply_markup)
+    except Exception:
+        return None
 
 
 # ---------------- KANDIDATLAR (KUTUVCHILAR) KANALI ----------------
-def candidate_channel_text(app):
-    """Nomzod arizasini kandidatlar kanaliga joylash uchun matn (status bilan)."""
-    status = STATUS_LABELS.get(app.get("status"), app.get("status") or "-")
-    return (
-        "📇 <b>NOMZOD — ISH QIDIRUVCHI</b>\n"
-        f"📌 Holati: <b>{status}</b>\n\n"
-        + application_text(app, full=True)
-    )
-
-
 async def post_application_channel(bot: Bot, chat_id, app):
-    """Arizani kandidatlar kanaliga joylaydi.
+    """Arizani kandidatlar kanaliga BITTA post qilib joylaydi.
     (chat_id, message_id) yoki (None, None) qaytaradi — keyin status yangilash uchun."""
     chat_id = normalize_chat_id(chat_id)
     if not chat_id:
         return None, None
-    try:
-        msg = await bot.send_message(chat_id, candidate_channel_text(app))
-        # Rasm va rezyume alohida yuboriladi (status matni asosiy postda tahrirlanadi)
-        await send_application_photo(bot, chat_id, app)
-        await send_application_resume(bot, chat_id, app)
-        return chat_id, msg.message_id
-    except Exception:
+    msg = await send_application_card(bot, chat_id, app, header=CANDIDATE_HEADER)
+    if not msg:
         return None, None
+    # Rezyume fayl — Telegram uni rasm bilan bitta xabarga qo'sha olmaydi
+    await send_application_resume(bot, chat_id, app)
+    return chat_id, msg.message_id
 
 
 async def update_application_channel(bot: Bot, app):
@@ -460,10 +512,17 @@ async def update_application_channel(bot: Bot, app):
     if not chat_id or not msg_id:
         return False
     chat_id = normalize_chat_id(chat_id)
+    caption = application_caption(app, header=CANDIDATE_HEADER)
     try:
-        await bot.edit_message_text(
-            candidate_channel_text(app), chat_id=chat_id, message_id=int(msg_id)
+        await bot.edit_message_caption(
+            chat_id=chat_id, message_id=int(msg_id), caption=caption
         )
+        return True
+    except Exception:
+        pass
+    # Post rasmsiz (oddiy matn) bo'lsa — matnni tahrirlaymiz
+    try:
+        await bot.edit_message_text(caption, chat_id=chat_id, message_id=int(msg_id))
         return True
     except Exception:
         return False

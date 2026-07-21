@@ -13,7 +13,7 @@ import keyboards as kb
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
     send_application_resume, send_application_photo, best_vacancy_matches,
-    recommendation_text, now_tk, post_application_channel,
+    recommendation_text, now_tk, post_application_channel, send_application_card,
 )
 
 router = Router()
@@ -22,6 +22,20 @@ router = Router()
 # ---------------- VAKANSIYALARNI KO'RISH ----------------
 @router.message(F.text == "💼 Vakansiyalar")
 async def show_vacancies(message: Message):
+    user = await q.get_user(message.from_user.id)
+    # HR/Admin uchun shu tugma boshqaruv ro'yxatini ochadi — tahrirlash, yopish, o'chirish
+    if user and user["role"] in (ROLE_HR, ROLE_ADMIN):
+        vacs = await q.list_vacancies(active_only=False)
+        if not vacs:
+            await message.answer("Hali vakansiyalar yo'q.")
+            return
+        await message.answer(
+            f"💼 <b>Vakansiyalar</b>\n\nJami: <b>{len(vacs)}</b> ta "
+            "(filial rahbarlari yaratganlari ham shu yerda)\n"
+            "Boshqarish uchun tanlang — tahrirlash, yopish yoki 🗑 o'chirish:",
+            reply_markup=kb.vacancies_manage_list_kb(vacs),
+        )
+        return
     vacs = await q.list_vacancies(active_only=True)
     if not vacs:
         await message.answer("😔 Hozircha faol vakansiyalar yo'q. Keyinroq urinib ko'ring.")
@@ -732,11 +746,12 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
     app = await q.get_application(aid)
     hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
     admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
-    text = "🔔 <b>Yangi ariza keldi!</b>\n\n" + application_text(app, full=True)
+    header = "🔔 <b>Yangi ariza keldi!</b>"
     if app.get("uniform_status") == "no":
-        text = "👕 <b>Forma kerak!</b>\n\n" + text
+        header = "👕 <b>Forma kerak!</b>\n" + header
     # Aynan vakansiyadan kelmagan bo'lsa — ochiq vakansiyalarga moslikni tekshirib,
     # HR ga avtomatik tavsiya beramiz (tasdiqlashidan oldin).
+    rec = None
     if not app.get("vacancy_id"):
         try:
             threshold = int(await q.get_setting("match_threshold", "60") or "60")
@@ -745,14 +760,17 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
         vacs = await q.list_vacancies(active_only=True)
         matches = best_vacancy_matches(app, vacs, threshold=threshold)
         rec = recommendation_text(matches)
-        if rec:
-            text += "\n" + rec
     for tid in set(hr_ids + admin_ids):
-        await safe_send(bot, tid, text, reply_markup=kb.application_actions_kb(aid))
-        # Oxirgi 10 kunda tushgan rasm
-        await send_application_photo(bot, tid, app)
-        # Rezyume fayli bo'lsa alohida yuboramiz
+        # Rasm + captionda ma'lumot + tugmalar — hammasi BITTA xabarda
+        await send_application_card(
+            bot, tid, app,
+            reply_markup=kb.application_actions_kb(aid),
+            header=header,
+        )
+        # Rezyume fayli bo'lsa alohida (hujjatni rasm bilan qo'shib bo'lmaydi)
         await send_application_resume(bot, tid, app)
+        if rec:
+            await safe_send(bot, tid, rec)
 
     # Nomzodlar (kutuvchilar) kanaliga avtomatik joylash (admin ulagan bo'lsa)
     candidate_channel = await q.get_setting("candidate_channel")
@@ -785,8 +803,7 @@ async def my_application_view(call: CallbackQuery, bot: Bot):
     if not app or app.get("user_id") != user["id"]:
         await call.answer("Ariza topilmadi.", show_alert=True)
         return
-    await call.message.answer(application_text(app, full=True))
-    await send_application_photo(bot, call.message.chat.id, app)
+    await send_application_card(bot, call.message.chat.id, app)
     await send_application_resume(bot, call.message.chat.id, app)
     await call.answer()
 

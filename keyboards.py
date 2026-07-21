@@ -603,6 +603,14 @@ def vacancy_manage_kb(vid, is_active):
     return b.as_markup()
 
 
+def vacancy_delete_confirm_kb(vid):
+    b = InlineKeyboardBuilder()
+    b.button(text="🗑 Ha, o'chirilsin", callback_data=f"vdelok:{vid}")
+    b.button(text="⬅️ Bekor qilish", callback_data=f"vman:{vid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def vacancy_edit_fields_kb(vid):
     fields = [
         ("Lavozim nomi", "title"),
