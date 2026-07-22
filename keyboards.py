@@ -28,6 +28,9 @@ EMPLOYEE_ROLES = (
 # Xodim menyusidagi «HR ga murojaat» tugmasi (ish vaqti / maosh / boshqa masala)
 HR_REQUEST_BTN = "📩 HR ga murojaat"
 
+# Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
+PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
+
 # Asosiy menyu tugmalari — bosilganda yarim qolgan FSM oqimi bekor qilinadi
 # (aks holda tugma matni ochiq anketa savoliga javob sifatida ketib qoladi).
 MENU_ESCAPE_BUTTONS = {
@@ -543,6 +546,24 @@ def hr_salary_offer_kb(aid):
     return b.as_markup()
 
 
+# ---------------- MA'LUMOTLARNI YANGILASH (admin kampaniyasi) ----------------
+def profile_update_confirm_kb():
+    """Adminga: haqiqatan barcha xodimlardan ma'lumot yangilashni so'raymizmi?"""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha", callback_data="profupd_yes")
+    b.button(text="❌ Yo'q", callback_data="profupd_no")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def profile_update_start_kb():
+    """Xodimga keladigan xabar ostidagi «Yangilash» tugmasi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔄 Yangilash", callback_data="profupd_start")
+    b.adjust(1)
+    return b.as_markup()
+
+
 # ---------------- HR GA MUROJAAT (xodim) ----------------
 def hr_request_menu_kb():
     """Xodim «📩 HR ga murojaat» tugmasini bosganda chiqadigan 3 ta yo'nalish."""
@@ -971,8 +992,9 @@ def admin_menu():
     b.button(text="⚙️ Sozlamalar")
     b.button(text="💵 Avans sozlamalari")
     b.button(text="🧾 Audit log")
+    b.button(text=PROFILE_UPDATE_BTN)
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1237,9 +1259,13 @@ def staff_photo_kb():
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
-def staff_confirm_kb():
+def staff_confirm_kb(update_mode=False):
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Ha, HR panelga yuborilsin", callback_data="sreg_confirm")
+    b.button(
+        text="✅ Ha, ma'lumotlarim yangilansin" if update_mode
+        else "✅ Ha, HR panelga yuborilsin",
+        callback_data="sreg_confirm",
+    )
     b.button(text="❌ Bekor qilish", callback_data="sreg_cancel")
     b.adjust(1)
     return b.as_markup()

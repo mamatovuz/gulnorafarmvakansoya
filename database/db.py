@@ -166,6 +166,9 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     extra_info TEXT,
     since TEXT,
     education TEXT,               -- ma'lumoti / diplomi (staff_regs dan ko'chiriladi)
+    update_required INTEGER NOT NULL DEFAULT 0,  -- admin «ma'lumotlarni yangilash» so'ragan
+    update_requested_at TEXT,
+    updated_by_self_at TEXT,      -- xodim oxirgi marta o'zi yangilagan vaqt
     created_at TEXT DEFAULT (datetime('now','+5 hours')),
     updated_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
@@ -497,6 +500,9 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "extra_info": "TEXT",
     "since": "TEXT",
     "education": "TEXT",
+    "update_required": "INTEGER NOT NULL DEFAULT 0",
+    "update_requested_at": "TEXT",
+    "updated_by_self_at": "TEXT",
 }
 
 ATTENDANCE_COLUMNS = {

@@ -1,7 +1,7 @@
 """Ma'lumotlar bazasi bilan ishlash uchun yordamchi funksiyalar."""
 import aiosqlite
 from config import DB_PATH, SUPER_ADMINS
-from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER
+from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER, ROLE_HR, ROLE_IT
 
 
 _CLAIMABLE_TABLES = {
@@ -709,6 +709,89 @@ async def uniform_stats(role=None):
         cur = await db.execute(sql, params)
         row = await cur.fetchone()
         return dict(row)
+    finally:
+        await db.close()
+
+
+# ---------------- MA'LUMOTLARNI YANGILASH KAMPANIYASI (admin) ----------------
+# Bot boshqaruvchilari (admin/HR/IT) bloklanmaydi — aks holda kampaniyani
+# to'xtatib bo'lmay qolardi.
+UPDATE_EXEMPT_ROLES = (ROLE_ADMIN, ROLE_HR, ROLE_IT)
+
+
+async def request_profile_update_all():
+    """Barcha xodimlardan ma'lumotlarini yangilashni so'raydi.
+
+    (yangilanishi kerak bo'lgan xodimlar soni, ularning tg_id ro'yxati) qaytaradi."""
+    db = await _conn()
+    try:
+        placeholders = ",".join("?" for _ in UPDATE_EXEMPT_ROLES)
+        cur = await db.execute(
+            f"""SELECT u.tg_id FROM employee_profiles ep
+                JOIN users u ON u.id=ep.user_id
+                WHERE u.role NOT IN ({placeholders})""",
+            UPDATE_EXEMPT_ROLES,
+        )
+        tg_ids = [r["tg_id"] for r in await cur.fetchall()]
+        await db.execute(
+            f"""UPDATE employee_profiles
+                SET update_required=1, update_requested_at=datetime('now','+5 hours')
+                WHERE user_id IN (
+                    SELECT id FROM users WHERE role NOT IN ({placeholders})
+                )""",
+            UPDATE_EXEMPT_ROLES,
+        )
+        await db.commit()
+        return len(tg_ids), tg_ids
+    finally:
+        await db.close()
+
+
+async def needs_profile_update(tg_id):
+    """Shu foydalanuvchidan ma'lumotlarini yangilash talab qilinyaptimi?"""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT ep.update_required FROM employee_profiles ep
+               JOIN users u ON u.id=ep.user_id
+               WHERE u.tg_id=?""",
+            (tg_id,),
+        )
+        row = await cur.fetchone()
+        return bool(row and row["update_required"])
+    finally:
+        await db.close()
+
+
+async def clear_profile_update(user_id):
+    """Xodim ma'lumotlarini yangilab bo'ldi — talab olib tashlanadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """UPDATE employee_profiles
+               SET update_required=0,
+                   updated_by_self_at=datetime('now','+5 hours'),
+                   updated_at=datetime('now','+5 hours')
+               WHERE user_id=?""",
+            (user_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def profile_update_progress():
+    """(yangilagan, kutilayotgan) — kampaniya holati."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT SUM(CASE WHEN update_required=1 THEN 1 ELSE 0 END) AS waiting,
+                      SUM(CASE WHEN update_required=0 AND updated_by_self_at IS NOT NULL
+                               THEN 1 ELSE 0 END) AS done
+               FROM employee_profiles"""
+        )
+        row = dict(await cur.fetchone())
+        return row.get("done") or 0, row.get("waiting") or 0
     finally:
         await db.close()
 

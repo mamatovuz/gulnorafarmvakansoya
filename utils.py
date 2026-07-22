@@ -88,6 +88,18 @@ DEFAULT_WELCOME = (
 )
 
 
+# Admin «🔄 Ma'lumotlarni yangilash» ni ishga tushirganda xodimlarga boradigan xabar
+PROFILE_UPDATE_NOTICE = (
+    "🔄 <b>Ma'lumotlaringizni yangilang</b>\n\n"
+    "Hurmatli xodim! Biz sizning ma'lumotlaringiz eskirganini sezib qoldik.\n"
+    "Iltimos, ma'lumotlaringizni yangilang — savollarga boshidan javob berasiz, "
+    "bu bir necha daqiqa vaqt oladi.\n\n"
+    "⚠️ Ma'lumotlaringizni yangilamaguningizcha botning boshqa bo'limlaridan "
+    "foydalana olmaysiz.\n\n"
+    "Quyidagi «🔄 Yangilash» tugmasini bosing 👇"
+)
+
+
 async def get_welcome_text():
     text = await q.get_setting("welcome_text")
     return text if text else DEFAULT_WELCOME

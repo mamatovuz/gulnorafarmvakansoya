@@ -13,12 +13,15 @@ from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import CallbackQuery
 
 from config import BOT_TOKEN, SUPER_ADMINS
 from database.db import init_db
 from database import queries as q
 from handlers import register_all
+import keyboards as kb
 from keyboards import MENU_ESCAPE_BUTTONS
+from utils import PROFILE_UPDATE_NOTICE
 from services.reminders import (
     interview_reminder_loop, probation_reminder_loop, location_check_loop,
     advance_prompt_loop, it_report_loop, dayoff_prompt_loop, dayoff_report_loop,
@@ -38,6 +41,45 @@ class BlockMiddleware(BaseMiddleware):
             except Exception:
                 pass
         return await handler(event, data)
+
+class ProfileUpdateMiddleware(BaseMiddleware):
+    """Admin «🔄 Ma'lumotlarni yangilash» ni ishga tushirgan bo'lsa — xodim
+    ma'lumotlarini yangilamaguncha botning boshqa bo'limlariga kirmaydi.
+
+    Faqat «Gulnora Farm hodimi» anketasi (StaffReg) va yangilash tugmalari
+    o'tkaziladi. Admin/HR/IT belgilanmaydi — ular kampaniyani boshqaradi."""
+
+    ALLOWED_CALLBACKS = {"profupd_start", "sreg_confirm", "sreg_cancel"}
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if not user:
+            return await handler(event, data)
+        try:
+            if not await q.needs_profile_update(user.id):
+                return await handler(event, data)
+        except Exception:
+            return await handler(event, data)
+
+        state = data.get("state")
+        current = await state.get_state() if state else None
+        if current and current.startswith("StaffReg:"):
+            return await handler(event, data)  # anketa to'ldirilmoqda
+        if isinstance(event, CallbackQuery):
+            if event.data in self.ALLOWED_CALLBACKS:
+                return await handler(event, data)
+            await event.answer(
+                "🔄 Avval ma'lumotlaringizni yangilang.", show_alert=True
+            )
+            return None
+        # Yarim qolgan boshqa oqim bo'lsa — tozalaymiz (aks holda qulflanib qoladi)
+        if current and state:
+            await state.clear()
+        await event.answer(
+            PROFILE_UPDATE_NOTICE, reply_markup=kb.profile_update_start_kb()
+        )
+        return None
+
 
 class MenuEscapeMiddleware(BaseMiddleware):
     """Asosiy menyu tugmasi bosilsa — yarim qolgan anketani (FSM) bekor qiladi.
@@ -71,6 +113,9 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(BlockMiddleware())
+    # Yangilash talabi menyu tugmalaridan oldin tekshiriladi
+    dp.message.outer_middleware(ProfileUpdateMiddleware())
+    dp.callback_query.outer_middleware(ProfileUpdateMiddleware())
     dp.message.outer_middleware(MenuEscapeMiddleware())
     register_all(dp)
 

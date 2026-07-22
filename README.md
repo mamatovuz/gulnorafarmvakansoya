@@ -40,6 +40,11 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - Tasdiqlangach xodim ma'lumotlari **maxfiy kanalga** avtomatik joylanadi (kanal ulangan bo'lsa)
 - **🎓 Diplom statistikasi** (HR va Direktor panelida) — nechta xodimda diplom bor / yo'q,
   ma'lumot turlari va filiallar kesimida + diplomi yo'q xodimlar ro'yxati
+- **🔄 Ma'lumotlarni yangilash** (Admin panel) — tasdiqlangach barcha xodimlarga
+  «ma'lumotlaringizni yangilang» xabari + «🔄 Yangilash» tugmasi boradi. Anketa boshidan
+  to'ldiriladi; **yangilamaguncha xodim botning boshqa bo'limlaridan foydalana olmaydi**.
+  Eski ma'lumotlar faqat yakunda tasdiqlangach almashadi, roli o'zgarmaydi
+  (yo'nalish o'zgargan bo'lsa HR ga xabar boradi). Nomzodlarga tegishli emas
 - Yo'nalishlar: 💊 Farmatsevt · 👨‍💼 Filial rahbari · 👔 Direktor · 🧮 Buxgalter · 🧹 Tozalik rahbari · 📦 Omborchi · 🚚 Haydovchi
 
 ### 📍 Davomat (GPS)
@@ -54,7 +59,7 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
   ✉️ boshqa masala. Ish soati so'rovi HR tasdiqlagach profilga yoziladi va davomat
   aynan yangi vaqtdan hisoblanadi; rad etilsa HR sababi xodimga yuboriladi
 - Hisobotlar: **kunlik / haftalik / oylik**, **filial kesimida**, kim necha kun keldi / kim kelmadi —
-  HR, Direktor, Filial rahbari va Buxgalter panellarida
+  HR, Direktor, Filial rahbari va Buxgalter 
 
 ### 🧮 Buxgalter paneli
 - **📍 Davomat** va **⏰ Kech/erta hisobot** (barcha filiallar bo'yicha)

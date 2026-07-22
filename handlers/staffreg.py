@@ -20,7 +20,7 @@ from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
 from utils import (
     safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
-    post_staff_reg_to_channel,
+    post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE,
 )
 
 router = Router()
@@ -102,19 +102,56 @@ def _reg_summary(d):
 
 
 # ---------------- KIRISH ----------------
-@router.message(F.text == "🏢 Gulnora Farm hodimi")
-async def staff_reg_start(message: Message, state: FSMContext):
+FIRST_QUESTION = (
+    "<b>1-savol</b>\n👤 Ism-familiyangizni yozing.\nMisol: <i>Ravshanova Robiya</i>"
+)
+
+REG_INTRO = (
+    "🏢 <b>Gulnora Farm hodimi sifatida ro'yxatdan o'tish</b>\n\n"
+    "Assalomu alaykum! Agar siz allaqachon Gulnora Farmda ishlayotgan bo'lsangiz, "
+    "quyidagi savollarga javob bering. Ma'lumotlaringiz HR bo'limiga tasdiqlash uchun "
+    "yuboriladi.\n"
+    "Istalgan payt «❌ Bekor qilish» tugmasi bilan to'xtatishingiz mumkin.\n\n"
+    + FIRST_QUESTION
+)
+
+UPDATE_INTRO = (
+    "🔄 <b>Ma'lumotlarni yangilash</b>\n\n"
+    "Savollarga <b>boshidan</b> javob bering — hozirgi holatingizni yozing.\n"
+    "Eski ma'lumotlaringiz o'chmaydi: siz anketani yakunlab tasdiqlaganingizdan "
+    "keyingina ular yangilanadi.\n\n"
+    + FIRST_QUESTION
+)
+
+
+async def _begin_staff_form(message: Message, state: FSMContext, update_mode=False):
     await state.clear()
+    await state.update_data(_update_mode=update_mode)
     await state.set_state(StaffReg.full_name)
     await message.answer(
-        "🏢 <b>Gulnora Farm hodimi sifatida ro'yxatdan o'tish</b>\n\n"
-        "Assalomu alaykum! Agar siz allaqachon Gulnora Farmda ishlayotgan bo'lsangiz, "
-        "quyidagi savollarga javob bering. Ma'lumotlaringiz HR bo'limiga tasdiqlash uchun "
-        "yuboriladi.\n"
-        "Istalgan payt «❌ Bekor qilish» tugmasi bilan to'xtatishingiz mumkin.\n\n"
-        "<b>1-savol</b>\n👤 Ism-familiyangizni yozing.\nMisol: <i>Ravshanova Robiya</i>",
+        UPDATE_INTRO if update_mode else REG_INTRO,
         reply_markup=kb.staff_photo_kb(),  # faqat Bekor qilish tugmasi
     )
+
+
+@router.message(F.text == "🏢 Gulnora Farm hodimi")
+async def staff_reg_start(message: Message, state: FSMContext):
+    await _begin_staff_form(message, state, update_mode=False)
+
+
+@router.callback_query(F.data == "profupd_start")
+async def staff_update_start(call: CallbackQuery, state: FSMContext):
+    """Admin so'ragan «ma'lumotlarni yangilash» — anketa boshidan boshlanadi."""
+    profile = await q.get_employee_profile_by_tg(call.from_user.id)
+    if not profile:
+        await call.answer("⛔ Xodim profili topilmadi.", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer()
+    await _begin_staff_form(call.message, state, update_mode=True)
 
 
 # ---------------- BEKOR QILISH ----------------
@@ -125,7 +162,15 @@ async def staff_reg_start(message: Message, state: FSMContext):
     StaffReg.since, StaffReg.extra, StaffReg.photo,
 ), F.text == kb.CANCEL_BTN)
 async def staff_reg_cancel(message: Message, state: FSMContext):
+    data = await state.get_data()
+    update_mode = bool(data.get("_update_mode"))
     await state.clear()
+    if update_mode:
+        # Yangilash majburiy — bekor qilinsa eslatma qaytadan chiqadi
+        await message.answer(
+            PROFILE_UPDATE_NOTICE, reply_markup=kb.profile_update_start_kb()
+        )
+        return
     user = await q.get_user(message.from_user.id)
     await message.answer(
         "❌ Ro'yxatdan o'tish bekor qilindi.",
@@ -384,6 +429,7 @@ async def sr_photo_missing(message: Message):
 
 async def _show_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
+    update_mode = bool(data.get("_update_mode"))
     await state.set_state(StaffReg.confirm)
     user = await q.get_user(message.from_user.id)
     await message.answer(
@@ -394,19 +440,26 @@ async def _show_confirm(message: Message, state: FSMContext):
     await message.answer_photo(
         data.get("photo_file_id"),
         caption=_reg_summary(data),
-        reply_markup=kb.staff_confirm_kb(),
+        reply_markup=kb.staff_confirm_kb(update_mode=update_mode),
     )
 
 
 # ---------------- TASDIQLASH / BEKOR ----------------
 @router.callback_query(F.data == "sreg_cancel")
 async def sr_confirm_cancel(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    update_mode = bool(data.get("_update_mode"))
     await state.clear()
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await call.message.answer("❌ Ariza bekor qilindi.")
+    if update_mode:
+        await call.message.answer(
+            PROFILE_UPDATE_NOTICE, reply_markup=kb.profile_update_start_kb()
+        )
+    else:
+        await call.message.answer("❌ Ariza bekor qilindi.")
     await call.answer()
 
 
@@ -444,6 +497,9 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
     # Foydalanuvchi telefon raqamini ham yangilab qo'yamiz
     if data.get("phone"):
         await q.update_phone(call.from_user.id, data["phone"])
+    if data.get("_update_mode"):
+        await _finish_update(call, state, bot, rid, reg, user)
+        return
     await state.clear()
     await q.add_log(
         call.from_user.id, call.from_user.full_name,
@@ -481,6 +537,66 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
             bot, tid, header + staff_reg_text(full),
             reply_markup=kb.staff_reg_actions_kb(rid),
         )
+
+
+async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
+                         rid, reg, user):
+    """Ma'lumotlarni yangilash rejimi — HR tasdig'isiz darhol profilga yoziladi.
+
+    DIQQAT: xodimning ROLI o'zgartirilmaydi (o'zi o'ziga yuqori rol bera olmasin).
+    Yo'nalish o'zgargan bo'lsa HR ga xabar beriladi — rolni HR o'zgartiradi."""
+    old_profile = await q.get_employee_profile(user["id"]) or {}
+    await state.clear()
+    await q.set_staff_reg_status(rid, "updated", handled_by=user["id"])
+    await q.upsert_employee_profile(
+        user_id=user["id"],
+        application_id=old_profile.get("application_id"),
+        role=old_profile.get("role") or user["role"],   # rol o'zgarmaydi
+        position=reg.get("position"),
+        branch_id=reg.get("branch_id"),
+        uniform_status=reg.get("uniform_status") or "unknown",
+        monthly_salary=reg.get("salary"),
+        birth_date=reg.get("birth_date"),
+        address=reg.get("address"),
+        work_hours=reg.get("work_hours"),
+        rest_day=reg.get("rest_day"),
+        photo_file_id=reg.get("photo_file_id"),
+        extra_info=reg.get("extra_info"),
+        since=reg.get("since"),
+        education=reg.get("education"),
+    )
+    await q.clear_profile_update(user["id"])
+    await q.add_log(
+        call.from_user.id, user["full_name"],
+        "malumot_yangilandi", f"#{rid} — {reg.get('position')}"
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "✅ <b>Ma'lumotlaringiz yangilandi. Rahmat!</b>\n\n"
+        "Endi botdan avvalgidek foydalanishingiz mumkin.",
+        reply_markup=kb.main_menu(old_profile.get("role") or user["role"]),
+    )
+    await call.answer("Yangilandi ✅")
+
+    full = await q.get_staff_reg(rid)
+    changed = ""
+    if old_profile.get("position") and old_profile["position"] != reg.get("position"):
+        changed = (
+            f"\n⚠️ Yo'nalish o'zgargan: <b>{old_profile['position']}</b> → "
+            f"<b>{reg.get('position')}</b> (rolni HR o'zgartirishi kerak)"
+        )
+    header = f"🔄 <b>Xodim ma'lumotlarini yangiladi</b>{changed}\n"
+    hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
+    admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
+    for tid in set(hr_ids + admin_ids):
+        await safe_send(bot, tid, header + staff_reg_text(full))
+    await post_staff_reg_to_channel(
+        bot, await q.get_setting("secret_channel"), full,
+        header="🔄 <b>XODIM MA'LUMOTLARI YANGILANDI</b>",
+    )
 
 
 # ================= HR / ADMIN: TASDIQLASH =================

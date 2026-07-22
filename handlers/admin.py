@@ -12,7 +12,7 @@ from states import (
     BranchForm, ChannelForm, RoleForm, UserManageForm, SettingsForm,
 )
 import keyboards as kb
-from utils import vacancy_text, safe_send
+from utils import vacancy_text, safe_send, PROFILE_UPDATE_NOTICE
 
 router = Router()
 
@@ -46,6 +46,70 @@ async def admin_panel(message: Message):
     await message.answer(
         "👑 <b>Administrator paneli</b>\nKerakli bo'limni tanlang:",
         reply_markup=kb.admin_menu(),
+    )
+
+
+# ---------------- MA'LUMOTLARNI YANGILASH KAMPANIYASI ----------------
+@router.message(F.text == kb.PROFILE_UPDATE_BTN)
+async def profile_update_ask(message: Message):
+    """Barcha xodimlardan ma'lumotlarini yangilashni so'rash — avval tasdiqlash."""
+    if not await is_admin(message.from_user.id):
+        await message.answer("⛔ Sizda administrator huquqi yo'q.")
+        return
+    done, waiting = await q.profile_update_progress()
+    note = f"\n\n⏳ Hozir yangilashi kutilayotganlar: <b>{waiting}</b> ta" if waiting else ""
+    await message.answer(
+        "🔄 <b>Ma'lumotlarni yangilash</b>\n\n"
+        "Siz ma'lumotlarni haqiqatdan yangilamoqchimisiz?\n\n"
+        "«Ha» desangiz — <b>barcha Gulnora Farm xodimlariga</b> ma'lumotlarini "
+        "yangilash haqida xabar boradi va ular yangilamaguncha botning boshqa "
+        "bo'limlaridan foydalana olmaydi.\n"
+        "<i>Ishga ariza yuborgan nomzodlarga bu tegishli emas.</i>"
+        + note,
+        reply_markup=kb.profile_update_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "profupd_no")
+async def profile_update_no(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("❌ Bekor qilindi. Hech kimga xabar yuborilmadi.")
+    await call.answer()
+
+
+@router.callback_query(F.data == "profupd_yes")
+async def profile_update_yes(call: CallbackQuery, bot: Bot):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    total, tg_ids = await q.request_profile_update_all()
+    await call.answer("Yuborilmoqda…")
+    sent = 0
+    for tid in tg_ids:
+        if await safe_send(bot, tid, PROFILE_UPDATE_NOTICE,
+                           reply_markup=kb.profile_update_start_kb()):
+            sent += 1
+    me = await actor(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "malumot_yangilash_sorovi", f"{sent}/{total} xodimga yuborildi",
+    )
+    await call.message.answer(
+        "✅ <b>So'rov yuborildi!</b>\n\n"
+        f"👥 Xodimlar: <b>{total}</b> ta\n"
+        f"📨 Xabar yetkazildi: <b>{sent}</b> ta\n\n"
+        "Ular ma'lumotlarini yangilamaguncha botning boshqa bo'limlaridan "
+        "foydalana olmaydi. Holatni shu tugma orqali kuzatib borishingiz mumkin."
     )
 
 
