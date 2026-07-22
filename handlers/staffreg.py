@@ -588,15 +588,22 @@ async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
             f"\n⚠️ Yo'nalish o'zgargan: <b>{old_profile['position']}</b> → "
             f"<b>{reg.get('position')}</b> (rolni HR o'zgartirishi kerak)"
         )
+    # DIQQAT: yangilangan ma'lumot HECH QANDAY kanalga joylanmaydi —
+    # faqat HR va Adminlarga (panelga) boradi.
     header = f"🔄 <b>Xodim ma'lumotlarini yangiladi</b>{changed}\n"
     hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
     admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
     for tid in set(hr_ids + admin_ids):
+        if full.get("photo_file_id"):
+            try:
+                await bot.send_photo(
+                    tid, full["photo_file_id"],
+                    caption=header + staff_reg_text(full),
+                )
+                continue
+            except Exception:
+                pass
         await safe_send(bot, tid, header + staff_reg_text(full))
-    await post_staff_reg_to_channel(
-        bot, await q.get_setting("secret_channel"), full,
-        header="🔄 <b>XODIM MA'LUMOTLARI YANGILANDI</b>",
-    )
 
 
 # ================= HR / ADMIN: TASDIQLASH =================

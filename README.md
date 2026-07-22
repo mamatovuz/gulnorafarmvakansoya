@@ -44,7 +44,8 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
   «ma'lumotlaringizni yangilang» xabari + «🔄 Yangilash» tugmasi boradi. Anketa boshidan
   to'ldiriladi; **yangilamaguncha xodim botning boshqa bo'limlaridan foydalana olmaydi**.
   Eski ma'lumotlar faqat yakunda tasdiqlangach almashadi, roli o'zgarmaydi
-  (yo'nalish o'zgargan bo'lsa HR ga xabar boradi). Nomzodlarga tegishli emas
+  (yo'nalish o'zgargan bo'lsa HR ga xabar boradi). Nomzodlarga tegishli emas.
+  **Yangilangan ma'lumot hech qanday kanalga joylanmaydi — faqat HR/Admin paneliga keladi**
 - Yo'nalishlar: 💊 Farmatsevt · 👨‍💼 Filial rahbari · 👔 Direktor · 🧮 Buxgalter · 🧹 Tozalik rahbari · 📦 Omborchi · 🚚 Haydovchi
 
 ### 📍 Davomat (GPS)
