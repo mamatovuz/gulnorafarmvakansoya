@@ -29,6 +29,41 @@ async def claim_request(table, rid, new_status, handled_by=None, expected="new")
         await db.close()
 
 
+# ---------------- SO'ROV XABARLARI (bir nechta HR ga yuborilgan) ----------------
+async def add_request_notice(kind, ref_id, chat_id, message_id):
+    """So'rov kartochkasi kimga, qaysi xabar sifatida yuborilganini yozib qo'yadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "INSERT INTO request_notices (kind, ref_id, chat_id, message_id) "
+            "VALUES (?,?,?,?)",
+            (kind, int(ref_id), int(chat_id), int(message_id)),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def pop_request_notices(kind, ref_id):
+    """So'rovga tegishli barcha yuborilgan xabarlarni qaytaradi va yozuvni o'chiradi.
+
+    Qaytgan ro'yxat bo'yicha qolgan HR lardagi xabar Telegramdan o'chiriladi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT chat_id, message_id FROM request_notices WHERE kind=? AND ref_id=?",
+            (kind, int(ref_id)),
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+        await db.execute(
+            "DELETE FROM request_notices WHERE kind=? AND ref_id=?", (kind, int(ref_id))
+        )
+        await db.commit()
+        return rows
+    finally:
+        await db.close()
+
+
 async def accept_application_once(aid, handled_by=None):
     """Arizani ATOMIK qabul qiladi — faqat hali qabul qilinmagan bo'lsa. Bir ariza
     ikki HR tomonidan ikki marta qabul qilinishining oldini oladi."""
@@ -322,8 +357,8 @@ async def add_vacancy(data, created_by):
             """INSERT INTO vacancies
             (title, branch_id, job_type, shift, salary, work_time,
              requirements, responsibilities, conditions, staff_count, experience,
-             manager_request_id, is_active, created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             gender, manager_request_id, is_active, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("title"),
                 data.get("branch_id"),
@@ -336,6 +371,7 @@ async def add_vacancy(data, created_by):
                 data.get("conditions"),
                 data.get("staff_count"),
                 data.get("experience"),
+                data.get("gender"),
                 data.get("manager_request_id"),
                 1 if data.get("is_active", True) else 0,
                 created_by,
@@ -979,8 +1015,8 @@ async def add_manager_request(data):
         cur = await db.execute(
             """INSERT INTO manager_requests
                (manager_user_id, branch_id, kind, title, staff_count, shift,
-                experience, details)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                experience, gender, details)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("manager_user_id"),
                 data.get("branch_id"),
@@ -989,6 +1025,7 @@ async def add_manager_request(data):
                 data.get("staff_count"),
                 data.get("shift"),
                 data.get("experience"),
+                data.get("gender"),
                 data.get("details"),
             ),
         )

@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS vacancies (
     conditions TEXT,
     staff_count TEXT,                 -- nechta xodim kerak (rahbar so'rovi)
     experience TEXT,                  -- talab qilinadigan tajriba
+    gender TEXT,                      -- kerakli xodim jinsi: male / female / any
     manager_request_id INTEGER,       -- qaysi rahbar so'rovidan ochilgan
     channel_chat_id TEXT,             -- kanalga joylangan bo'lsa — chat id
     channel_message_id INTEGER,       -- kanaldagi post message id
@@ -308,6 +309,7 @@ CREATE TABLE IF NOT EXISTS manager_requests (
     staff_count TEXT,
     shift TEXT,                       -- smena (ertalabki/kechki)
     experience TEXT,                  -- talab qilinadigan tajriba
+    gender TEXT,                      -- kerakli xodim jinsi: male / female / any
     details TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     hr_comment TEXT,
@@ -406,6 +408,21 @@ CREATE TABLE IF NOT EXISTS probations (
     created_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
+
+-- Bir so'rov bir nechta HR/adminga yuboriladi. Kimdir tasdiqlagach qolganlaridagi
+-- xabar o'chirilishi uchun yuborilgan xabarlarning (chat_id, message_id) lari
+-- shu yerda saqlanadi.
+CREATE TABLE IF NOT EXISTS request_notices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,               -- staff_reg / manager_request / dayoff / ...
+    ref_id INTEGER NOT NULL,          -- so'rov id si
+    chat_id INTEGER NOT NULL,         -- kimga yuborilgan (tg_id)
+    message_id INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_notices_ref
+    ON request_notices(kind, ref_id);
 """
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)
@@ -463,11 +480,13 @@ VACANCY_COLUMNS = {
     "channel_chat_id": "TEXT",
     "channel_message_id": "INTEGER",
     "filled": "INTEGER NOT NULL DEFAULT 0",
+    "gender": "TEXT",                 # male / female / any — kerakli xodim jinsi
 }
 
 MANAGER_REQUEST_COLUMNS = {
     "shift": "TEXT",
     "experience": "TEXT",
+    "gender": "TEXT",                 # male / female / any — kerakli xodim jinsi
 }
 
 PROBATION_COLUMNS = {

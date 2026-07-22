@@ -25,8 +25,21 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - **Arizalar** — holat bo'yicha filtrlash (yangi / suhbat / qabul / rad)
   - 👁 Batafsil ko'rish · 📅 Suhbatga chaqirish · ✅ Ishga qabul · ❌ Rad etish · 📝 Izoh
 - **Vakansiyalar** — yaratish / tahrirlash / yopish / qayta ochish / o'chirish
+- **Bir so'rov — bitta javob**: bir xil so'rov barcha HR/adminlarga boradi, lekin
+  kim birinchi tasdiqlasa/rad etsa — qolganlaridagi xabar **avtomatik o'chiriladi**
+  (xodim so'rovi, vakansiya so'rovi, ishdan bo'shatish, dam olish, maosh, ish vaqti)
 - **Xabarnoma** — barchaga / xodimlarga / nomzodlarga / filial bo'yicha (rasm, video, fayl)
 - **Qidiruv** — ism / telefon / filial / lavozim bo'yicha
+
+### ➕ Vakansiya (filial rahbari → HR → kanal)
+- Filial rahbari paneli → **➕ Xodim kerak**: yo'nalish, nechta xodim,
+  **🚻 kimlar kerak (👨 Erkak · 👩 Ayol · 👥 Ikkalasi ham)**, smena, tajriba, izoh
+- So'rov HR ga boradi. HR **✅ Vakansiya ochish** ni bossa — vakansiya ochiladi va
+  **vakansiya kanaliga** e'lon joylanadi (kanal admin panelda ulanadi)
+- Kanaldagi e'lon tagida **«📝 Ishga ariza yuborish»** tugmasi — bosilsa bot ochiladi
+  va anketa o'sha vakansiya uchun (filial + lavozim to'ldirilgan holda) boshlanadi
+- Rahbar «hodimlar soni to'ldi» desa kanaldagi e'lon yopilgan holatga o'tadi va
+  ariza tugmasi olib tashlanadi
 
 ### 🏢 Gulnora Farm hodimi (self-registratsiya)
 - `/start` → **🏢 Gulnora Farm hodimi** tugmasi orqali mavjud xodim o'zini ro'yxatdan o'tkazadi
@@ -36,6 +49,8 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
   **necha yildan beri Gulnora Farmda ishlaydi**, **oxirgi 10 kundagi rasm**
 - Rolga qarab qo'shimcha savol: filial rahbari/direktor uchun boshqaruv hajmi
 - Yakunda: **HR panelga yuborilsinmi?** → tasdiqlansa xodimga rol va davomat paneli ochiladi
+- So'rov barcha HR va adminlarga boradi; **birinchi HR tasdiqlashi bilan**
+  qolgan HR lardagi xabar avtomatik o'chadi (ikki marta tasdiqlanmaydi)
 - HR **rad etsa sababini yozadi** — sabab ariza raqami bilan xodimga yuboriladi, panel ochilmaydi
 - Tasdiqlangach xodim ma'lumotlari **maxfiy kanalga** avtomatik joylanadi (kanal ulangan bo'lsa)
 - **🎓 Diplom statistikasi** (HR va Direktor panelida) — nechta xodimda diplom bor / yo'q,

@@ -875,6 +875,24 @@ def manager_vacancy_shift_kb():
     return _choices([MGR_SHIFT_MORNING, MGR_SHIFT_EVENING], row=1)
 
 
+# Vakansiyaga qanday xodim kerak: erkak / ayol / ikkalasi ham
+MGR_GENDER_MALE = "👨 Erkak"
+MGR_GENDER_FEMALE = "👩 Ayol"
+MGR_GENDER_ANY = "👥 Ikkalasi ham"
+
+MGR_GENDER_VALUES = {
+    MGR_GENDER_MALE: "male",
+    MGR_GENDER_FEMALE: "female",
+    MGR_GENDER_ANY: "any",
+}
+
+
+def manager_vacancy_gender_kb():
+    return _choices(
+        [MGR_GENDER_MALE, MGR_GENDER_FEMALE, MGR_GENDER_ANY], row=2
+    )
+
+
 def manager_vacancy_skip_kb():
     b = ReplyKeyboardBuilder()
     b.button(text=MGR_VAC_SKIP)

@@ -159,6 +159,7 @@ class ManagerVacancyForm(StatesGroup):
     """Filial rahbari HR ga xodim kerakligi haqida so'rov yuboradi."""
     position = State()      # yo'nalish (lavozim)
     staff_count = State()   # nechta xodim kerak
+    gender = State()        # kimlar kerak: erkak / ayol / ikkalasi ham
     shift = State()         # smena (ertalabki/kechki)
     experience = State()    # talab qilinadigan tajriba
     details = State()       # qo'shimcha izoh (ixtiyoriy)

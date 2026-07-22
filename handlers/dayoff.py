@@ -12,7 +12,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER
 from states import DayoffForm
 import keyboards as kb
-from utils import safe_send
+from utils import safe_send, broadcast_request, close_request_notices
 
 router = Router()
 
@@ -106,12 +106,12 @@ async def dayoff_reason(message: Message, state: FSMContext, bot: Bot):
     targets.update(await q.all_user_tg_ids(role=ROLE_HR))
     targets.update(await q.all_user_tg_ids(role=ROLE_ADMIN))
     targets.discard(message.from_user.id)
-    for tid in targets:
-        await safe_send(
-            bot, tid,
-            "🔔 <b>Yangi dam olish so'rovi!</b>\n\n" + _req_text(req),
-            reply_markup=kb.dayoff_actions_kb(rid),
-        )
+    # Kim birinchi ko'rib chiqsa — qolganlaridagi xabar avtomatik o'chadi
+    await broadcast_request(
+        bot, "dayoff", rid, targets,
+        "🔔 <b>Yangi dam olish so'rovi!</b>\n\n" + _req_text(req),
+        reply_markup=kb.dayoff_actions_kb(rid),
+    )
 
 
 # ---------------- KO'RISH (ro'yxat) ----------------
@@ -177,6 +177,7 @@ async def dayoff_approve(call: CallbackQuery, bot: Bot):
         await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
                           show_alert=True)
         return
+    await close_request_notices(bot, "dayoff", rid, keep_chat_id=call.from_user.id)
     # Yangi dam olish kunini profilga yozamiz
     if req.get("to_day"):
         await q.update_rest_day(req["user_id"], req["to_day"])
@@ -217,6 +218,7 @@ async def dayoff_reject(call: CallbackQuery, bot: Bot):
         await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
                           show_alert=True)
         return
+    await close_request_notices(bot, "dayoff", rid, keep_chat_id=call.from_user.id)
     await q.add_log(call.from_user.id, user["full_name"], "dam_olish_rad", f"#{rid}")
     try:
         await call.message.edit_reply_markup(reply_markup=None)

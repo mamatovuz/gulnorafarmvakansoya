@@ -1,6 +1,6 @@
 """Umumiy handlerlar: /start, majburiy obuna, yordam, asosiy menyu."""
 from aiogram import Router, F, Bot
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
@@ -36,7 +36,8 @@ async def send_main_menu(message: Message, user):
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, bot: Bot):
+async def cmd_start(message: Message, state: FSMContext, bot: Bot,
+                    command: CommandObject = None):
     await state.clear()
     user = await q.get_or_create_user(
         message.from_user.id,
@@ -55,6 +56,15 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     if not_joined:
         await show_subscription(message)
         return
+
+    # Kanaldagi vakansiya tagidagi «📝 Ishga ariza yuborish» tugmasi botni
+    # `/start vac_<id>` deep-link bilan ochadi — anketa darhol boshlanadi.
+    payload = (command.args if command else None) or ""
+    if payload.strip().startswith("vac_"):
+        from handlers.candidate import start_apply_from_deeplink
+
+        if await start_apply_from_deeplink(message, state, payload.strip()):
+            return
 
     # Telefon boshida so'ralmaydi — u ariza yoki hodim ro'yxatida yig'iladi.
     # /start darhol 2 ta tugmali menyuni ko'rsatadi.

@@ -20,7 +20,8 @@ from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
 from utils import (
     safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
-    post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE,
+    post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE, broadcast_request,
+    close_request_notices,
 )
 
 router = Router()
@@ -517,26 +518,18 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
     )
     await call.answer("Yuborildi ✅")
 
-    # HR va Adminlarga yuborish
+    # HR va Adminlarga yuborish. Yuborilgan xabarlar bazaga yoziladi — HR lardan
+    # biri tasdiqlaganda/rad etganda qolganlaridagi xabar avtomatik o'chiriladi.
     full = await q.get_staff_reg(rid)
     hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
     admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
     header = "🔔 <b>Yangi xodim so'rovi (Gulnora Farm hodimi)!</b>\n\n"
-    for tid in set(hr_ids + admin_ids):
-        if full.get("photo_file_id"):
-            try:
-                await bot.send_photo(
-                    tid, full["photo_file_id"],
-                    caption=header + staff_reg_text(full),
-                    reply_markup=kb.staff_reg_actions_kb(rid),
-                )
-                continue
-            except Exception:
-                pass
-        await safe_send(
-            bot, tid, header + staff_reg_text(full),
-            reply_markup=kb.staff_reg_actions_kb(rid),
-        )
+    await broadcast_request(
+        bot, "staff_reg", rid, set(hr_ids + admin_ids),
+        header + staff_reg_text(full),
+        reply_markup=kb.staff_reg_actions_kb(rid),
+        photo=full.get("photo_file_id"),
+    )
 
 
 async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
@@ -671,6 +664,8 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
                           show_alert=True)
         return
+    # Bitta HR tasdiqladi — qolgan HR/adminlardagi so'rov xabari o'chiriladi
+    await close_request_notices(bot, "staff_reg", rid, keep_chat_id=call.from_user.id)
     await q.set_role(reg["user_tg"], role, reg.get("branch_id"))
     await q.upsert_employee_profile(
         user_id=reg["user_id"],
@@ -779,6 +774,8 @@ async def sr_reject_reason(message: Message, state: FSMContext, bot: Bot):
     if not await q.claim_request("staff_regs", rid, "rejected", me["id"], "new"):
         await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
         return
+    # Bitta HR rad etdi — qolgan HR/adminlardagi so'rov xabari o'chiriladi
+    await close_request_notices(bot, "staff_reg", rid, keep_chat_id=message.from_user.id)
     await q.set_staff_reg_status(rid, "rejected", handled_by=me["id"], reject_reason=reason)
     await q.add_log(message.from_user.id, me["full_name"], "hodim_rad", f"#{rid}: {reason}")
     await message.answer(

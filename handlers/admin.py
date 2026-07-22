@@ -851,7 +851,9 @@ async def secret_channel_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(SettingsForm.secret_channel)
     await call.message.answer(
         "🔒 <b>Maxfiy kanalni ulash</b>\n\n"
-        "HR ishga qabul qilgan arizalar shu kanalga tushadi.\n\n"
+        "Shu kanalga tushadi:\n"
+        "• HR ishga qabul qilgan arizalar\n"
+        "• HR tasdiqlagan <b>Gulnora Farm hodimi</b> ma'lumotlari (rasmi bilan)\n\n"
         "1️⃣ Botni o'sha kanalga <b>administrator</b> qilib qo'shing.\n"
         "2️⃣ Kanal ID sini yuboring:\n"
         "   • Yopiq kanal: <code>-1001234567890</code> ko'rinishida\n"
@@ -886,7 +888,8 @@ async def secret_channel_save(message: Message, state: FSMContext, bot: Bot):
     suffix = f"\n📛 Nomi: <b>{title}</b>" if title else ""
     await message.answer(
         f"✅ Maxfiy kanal ulandi: <code>{value}</code>{suffix}\n\n"
-        "Endi HR ishga qabul qilgan har bir ariza shu kanalga yuboriladi."
+        "Endi HR qabul qilgan har bir ariza va tasdiqlangan xodim ma'lumotlari "
+        "shu kanalga yuboriladi."
     )
 
 
@@ -951,7 +954,9 @@ async def vacancy_channel_save(message: Message, state: FSMContext, bot: Bot):
     suffix = f"\n📛 Nomi: <b>{title}</b>" if title else ""
     await message.answer(
         f"✅ Vakansiya kanali ulandi: <code>{value}</code>{suffix}\n\n"
-        "Endi HR tasdiqlagan har bir vakansiya shu kanalga joylanadi."
+        "Endi HR tasdiqlagan har bir vakansiya shu kanalga joylanadi — e'lon "
+        "tagida «📝 Ishga ariza yuborish» tugmasi bo'ladi, uni bosgan odam "
+        "to'g'ridan-to'g'ri botdagi anketaga tushadi."
     )
 
 

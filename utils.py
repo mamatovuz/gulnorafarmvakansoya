@@ -330,6 +330,8 @@ def manager_request_text(req):
     ]
     if is_vacancy:
         lines.append(f"👥 Kerakli soni: {_v(req, 'staff_count')}")
+        if gender_label(req.get("gender")):
+            lines.append(f"🚻 Kimlar kerak: {gender_label(req['gender'])}")
         if req.get("shift"):
             lines.append(f"🕒 Smena: {req['shift']}")
         if req.get("experience"):
@@ -348,6 +350,69 @@ async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs):
         return True
     except Exception:
         return False
+
+
+# ---------------- BIR NECHTA HR GA YUBORILGAN SO'ROV ----------------
+# Bir so'rov barcha HR/adminlarga boradi. Kimdir birinchi bo'lib tasdiqlasa/rad
+# etsa — qolganlaridagi xabar keraksiz bo'lib qoladi va ular ham bosishga urinadi.
+# Shu sabab yuborilgan xabarlar bazaga yozib boriladi va so'rov ko'rib chiqilgach
+# qolganlaridan avtomatik o'chiriladi.
+async def broadcast_request(bot: Bot, kind, ref_id, tg_ids, text,
+                            reply_markup=None, photo=None):
+    """So'rov kartochkasini bir nechta xodimga yuboradi va xabar id larini yozadi.
+
+    Yuborilgan xabarlar soni qaytadi."""
+    sent = 0
+    for tid in tg_ids:
+        msg = None
+        if photo:
+            try:
+                msg = await bot.send_photo(
+                    tid, photo, caption=text, reply_markup=reply_markup
+                )
+            except Exception:
+                msg = None  # file_id eskirgan / caption uzun — matn bilan urinamiz
+        if msg is None:
+            try:
+                msg = await bot.send_message(tid, text, reply_markup=reply_markup)
+            except Exception:
+                continue  # bloklagan yoki botni ishga tushirmagan
+        sent += 1
+        try:
+            await q.add_request_notice(kind, ref_id, tid, msg.message_id)
+        except Exception:
+            pass
+    return sent
+
+
+async def close_request_notices(bot: Bot, kind, ref_id, keep_chat_id=None):
+    """So'rov ko'rib chiqilgach qolgan xodimlardagi xabarni o'chiradi.
+
+    `keep_chat_id` — so'rovni ko'rib chiqqan xodim (uning xabari qoladi, unga
+    handlerning o'zi natijani yozadi). O'chirib bo'lmasa (Telegram 48 soatdan
+    eski xabarni o'chirtirmaydi) — hech bo'lmasa tugmalar olib tashlanadi."""
+    try:
+        rows = await q.pop_request_notices(kind, ref_id)
+    except Exception:
+        return 0
+    removed = 0
+    for row in rows:
+        chat_id, message_id = row["chat_id"], row["message_id"]
+        if keep_chat_id is not None and int(chat_id) == int(keep_chat_id):
+            continue
+        try:
+            await bot.delete_message(chat_id, message_id)
+            removed += 1
+            continue
+        except Exception:
+            pass
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except Exception:
+            pass
+    return removed
 
 
 async def send_application_resume(bot: Bot, chat_id: int, app):
@@ -409,6 +474,19 @@ def normalize_chat_id(val):
         return val
 
 
+# ---------------- KERAKLI XODIM JINSI ----------------
+GENDER_LABELS = {
+    "male": "👨 Erkak",
+    "female": "👩 Ayol",
+    "any": "👥 Erkak va ayol (farqi yo'q)",
+}
+
+
+def gender_label(value):
+    """Bazadagi male/female/any qiymatini o'qiladigan matnga aylantiradi."""
+    return GENDER_LABELS.get((value or "").strip().lower())
+
+
 def vacancy_channel_text(v):
     """Kanalga joylash uchun chiroyli vakansiya matni."""
     lines = [
@@ -419,6 +497,8 @@ def vacancy_channel_text(v):
     ]
     if v.get("staff_count"):
         lines.append(f"👥 <b>Kerakli xodim:</b> {v['staff_count']} nafar")
+    if gender_label(v.get("gender")):
+        lines.append(f"🚻 <b>Kimlar uchun:</b> {gender_label(v['gender'])}")
     if v.get("shift"):
         lines.append(f"🕒 <b>Smena:</b> {v['shift']}")
     if v.get("work_time") and v.get("work_time") != v.get("shift"):
@@ -431,8 +511,42 @@ def vacancy_channel_text(v):
         lines.append(f"\n📋 <b>Talablar:</b>\n{v['requirements']}")
     if v.get("responsibilities") and v["responsibilities"] != "HR suhbatida aniqlanadi.":
         lines.append(f"\n🎯 <b>Vazifalar:</b>\n{v['responsibilities']}")
-    lines.append("\n📩 <b>Ariza berish:</b> botda «📝 Ishga ariza topshirish» tugmasi orqali.")
+    lines.append("\n📩 <b>Ariza berish:</b> quyidagi tugmani bosing — bot ochiladi va "
+                 "«📝 Ishga ariza topshirish» anketasi boshlanadi.")
     return "\n".join(lines)
+
+
+# Bot username i o'zgarmaydi — bir marta so'rab keshlaymiz (deep-link uchun kerak).
+_bot_username = None
+
+
+async def get_bot_username(bot: Bot):
+    global _bot_username
+    if _bot_username is None:
+        try:
+            me = await bot.get_me()
+            _bot_username = me.username
+        except Exception:
+            return None
+    return _bot_username
+
+
+async def vacancy_apply_kb(bot: Bot, vacancy_id):
+    """Kanaldagi e'lon tagidagi «Ishga ariza yuborish» tugmasi.
+
+    Tugma botni `/start vac_<id>` deep-link bilan ochadi — anketa o'sha
+    vakansiya uchun (filial va lavozim to'ldirilgan holda) boshlanadi."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    username = await get_bot_username(bot)
+    if not username:
+        return None
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="📝 Ishga ariza yuborish",
+        url=f"https://t.me/{username}?start=vac_{vacancy_id}",
+    )
+    return b.as_markup()
 
 
 async def post_vacancy_to_channel(bot: Bot, chat_id, vacancy):
@@ -440,15 +554,20 @@ async def post_vacancy_to_channel(bot: Bot, chat_id, vacancy):
     chat_id = normalize_chat_id(chat_id)
     if not chat_id:
         return None, None
+    markup = await vacancy_apply_kb(bot, vacancy["id"])
     try:
-        msg = await bot.send_message(chat_id, vacancy_channel_text(vacancy))
+        msg = await bot.send_message(
+            chat_id, vacancy_channel_text(vacancy), reply_markup=markup
+        )
         return chat_id, msg.message_id
     except Exception:
         return None, None
 
 
 async def mark_vacancy_channel_filled(bot: Bot, vacancy):
-    """Kanaldagi vakansiya postini «hodimlar soni to'ldi» holatiga yangilaydi."""
+    """Kanaldagi vakansiya postini «hodimlar soni to'ldi» holatiga yangilaydi.
+
+    Ariza tugmasi ham olib tashlanadi — yopilgan vakansiyaga ariza kelmasin."""
     chat_id = vacancy.get("channel_chat_id")
     msg_id = vacancy.get("channel_message_id")
     if not chat_id or not msg_id:
@@ -459,7 +578,9 @@ async def mark_vacancy_channel_filled(bot: Bot, vacancy):
         + "\n\n✅ <b>HODIMLAR SONI TO'LDI — vakansiya yopildi.</b>"
     )
     try:
-        await bot.edit_message_text(text, chat_id=chat_id, message_id=int(msg_id))
+        await bot.edit_message_text(
+            text, chat_id=chat_id, message_id=int(msg_id), reply_markup=None
+        )
         return True
     except Exception:
         return False

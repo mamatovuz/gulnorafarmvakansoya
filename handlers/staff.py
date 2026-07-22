@@ -17,7 +17,8 @@ import keyboards as kb
 from utils import (
     safe_send, manager_request_text, employee_profile_text, fine_text,
     application_text, send_application_resume, send_application_photo,
-    vacancy_channel_text, mark_vacancy_channel_filled,
+    vacancy_channel_text, mark_vacancy_channel_filled, gender_label,
+    broadcast_request,
 )
 
 router = Router()
@@ -45,10 +46,19 @@ async def ensure_role(message: Message, *roles):
     return user
 
 
-async def notify_hr_admin(bot: Bot, text, reply_markup=None):
+async def notify_hr_admin(bot: Bot, text, reply_markup=None, kind=None, ref_id=None):
+    """HR va adminlarga xabar yuboradi.
+
+    `kind`/`ref_id` berilsa — yuborilgan xabarlar bazaga yoziladi va kimdir
+    so'rovni ko'rib chiqqach qolganlaridan avtomatik o'chiriladi."""
     hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
     admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
-    for tid in set(hr_ids + admin_ids):
+    targets = set(hr_ids + admin_ids)
+    if kind and ref_id:
+        await broadcast_request(bot, kind, ref_id, targets, text,
+                                reply_markup=reply_markup)
+        return
+    for tid in targets:
         await safe_send(bot, tid, text, reply_markup=reply_markup)
 
 
@@ -78,6 +88,7 @@ def _mgr_vacancy_summary(data):
         "━━━━━━━━━━━━\n"
         f"💼 Yo'nalish: <b>{data.get('position') or '-'}</b>\n"
         f"👥 Kerakli soni: <b>{data.get('staff_count') or '-'}</b>\n"
+        f"🚻 Kimlar kerak: <b>{gender_label(data.get('gender')) or '-'}</b>\n"
         f"🕒 Smena: {data.get('shift') or '-'}\n"
         f"📈 Tajriba: {data.get('experience') or '-'}\n"
         f"📝 Izoh: {data.get('details') or '—'}\n\n"
@@ -100,8 +111,8 @@ async def manager_vacancy_start(message: Message, state: FSMContext):
 
 @router.message(StateFilter(
     ManagerVacancyForm.position, ManagerVacancyForm.staff_count,
-    ManagerVacancyForm.shift, ManagerVacancyForm.experience,
-    ManagerVacancyForm.details,
+    ManagerVacancyForm.gender, ManagerVacancyForm.shift,
+    ManagerVacancyForm.experience, ManagerVacancyForm.details,
 ), F.text == kb.CANCEL_BTN)
 async def manager_vacancy_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -121,6 +132,24 @@ async def manager_vacancy_position(message: Message, state: FSMContext):
 @router.message(ManagerVacancyForm.staff_count, F.text)
 async def manager_vacancy_count(message: Message, state: FSMContext):
     await state.update_data(staff_count=message.text.strip())
+    await state.set_state(ManagerVacancyForm.gender)
+    await message.answer(
+        "🚻 <b>Sizga qaysi turdagi odam kerak?</b>\n"
+        "Quyidagi tugmalardan birini tanlang:",
+        reply_markup=kb.manager_vacancy_gender_kb(),
+    )
+
+
+@router.message(ManagerVacancyForm.gender, F.text)
+async def manager_vacancy_gender(message: Message, state: FSMContext):
+    value = kb.MGR_GENDER_VALUES.get(message.text.strip())
+    if not value:
+        await message.answer(
+            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            reply_markup=kb.manager_vacancy_gender_kb(),
+        )
+        return
+    await state.update_data(gender=value)
     await state.set_state(ManagerVacancyForm.shift)
     await message.answer(
         "🕒 Qaysi smenaga xodim kerak? Tanlang:",
@@ -194,6 +223,7 @@ async def manager_vacancy_confirm(call: CallbackQuery, state: FSMContext, bot: B
         "kind": "vacancy",
         "title": data.get("position"),
         "staff_count": data.get("staff_count"),
+        "gender": data.get("gender"),
         "shift": data.get("shift"),
         "experience": data.get("experience"),
         "details": data.get("details"),
@@ -212,6 +242,7 @@ async def manager_vacancy_confirm(call: CallbackQuery, state: FSMContext, bot: B
         bot,
         "📨 <b>Filial rahbaridan yangi vakansiya so'rovi!</b>\n\n" + manager_request_text(req),
         reply_markup=kb.manager_request_actions_kb(rid, "vacancy"),
+        kind="manager_request", ref_id=rid,
     )
 
 
@@ -256,6 +287,7 @@ async def tech_issue_finish(message: Message, state: FSMContext, bot: Bot):
         bot,
         "🔧 <b>Filial rahbaridan texnik nosozlik!</b>\n\n" + manager_request_text(req),
         reply_markup=kb.manager_request_actions_kb(rid, "technical"),
+        kind="manager_request", ref_id=rid,
     )
 
 
@@ -753,7 +785,8 @@ async def fire_reason(message: Message, state: FSMContext, bot: Bot):
         f"✍️ Sabab: {message.text.strip()}\n\n"
         "Bu xodimni ishdan bo'shatishni tasdiqlaysizmi?"
     )
-    await notify_hr_admin(bot, text, reply_markup=kb.termination_actions_kb(rid))
+    await notify_hr_admin(bot, text, reply_markup=kb.termination_actions_kb(rid),
+                          kind="termination", ref_id=rid)
 
 
 @router.message(F.text == "📊 Direktor statistikasi")

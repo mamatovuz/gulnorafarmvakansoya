@@ -20,6 +20,7 @@ from utils import (
     fine_text, manager_request_text, send_application_resume, send_application_photo,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text, update_application_channel, send_application_card,
+    close_request_notices,
 )
 from services import export
 
@@ -1183,6 +1184,13 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
     if not await q.claim_request("manager_requests", rid, "accepted", me["id"], "new"):
         await _already_handled(call)
         return
+    # Qolgan HR/adminlardagi shu so'rov xabarini o'chiramiz
+    await close_request_notices(bot, "manager_request", rid,
+                                keep_chat_id=call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     extra = ""
     if req["kind"] == "vacancy":
         shift = req.get("shift") or "Kelishiladi"
@@ -1205,6 +1213,7 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
                 "work_time": work_time,
                 "staff_count": req.get("staff_count"),
                 "experience": req.get("experience"),
+                "gender": req.get("gender"),
                 "manager_request_id": rid,
                 "requirements": "\n".join(req_lines),
                 "responsibilities": "HR suhbatida aniqlanadi.",
@@ -1247,6 +1256,12 @@ async def manager_request_close(call: CallbackQuery, bot: Bot):
     if not await q.claim_request("manager_requests", rid, "closed", me["id"], "new"):
         await _already_handled(call)
         return
+    await close_request_notices(bot, "manager_request", rid,
+                                keep_chat_id=call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     await q.add_log(call.from_user.id, me["full_name"], "rahbar_sorovi_yopildi", f"#{rid}")
     await call.message.answer(f"❌ So'rov #{rid} yopildi.")
     await safe_send(bot, req["manager_tg"], f"❌ Siz yuborgan so'rov #{rid} yopildi.")
@@ -1272,6 +1287,7 @@ async def termination_accept(call: CallbackQuery, bot: Bot):
     if not await q.claim_request("termination_requests", rid, "approved", me["id"], "new"):
         await _already_handled(call)
         return
+    await close_request_notices(bot, "termination", rid, keep_chat_id=call.from_user.id)
     # Kadrlar harakati (IT hisoboti): ishdan ketdi — profil o'chishidan oldin yozamiz
     await q.add_hr_event(
         "left", user_id=req["employee_user_id"], full_name=req.get("employee_name"),
@@ -1358,6 +1374,7 @@ async def termination_reject_reason(message: Message, state: FSMContext, bot: Bo
     if not await q.claim_request("termination_requests", rid, "rejected", me["id"], "new"):
         await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
         return
+    await close_request_notices(bot, "termination", rid, keep_chat_id=message.from_user.id)
     await q.set_termination_request_status(rid, "rejected", handled_by=me["id"], comment=reason)
     await q.add_log(
         message.from_user.id, me["full_name"], "ishdan_boshatish_rad",

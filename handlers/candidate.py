@@ -167,6 +167,32 @@ async def apply_menu(message: Message, state: FSMContext):
     await _start_apply(message, state)
 
 
+async def start_apply_from_deeplink(message: Message, state: FSMContext, payload):
+    """Kanaldagi «📝 Ishga ariza yuborish» tugmasidan kelingan `/start vac_<id>`.
+
+    Anketa o'sha vakansiya uchun (filial va lavozim to'ldirilgan holda)
+    boshlanadi. Anketa boshlangan bo'lsa True qaytadi."""
+    try:
+        vid = int(str(payload).replace("vac_", "", 1))
+    except (TypeError, ValueError):
+        return False
+    v = await q.get_vacancy(vid)
+    if not v:
+        return False
+    if v.get("filled") or not v.get("is_active"):
+        await message.answer(
+            "⏳ <b>Bu vakansiya yopilgan</b> — hodimlar soni to'lgan.\n"
+            "Boshqa bo'sh ish o'rinlarini «💼 Vakansiyalar» bo'limidan ko'ring."
+        )
+        return False
+    await message.answer(
+        f"💼 <b>{v['title']}</b> — {v.get('branch_name') or 'filial'}\n"
+        "Ariza topshirish uchun quyidagi savollarga javob bering."
+    )
+    await _start_apply(message, state, vacancy=v)
+    return True
+
+
 # Vakansiya ichidan "Ariza topshirish"
 @router.callback_query(F.data.startswith("apply:"))
 async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):

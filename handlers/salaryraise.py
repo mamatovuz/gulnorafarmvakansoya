@@ -14,7 +14,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import SalaryRaiseForm
 import keyboards as kb
-from utils import safe_send
+from utils import safe_send, broadcast_request, close_request_notices
 
 router = Router()
 
@@ -24,10 +24,17 @@ async def _is_staff(tg_id):
     return u and u["role"] in (ROLE_HR, ROLE_ADMIN)
 
 
-async def _notify_hr(bot: Bot, text, markup=None):
+async def _notify_hr(bot: Bot, text, markup=None, ref_id=None):
+    """HR/adminlarga xabar. `ref_id` berilsa — kimdir ko'rib chiqqach qolgan
+    HR lardagi xabar avtomatik o'chirilishi uchun yozib boriladi."""
     hr_ids = await q.all_user_tg_ids(role=ROLE_HR)
     admin_ids = await q.all_user_tg_ids(role=ROLE_ADMIN)
-    for tid in set(hr_ids + admin_ids):
+    targets = set(hr_ids + admin_ids)
+    if ref_id:
+        await broadcast_request(bot, "raise", ref_id, targets, text,
+                                reply_markup=markup)
+        return
+    for tid in targets:
         await safe_send(bot, tid, text, reply_markup=markup)
 
 
@@ -213,7 +220,8 @@ async def raise_amt_ok(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.answer("Yuborildi ✅")
 
     req = await q.get_raise_request(rid)
-    await _notify_hr(bot, _hr_request_text(req), markup=kb.hr_raise_actions_kb(rid))
+    await _notify_hr(bot, _hr_request_text(req), markup=kb.hr_raise_actions_kb(rid),
+                     ref_id=rid)
 
 
 # ================= HR: SO'ROVLAR RO'YXATI =================
@@ -270,6 +278,7 @@ async def hr_raise_approve(call: CallbackQuery, bot: Bot):
         await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
                           show_alert=True)
         return
+    await close_request_notices(bot, "raise", rid, keep_chat_id=call.from_user.id)
     final = req.get("requested_amount")
     await q.agree_raise(rid, final, handled_by=me["id"] if me else None)
     await q.update_monthly_salary(req["user_id"], final)
@@ -372,6 +381,8 @@ async def hr_raise_offer_send(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.answer("Bu so'rov allaqachon yopilgan.", show_alert=True)
         return
     await q.set_raise_offer(rid, amount, "hr")
+    # So'rovni bitta HR o'z qo'liga oldi — qolganlaridagi xabar keraksiz
+    await close_request_notices(bot, "raise", rid, keep_chat_id=call.from_user.id)
     me = await q.get_user(call.from_user.id)
     await q.add_log(
         call.from_user.id, me["full_name"] if me else "?",
@@ -435,6 +446,7 @@ async def hr_raise_reject_reason(message: Message, state: FSMContext, bot: Bot):
                                  me["id"] if me else None, "pending"):
         await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
         return
+    await close_request_notices(bot, "raise", rid, keep_chat_id=message.from_user.id)
     await q.reject_raise(rid, reason, handled_by=me["id"] if me else None)
     await q.add_log(
         message.from_user.id, me["full_name"] if me else "?",
