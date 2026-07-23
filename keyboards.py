@@ -1048,7 +1048,8 @@ def user_manage_kb(tg_id, blocked=False):
 
 
 def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
-                      vacancy_channel=None, candidate_channel=None):
+                      vacancy_channel=None, candidate_channel=None,
+                      interview_channel=None):
     b = InlineKeyboardBuilder()
     if require_sub:
         b.button(text="📢 Majburiy obuna: 🟢 YOQILGAN", callback_data="setsub:off")
@@ -1071,6 +1072,11 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
         b.button(text="🗑 Nomzodlar kanalini uzish", callback_data="setcand_clear")
     else:
         b.button(text="📇 Nomzodlar kanali: 🔴 ULANMAGAN (ulash)", callback_data="setcand")
+    if interview_channel:
+        b.button(text="🗣 Suhbat kanali: 🟢 ULANGAN (o'zgartirish)", callback_data="setint")
+        b.button(text="🗑 Suhbat kanalini uzish", callback_data="setint_clear")
+    else:
+        b.button(text="🗣 Suhbat kanali: 🔴 ULANMAGAN (ulash)", callback_data="setint")
     b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
     b.adjust(1)
     return b.as_markup()
@@ -1078,15 +1084,44 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
 
 def interviews_list_kb(interviews, prefix="intview"):
     b = InlineKeyboardBuilder()
-    marks = {"pending": "⏳", "confirmed": "✅", "reschedule": "🔄"}
+    att_marks = {"came": "✅", "absent": "❌"}
+    conf_marks = {"pending": "🟡", "confirmed": "☑️", "reschedule": "🔄"}
     for i in interviews:
-        mark = marks.get(i.get("status"), "📅")
+        # Kelish belgilangan bo'lsa uni, aks holda nomzod javobini ko'rsatamiz
+        mark = att_marks.get(i.get("attendance")) or conf_marks.get(i.get("status"), "📅")
         when = f"{i.get('date') or '-'} {i.get('time') or ''}".strip()
         b.button(
             text=f"{mark} {i.get('full_name') or '-'} · {when}",
             callback_data=f"{prefix}:{i['id']}",
         )
     b.adjust(1)
+    return b.as_markup()
+
+
+def interview_attendance_kb(iid, aid, attendance=None):
+    """Suhbat kartochkasi ostidagi tugmalar.
+
+    Kelish belgilanmagan bo'lsa: «✅ Keldi» / «❌ Kelmadi».
+    «Keldi» belgilangach — keyingi bosqich: «✅ Ishga qabul» / «❌ Rad etish»."""
+    b = InlineKeyboardBuilder()
+    if attendance == "came":
+        b.button(text="✅ Keldi ✓", callback_data=f"intcame:{iid}")
+        b.button(text="↩️ Kelmadi deb o'zgartirish", callback_data=f"intabsent:{iid}")
+        b.button(text="✅ Ishga qabul", callback_data=f"apphire:{aid}")
+        b.button(text="🧪 Sinovga qabul", callback_data=f"apptrial:{aid}")
+        b.button(text="❌ Rad etish", callback_data=f"apprej:{aid}")
+        b.button(text="👁 Batafsil ariza", callback_data=f"appview:{aid}")
+        b.adjust(2, 2, 1, 1)
+    elif attendance == "absent":
+        b.button(text="❌ Kelmadi ✓", callback_data=f"intabsent:{iid}")
+        b.button(text="↩️ Keldi deb o'zgartirish", callback_data=f"intcame:{iid}")
+        b.button(text="👁 Batafsil ariza", callback_data=f"appview:{aid}")
+        b.adjust(2, 1)
+    else:
+        b.button(text="✅ Keldi", callback_data=f"intcame:{iid}")
+        b.button(text="❌ Kelmadi", callback_data=f"intabsent:{iid}")
+        b.button(text="👁 Batafsil ariza", callback_data=f"appview:{aid}")
+        b.adjust(2, 1)
     return b.as_markup()
 
 

@@ -14,7 +14,7 @@ from utils import (
     vacancy_text, application_text, application_summary, safe_send,
     send_application_resume, send_application_photo, best_vacancy_matches,
     recommendation_text, now_tk, post_application_channel, send_application_card,
-    normalize_phone, phone_from_contact, PHONE_HINT,
+    normalize_phone, phone_from_contact, PHONE_HINT, update_interview_channel,
 )
 
 router = Router()
@@ -865,6 +865,10 @@ async def interview_confirm(call: CallbackQuery, bot: Bot):
     await call.answer("Tasdiqlandi ✅")
     # HRga xabar
     app = await q.get_application(interview["application_id"])
+    # Suhbat kanalidagi postni yangilaymiz (nomzod javobi = tasdiqladi)
+    fresh = await q.get_interview(iid)
+    if app and fresh:
+        await update_interview_channel(bot, fresh, app)
     if interview.get("created_by"):
         creator = await q.get_user_by_id(interview["created_by"])
         if creator:
@@ -898,6 +902,10 @@ async def interview_reschedule_send(message: Message, state: FSMContext, bot: Bo
         return
     await q.set_interview_status(iid, "reschedule")
     app = await q.get_application(interview["application_id"])
+    # Suhbat kanalidagi postni yangilaymiz (nomzod javobi = boshqa vaqt)
+    fresh = await q.get_interview(iid)
+    if app and fresh:
+        await update_interview_channel(bot, fresh, app)
     await message.answer("✅ Taklifingiz HR ga yuborildi. Ular siz bilan bog'lanadi.")
     if interview.get("created_by"):
         creator = await q.get_user_by_id(interview["created_by"])

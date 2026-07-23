@@ -1242,6 +1242,31 @@ async def set_interview_status(iid, status):
         await db.close()
 
 
+async def set_interview_attendance(iid, attendance):
+    """Suhbatga kelish holati: 'came' (keldi) yoki 'absent' (kelmadi)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE interviews SET attendance=? WHERE id=?", (attendance, iid)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_interview_channel(iid, chat_id, message_id):
+    """Suhbat kartochkasi kanalga joylangach post id sini yozib qo'yadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE interviews SET channel_chat_id=?, channel_message_id=? WHERE id=?",
+            (str(chat_id), message_id, iid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def interviews_for_reminders(limit=100):
     db = await _conn()
     try:

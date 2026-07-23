@@ -20,7 +20,8 @@ from utils import (
     fine_text, manager_request_text, send_application_resume, send_application_photo,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text, update_application_channel, send_application_card,
-    close_request_notices,
+    close_request_notices, post_interview_to_channel, update_interview_channel,
+    interview_confirm_label, interview_attendance_label,
 )
 from services import export
 
@@ -1439,7 +1440,22 @@ async def interview_finish(message: Message, state: FSMContext, bot: Bot):
     # Kanaldagi post statusini «📅 Suhbatga chaqirilgan» ga yangilaymiz
     await update_application_channel(bot, a)
     await q.add_log(message.from_user.id, me["full_name"], "suhbat_belgilandi", f"Ariza #{aid}")
-    await message.answer(f"✅ Suhbat belgilandi va nomzodga yuborildi (Ariza #{aid}).")
+
+    # Suhbat kanaliga (ulangan bo'lsa) nomzod kartochkasini joylaymiz
+    interview = await q.get_interview(iid)
+    int_channel = await q.get_setting("interview_channel")
+    channel_note = ""
+    if int_channel:
+        chat_id, msg_id = await post_interview_to_channel(bot, int_channel, interview, a)
+        if msg_id:
+            await q.set_interview_channel(iid, chat_id, msg_id)
+            channel_note = "\n🗣 Suhbat kanaliga joylandi."
+        else:
+            channel_note = ("\n⚠️ Suhbat kanaliga joylab bo'lmadi "
+                            "(botni kanalga admin qiling).")
+    await message.answer(
+        f"✅ Suhbat belgilandi va nomzodga yuborildi (Ariza #{aid}).{channel_note}"
+    )
 
     if a.get("applicant_tg"):
         extra = f"\n💬 Izoh: {comment}" if comment and comment != "-" else ""
@@ -1804,14 +1820,14 @@ async def hr_interviews(message: Message):
     if not interviews:
         await message.answer("📅 Hozircha rejalashtirilgan suhbatlar yo'q.")
         return
-    pending = sum(1 for i in interviews if i.get("status") == "pending")
-    confirmed = sum(1 for i in interviews if i.get("status") == "confirmed")
-    resc = sum(1 for i in interviews if i.get("status") == "reschedule")
+    came = sum(1 for i in interviews if i.get("attendance") == "came")
+    absent = sum(1 for i in interviews if i.get("attendance") == "absent")
+    unmarked = len(interviews) - came - absent
     await message.answer(
         f"📅 <b>Suhbatlar</b>\n\n"
-        f"⏳ Kutilmoqda: <b>{pending}</b> | ✅ Tasdiqlangan: <b>{confirmed}</b> | "
-        f"🔄 Boshqa vaqt: <b>{resc}</b>\n\n"
-        "Batafsil ko'rish uchun suhbatni tanlang:",
+        f"✅ Keldi: <b>{came}</b> | ❌ Kelmadi: <b>{absent}</b> | "
+        f"🟡 Belgilanmagan: <b>{unmarked}</b>\n\n"
+        "Nomzodni tanlab, «✅ Keldi / ❌ Kelmadi» ni belgilang:",
         reply_markup=kb.interviews_list_kb(interviews),
     )
 
@@ -1837,11 +1853,60 @@ async def interview_view(call: CallbackQuery):
         f"🕐 Vaqt: {i.get('time') or '-'}\n"
         f"📍 Manzil: {i.get('location') or '-'}\n"
         f"💬 Izoh: {i.get('comment') or '-'}\n"
-        f"🚦 Holat: {INT_STATUS.get(i.get('status'), i.get('status'))}"
+        f"📩 Nomzod javobi: {interview_confirm_label(i)}\n"
+        f"🚦 Kelish holati: {interview_attendance_label(i)}"
     )
-    markup = kb.application_actions_kb(a["id"], favorite=bool(a.get("favorite"))) if a else None
+    markup = kb.interview_attendance_kb(
+        i["id"], a["id"], attendance=i.get("attendance")
+    ) if a else None
     await call.message.answer(text, reply_markup=markup)
     await call.answer()
+
+
+async def _mark_attendance(call: CallbackQuery, bot: Bot, attendance):
+    """Suhbatga kelish holatini belgilaydi va kanaldagi postni yangilaydi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    iid = int(call.data.split(":")[1])
+    i = await q.get_interview(iid)
+    if not i:
+        await call.answer("Suhbat topilmadi.", show_alert=True)
+        return
+    await q.set_interview_attendance(iid, attendance)
+    me = await actor(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"], "suhbat_kelish",
+        f"#{iid}: {'keldi' if attendance == 'came' else 'kelmadi'}",
+    )
+    i = await q.get_interview(iid)
+    a = await q.get_application(i["application_id"])
+    # Kanaldagi postni yangilaymiz
+    if a:
+        await update_interview_channel(bot, i, a)
+    # Tugmalarni yangilash (Keldi bosilsa keyingi bosqich chiqadi)
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=kb.interview_attendance_kb(
+                iid, a["id"], attendance=attendance
+            ) if a else None
+        )
+    except Exception:
+        pass
+    if attendance == "came":
+        await call.answer("✅ Keldi deb belgilandi")
+    else:
+        await call.answer("❌ Kelmadi deb belgilandi")
+
+
+@router.callback_query(F.data.startswith("intcame:"))
+async def interview_came(call: CallbackQuery, bot: Bot):
+    await _mark_attendance(call, bot, "came")
+
+
+@router.callback_query(F.data.startswith("intabsent:"))
+async def interview_absent(call: CallbackQuery, bot: Bot):
+    await _mark_attendance(call, bot, "absent")
 
 
 # ---------------- SARALANGAN (SHORTLIST) ----------------

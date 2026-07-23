@@ -730,6 +730,80 @@ async def update_application_channel(bot: Bot, app):
         return False
 
 
+# ---------------- SUHBAT KANALI ----------------
+INTERVIEW_CONFIRM_LABELS = {
+    "pending": "🟡 Kutilmoqda",
+    "confirmed": "✅ Nomzod tasdiqladi",
+    "reschedule": "🔄 Boshqa vaqt so'radi",
+}
+INTERVIEW_ATTENDANCE_LABELS = {
+    None: "⏳ Belgilanmagan",
+    "": "⏳ Belgilanmagan",
+    "came": "✅ Keldi",
+    "absent": "❌ Kelmadi",
+}
+
+
+def interview_confirm_label(interview):
+    return INTERVIEW_CONFIRM_LABELS.get(interview.get("status"), interview.get("status") or "-")
+
+
+def interview_attendance_label(interview):
+    return INTERVIEW_ATTENDANCE_LABELS.get(interview.get("attendance") or None, "⏳ Belgilanmagan")
+
+
+def interview_channel_header(interview):
+    """Suhbat kartochkasi tepasidagi sarlavha: sana/vaqt/manzil + holatlar."""
+    lines = [
+        "🗣 <b>SUHBATGA CHAQIRILDI</b>",
+        f"📆 Sana: {interview.get('date') or '-'}   🕐 Vaqt: {interview.get('time') or '-'}",
+        f"📍 Manzil: {interview.get('location') or '-'}",
+    ]
+    if interview.get("comment") and interview["comment"] != "-":
+        lines.append(f"💬 Izoh: {interview['comment']}")
+    lines.append(f"📩 Nomzod javobi: {interview_confirm_label(interview)}")
+    lines.append(f"🚦 Kelish holati: {interview_attendance_label(interview)}")
+    return "\n".join(lines)
+
+
+async def post_interview_to_channel(bot: Bot, chat_id, interview, app):
+    """Suhbat kartochkasini (to'liq ariza + rasm) suhbat kanaliga joylaydi.
+
+    (chat_id, message_id) yoki (None, None) qaytaradi. Kanal ulanmagan bo'lsa
+    ham (None, None) — bu xato emas."""
+    chat_id = normalize_chat_id(chat_id)
+    if not chat_id:
+        return None, None
+    header = interview_channel_header(interview)
+    msg = await send_application_card(bot, chat_id, app, header=header)
+    if not msg:
+        return None, None
+    return chat_id, msg.message_id
+
+
+async def update_interview_channel(bot: Bot, interview, app):
+    """Kanaldagi suhbat postini yangilaydi (holat o'zgarganda tahrirlanadi)."""
+    chat_id = interview.get("channel_chat_id")
+    msg_id = interview.get("channel_message_id")
+    if not chat_id or not msg_id:
+        return False
+    chat_id = normalize_chat_id(chat_id)
+    caption = application_caption(app, header=interview_channel_header(interview))
+    try:
+        await bot.edit_message_caption(
+            chat_id=chat_id, message_id=int(msg_id), caption=caption
+        )
+        return True
+    except Exception:
+        pass
+    # Rasmsiz (oddiy matn) post bo'lsa — matnni tahrirlaymiz
+    try:
+        await bot.edit_message_text(caption, chat_id=chat_id, message_id=int(msg_id))
+        return True
+    except Exception:
+        return False
+
+
 async def post_staff_reg_to_channel(bot: Bot, chat_id, reg, header=None):
     """Tasdiqlangan «Gulnora Farm hodimi» ma'lumotlarini kanalga joylaydi.
 

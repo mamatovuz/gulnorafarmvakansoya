@@ -134,7 +134,10 @@ CREATE TABLE IF NOT EXISTS interviews (
     time TEXT,
     location TEXT,
     comment TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending',       -- nomzod javobi: pending/confirmed/reschedule
+    attendance TEXT,                              -- kelish holati: NULL / came / absent
+    channel_chat_id TEXT,                         -- suhbat kanaliga joylangan bo'lsa
+    channel_message_id INTEGER,                   -- kanaldagi post id (yangilash uchun)
     reminder_day_sent INTEGER NOT NULL DEFAULT 0,
     reminder_2h_sent INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
@@ -496,6 +499,9 @@ PROBATION_COLUMNS = {
 INTERVIEW_COLUMNS = {
     "reminder_day_sent": "INTEGER NOT NULL DEFAULT 0",
     "reminder_2h_sent": "INTEGER NOT NULL DEFAULT 0",
+    "attendance": "TEXT",
+    "channel_chat_id": "TEXT",
+    "channel_message_id": "INTEGER",
 }
 
 USER_COLUMNS = {
