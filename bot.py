@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, CallbackQuery
 
 from config import BOT_TOKEN, SUPER_ADMINS
 from database.db import init_db
@@ -96,6 +96,20 @@ class MenuEscapeMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+BOT_COMMANDS = [
+    BotCommand(command="start", description="🏠 Botni ishga tushirish"),
+]
+
+
+async def setup_bot_commands(bot: Bot):
+    """Telegram menyusidagi komandalar ro'yxatini kod orqali o'rnatadi.
+
+    BotFather kerak emas — bot har safar ishga tushganda ro'yxat yangilanadi."""
+    await bot.set_my_commands(
+        BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats()
+    )
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -121,6 +135,13 @@ async def main():
 
     me = await bot.get_me()
     logger.info("Bot ishga tushdi: @%s", me.username)
+
+    try:
+        await setup_bot_commands(bot)
+        logger.info("Komandalar menyusi o'rnatildi: %s",
+                    ", ".join("/" + c.command for c in BOT_COMMANDS))
+    except Exception as e:  # tarmoq xatosi bot ishga tushishiga to'sqinlik qilmasin
+        logger.warning("Komandalar menyusini o'rnatib bo'lmadi: %s", e)
 
     await bot.delete_webhook(drop_pending_updates=True)
     reminder_task = asyncio.create_task(interview_reminder_loop(bot))
