@@ -7,7 +7,7 @@ from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER, ROLE_HR, ROLE_
 _CLAIMABLE_TABLES = {
     "manager_requests", "dayoff_requests", "termination_requests",
     "salary_raise_requests", "advance_requests", "staff_regs",
-    "work_hour_requests",
+    "work_hour_requests", "branch_transfer_requests",
 }
 
 
@@ -64,15 +64,18 @@ async def pop_request_notices(kind, ref_id):
         await db.close()
 
 
-async def accept_application_once(aid, handled_by=None):
+async def accept_application_once(aid, handled_by=None, kind=None):
     """Arizani ATOMIK qabul qiladi — faqat hali qabul qilinmagan bo'lsa. Bir ariza
-    ikki HR tomonidan ikki marta qabul qilinishining oldini oladi."""
+    ikki HR tomonidan ikki marta qabul qilinishining oldini oladi.
+
+    kind — qabul maqomi: hire (ishga) / trial (sinov muddati) / learner
+    (o'rganuvchi). Kanaldagi post statusi shu maqom bo'yicha ko'rsatiladi."""
     db = await _conn()
     try:
         cur = await db.execute(
-            "UPDATE applications SET status='accepted', handled_by=? "
+            "UPDATE applications SET status='accepted', accept_kind=?, handled_by=? "
             "WHERE id=? AND status!='accepted'",
-            (handled_by, aid),
+            (kind, handled_by, aid),
         )
         await db.commit()
         return cur.rowcount > 0
@@ -2760,6 +2763,110 @@ async def close_work_hour_request(rid, status, reason=None, handled_by=None):
             "handled_by=COALESCE(?, handled_by), updated_at=datetime('now','+5 hours') "
             "WHERE id=?",
             (status, reason, handled_by, rid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ---------------- BOSHQA FILIALGA O'TISH SO'ROVI (xodim ⇄ HR) ----------------
+async def get_pending_transfer_for_user(user_id):
+    """Xodimning hali javob berilmagan filial o'zgartirish so'rovi (bo'lmasa None)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM branch_transfer_requests "
+            "WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def add_branch_transfer_request(user_id, from_branch_id, to_branch_id, position):
+    """Yangi filial o'zgartirish so'rovini yaratadi. id qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "INSERT INTO branch_transfer_requests "
+            "(user_id, from_branch_id, to_branch_id, position, status) "
+            "VALUES (?,?,?,?, 'pending')",
+            (user_id, from_branch_id, to_branch_id, position),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_branch_transfer_request(rid):
+    """So'rovni xodim tg_id, ism, telefon va ikkala filial nomi bilan qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.tg_id AS user_tg, u.full_name, u.phone,
+                      bf.name AS from_branch_name, bt.name AS to_branch_name,
+                      h.tg_id AS handler_tg
+               FROM branch_transfer_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches bf ON bf.id=r.from_branch_id
+               LEFT JOIN branches bt ON bt.id=r.to_branch_id
+               LEFT JOIN users h ON h.id=r.handled_by
+               WHERE r.id=?""",
+            (rid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_pending_branch_transfer_requests(limit=30):
+    """HR paneli uchun ochiq filial o'zgartirish so'rovlari ro'yxati."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT r.*, u.full_name,
+                      bf.name AS from_branch_name, bt.name AS to_branch_name
+               FROM branch_transfer_requests r
+               JOIN users u ON u.id=r.user_id
+               LEFT JOIN branches bf ON bf.id=r.from_branch_id
+               LEFT JOIN branches bt ON bt.id=r.to_branch_id
+               WHERE r.status='pending'
+               ORDER BY r.id DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def set_transfer_handler(rid, handled_by):
+    """So'rov bilan yozishayotgan HR ni belgilaydi — xodimning javobi shu HR ga
+    boradi. Status o'zgarmaydi (so'rov ochiqligicha qoladi)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE branch_transfer_requests SET handled_by=?, "
+            "updated_at=datetime('now','+5 hours') WHERE id=?",
+            (handled_by, rid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def close_branch_transfer_request(rid, status, handled_by=None):
+    """So'rovni yopadi (approved / rejected)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE branch_transfer_requests SET status=?, "
+            "handled_by=COALESCE(?, handled_by), "
+            "updated_at=datetime('now','+5 hours') WHERE id=?",
+            (status, handled_by, rid),
         )
         await db.commit()
     finally:

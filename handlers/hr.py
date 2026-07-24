@@ -518,7 +518,7 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
     """Arizani qabul qiladi. kind: hire (doimiy) / trial (sinov) / learner (o'rganuvchi)."""
     meta = ACCEPT_KINDS.get(kind, ACCEPT_KINDS["trial"])
     # ATOMIK — bir ariza faqat bir marta qabul qilinadi
-    if not await q.accept_application_once(aid, me["id"]):
+    if not await q.accept_application_once(aid, me["id"], kind):
         await message.answer(
             "⚠️ Bu ariza allaqachon qabul qilingan (ehtimol boshqa HR tomonidan)."
         )
@@ -634,7 +634,8 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
                 "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
             )
 
-    # Nomzodlar kanalidagi post statusini «✅ Tasdiqlangan» ga yangilaymiz
+    # Nomzodlar kanalidagi post statusi qabul turiga qarab yangilanadi:
+    # «✅ Ishga qabul qilingan» / «🧪 Sinov muddatida» / «🎓 O'rganuvchi»
     await update_application_channel(bot, a)
 
     # Nomzodga xabar

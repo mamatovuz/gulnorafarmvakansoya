@@ -448,11 +448,12 @@ def hr_menu():
     b.button(text="💵 Avans sozlamalari")
     b.button(text="💸 Maosh so'rovlari")
     b.button(text="🕒 Ish vaqti so'rovlari")
+    b.button(text="🏢 Filial o'zgartirish so'rovlari")
     b.button(text="📢 Xabarnoma")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -566,11 +567,72 @@ def profile_update_start_kb():
 
 # ---------------- HR GA MUROJAAT (xodim) ----------------
 def hr_request_menu_kb():
-    """Xodim «📩 HR ga murojaat» tugmasini bosganda chiqadigan 3 ta yo'nalish."""
+    """Xodim «📩 HR ga murojaat» tugmasini bosganda chiqadigan yo'nalishlar."""
     b = InlineKeyboardBuilder()
     b.button(text="🕒 Ish soatini o'zgartirish", callback_data="hrreq:hours")
     b.button(text="💸 Maoshni oshirishni so'rash", callback_data="hrreq:salary")
+    b.button(text="🏢 Boshqa filialga ko'chirish", callback_data="hrreq:branch")
     b.button(text="✉️ Boshqa masalada", callback_data="hrreq:other")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- BOSHQA FILIALGA O'TISH SO'ROVI (xodim ⇄ HR) ----------------
+def transfer_start_confirm_kb():
+    """Xodimga: rostan ham boshqa filialga o'tish so'rovini yubormoqchimisiz?"""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha", callback_data="btr_yes")
+    b.button(text="❌ Yo'q", callback_data="btr_no")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def transfer_branch_pick_kb(branches):
+    """Xodimga: o'tmoqchi bo'lgan filialni tanlash (hozirgisi ro'yxatda bo'lmaydi)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"btrbr:{br['id']}")
+    b.button(text="❌ Bekor qilish", callback_data="btr_no")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def transfer_final_confirm_kb():
+    """Xodimga: tanlangan filialni tasdiqlash yoki qayta tanlash."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha", callback_data="btr_ok")
+    b.button(text="✏️ Tahrirlash", callback_data="btr_edit")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def hr_transfer_actions_kb(rid):
+    """HR ga: filial o'zgartirish so'rovini tasdiqlash / bekor qilish / xabar yozish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlash", callback_data=f"hrbtr_ok:{rid}")
+    b.button(text="❌ Bekor qilish", callback_data=f"hrbtr_no:{rid}")
+    b.button(text="✉️ Xodimga xabar yozish", callback_data=f"hrbtr_msg:{rid}")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def emp_transfer_reply_kb(rid):
+    """Xodimga: HR xabariga javob yozish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✍️ Javob yozish", callback_data=f"btr_reply:{rid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branch_transfer_requests_list_kb(requests, prefix="btrview"):
+    """HR paneli: ochiq filial o'zgartirish so'rovlari ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for r in requests:
+        b.button(
+            text=(f"🏢 {r.get('full_name') or '-'} · "
+                  f"{r.get('from_branch_name') or '-'} → {r.get('to_branch_name') or '-'}"),
+            callback_data=f"{prefix}:{r['id']}",
+        )
     b.adjust(1)
     return b.as_markup()
 

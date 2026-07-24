@@ -264,3 +264,11 @@ class WorkHoursForm(StatesGroup):
 class HRMessageForm(StatesGroup):
     """Xodim «boshqa masalada» HR ga murojaat yozadi."""
     text = State()
+
+
+class BranchTransferForm(StatesGroup):
+    """Xodim boshqa filialga o'tishni so'raydi; HR tasdiqlaydi/bekor qiladi.
+
+    Filial tugmalar orqali tanlanadi — yozish faqat HR ⇄ xodim yozishmasida."""
+    hr_message = State()   # HR xodimga xabar yozadi
+    reply_text = State()   # xodim HR xabariga javob yozadi

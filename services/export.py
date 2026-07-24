@@ -7,7 +7,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from aiogram.types import BufferedInputFile
 
-from database.db import STATUS_LABELS
+from database.db import STATUS_LABELS, application_status_label
 
 _HEADER_FILL = PatternFill("solid", fgColor="2E7D32")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -61,7 +61,7 @@ def build_applications_xlsx(apps):
             a.get("full_name") or "-",
             a.get("vacancy_title") or a.get("position") or "-",
             a.get("branch_name") or "-",
-            STATUS_LABELS.get(a.get("status"), a.get("status") or "-"),
+            application_status_label(a),
             a.get("phone") or "-",
             a.get("city") or "-",
             a.get("district") or "-",

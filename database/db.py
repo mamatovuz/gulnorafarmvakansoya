@@ -28,6 +28,30 @@ STATUS_LABELS = {
     ST_WAITING: "⏳ Kutuvda",
 }
 
+# Qabul turlari (applications.accept_kind) — HR arizani qaysi maqomda qabul qilgani
+AK_HIRE = "hire"          # to'g'ridan-to'g'ri ishga
+AK_TRIAL = "trial"        # sinov muddati
+AK_LEARNER = "learner"    # o'rganuvchi
+
+ACCEPT_KIND_LABELS = {
+    AK_HIRE: "✅ Ishga qabul qilingan",
+    AK_TRIAL: "🧪 Sinov muddatida",
+    AK_LEARNER: "🎓 O'rganuvchi",
+}
+
+
+def application_status_label(a):
+    """Ariza statusi yorlig'i.
+
+    Qabul qilingan ariza uchun umumiy «Ishga qabul qilingan» emas, balki
+    aniq maqom ko'rsatiladi: sinov muddatida / o'rganuvchi / ishga qabul."""
+    status = a.get("status")
+    if status == ST_ACCEPTED:
+        label = ACCEPT_KIND_LABELS.get(a.get("accept_kind"))
+        if label:
+            return label
+    return STATUS_LABELS.get(status, status or "-")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +146,7 @@ CREATE TABLE IF NOT EXISTS applications (
     salary_offer_by TEXT,         -- oxirgi taklifni kim berdi: hr / candidate
     salary_status TEXT,           -- NULL / pending / agreed
     status TEXT NOT NULL DEFAULT 'new',
+    accept_kind TEXT,             -- hire / trial / learner — qaysi maqomda qabul qilindi
     hr_comment TEXT,
     handled_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
@@ -303,6 +328,19 @@ CREATE TABLE IF NOT EXISTS work_hour_requests (
     updated_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+-- Xodim boshqa filialga o'tish so'rovi (xodim ⇄ HR yozishmasi bilan)
+CREATE TABLE IF NOT EXISTS branch_transfer_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,          -- users.id (ichki)
+    from_branch_id INTEGER,            -- hozirgi filial
+    to_branch_id INTEGER,              -- o'tmoqchi bo'lgan filial
+    position TEXT,                     -- so'rov paytidagi lavozim (snapshot)
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending / approved / rejected
+    handled_by INTEGER,                -- so'rov bilan ishlayotgan HR (users.id)
+    created_at TEXT DEFAULT (datetime('now','+5 hours')),
+    updated_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
 CREATE TABLE IF NOT EXISTS manager_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manager_user_id INTEGER NOT NULL,
@@ -474,6 +512,7 @@ APP_COLUMNS = {
     "offered_salary": "TEXT", "salary_offer_by": "TEXT", "salary_status": "TEXT",
     "photo_file_id": "TEXT",
     "channel_chat_id": "TEXT", "channel_message_id": "INTEGER",
+    "accept_kind": "TEXT",
 }
 
 VACANCY_COLUMNS = {
@@ -616,6 +655,30 @@ async def _rebuild_applications_if_needed(db, columns):
     await db.execute("DROP TABLE applications_old")
 
 
+async def _backfill_accept_kind(db):
+    """Eski arizalarda accept_kind bo'sh — uni sinov/o'rganuvchi yozuvidan tiklaymiz.
+
+    Sinov muddati yoki o'rganuvchi yozuvi bo'lgan arizalar shu maqomni oladi,
+    qolgan qabul qilinganlari esa oddiy «ishga qabul» hisoblanadi."""
+    try:
+        await db.execute(
+            """UPDATE applications SET accept_kind = (
+                   SELECT p.kind FROM probations p
+                   WHERE p.application_id = applications.id
+                   ORDER BY p.id DESC LIMIT 1
+               )
+               WHERE accept_kind IS NULL AND status='accepted'
+                 AND EXISTS (SELECT 1 FROM probations p
+                             WHERE p.application_id = applications.id)"""
+        )
+        await db.execute(
+            "UPDATE applications SET accept_kind='hire' "
+            "WHERE accept_kind IS NULL AND status='accepted'"
+        )
+    except Exception:
+        pass  # probations jadvali hali yo'q bo'lsa — keyingi ishga tushishda bajariladi
+
+
 async def _migrate(db):
     cur = await db.execute("PRAGMA table_info(applications)")
     columns = await cur.fetchall()
@@ -626,6 +689,8 @@ async def _migrate(db):
     for col, coltype in APP_COLUMNS.items():
         if col not in existing:
             await db.execute(f"ALTER TABLE applications ADD COLUMN {col} {coltype}")
+
+    await _backfill_accept_kind(db)
 
     cur = await db.execute("PRAGMA table_info(interviews)")
     existing = {row[1] for row in await cur.fetchall()}

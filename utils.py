@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, date
 
 from aiogram import Bot
 from database import queries as q
-from database.db import STATUS_LABELS
+from database.db import STATUS_LABELS, application_status_label
 
 
 # O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
@@ -174,7 +174,7 @@ def computer_level_label(a):
 
 
 def application_text(a, full=False):
-    status = STATUS_LABELS.get(a["status"], a["status"])
+    status = application_status_label(a)
     parts = [
         f"📄 <b>Ariza #{a['id']}</b>  |  {status}",
         "━━━━━━━━━━━━",
@@ -634,7 +634,7 @@ def application_caption(a, header=None):
 
     Har bir ma'lumot alohida qatorda, bloklarga ajratilgan — kanaldagi post
     o'qish uchun qulay bo'lsin. To'liq matn «👁 Batafsil» da."""
-    status = STATUS_LABELS.get(a.get("status"), a.get("status") or "-")
+    status = application_status_label(a)
     lines = [
         f"📄 <b>Ariza #{a['id']}</b> · {status}",
         SEP,

@@ -71,9 +71,15 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - **⏸ Tanaffus / ▶️ Ishni davom ettirish** — ochiq ish kuni yozuvi bo'yicha ishlaydi
   (tungi smenada yarim tundan o'tsa ham topiladi)
 - **🔄 Dam olish kunini almashtirish** — so'rov filial rahbari + HR ga boradi, tasdiqlansa dam kuni yangilanadi
-- **📩 HR ga murojaat** — 3 yo'nalish: 🕒 ish soatini o'zgartirish · 💸 maoshni oshirish ·
-  ✉️ boshqa masala. Ish soati so'rovi HR tasdiqlagach profilga yoziladi va davomat
-  aynan yangi vaqtdan hisoblanadi; rad etilsa HR sababi xodimga yuboriladi
+- **📩 HR ga murojaat** — 4 yo'nalish: 🕒 ish soatini o'zgartirish · 💸 maoshni oshirish ·
+  🏢 boshqa filialga ko'chirish · ✉️ boshqa masala. Ish soati so'rovi HR tasdiqlagach
+  profilga yoziladi va davomat aynan yangi vaqtdan hisoblanadi; rad etilsa HR sababi
+  xodimga yuboriladi
+- **🏢 Boshqa filialga ko'chirish** — xodim tasdiqlaydi → filial tanlaydi → yana tasdiqlaydi
+  (yoki «✏️ Tahrirlash» bilan boshqasini tanlaydi). So'rov HR ga boradi: **✅ Tasdiqlash**
+  (filial darhol o'zgaradi) · **❌ Bekor qilish** · **✉️ Xodimga xabar yozish** — xodim javob
+  bera oladi, HR yana yozishi mumkin (aylanma yozishma), so'rov ochiqligicha qoladi.
+  HR panelida: **🏢 Filial o'zgartirish so'rovlari**
 - Hisobotlar: **kunlik / haftalik / oylik**, **filial kesimida**, kim necha kun keldi / kim kelmadi —
   HR, Direktor, Filial rahbari va Buxgalter 
 
