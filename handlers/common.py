@@ -66,16 +66,39 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot,
         if await start_apply_from_deeplink(message, state, payload.strip()):
             return
 
-    # Telefon boshida so'ralmaydi — u ariza yoki hodim ro'yxatida yig'iladi.
-    # /start darhol 2 ta tugmali menyuni ko'rsatadi.
-    has_applied = (
-        user.get("role") == ROLE_CANDIDATE
-        and await q.count_applications(user["id"]) > 0
-    )
-    await message.answer(
-        await get_welcome_text(),
-        reply_markup=kb.main_menu(user["role"], has_applied),
-    )
+    # Rolga qarab turli xil xabarni ko'rsatish
+    role = user.get("role", ROLE_CANDIDATE)
+
+    # Agar hodim (employee, pharmacist, manager, director, accountant, it, admin, hr)
+    # yoki HR tomonidan tasdiqlangan nomzod => asosiy menyu
+    if role != ROLE_CANDIDATE:
+        await send_main_menu(message, user)
+        return
+
+    # Agar nomzod => arizalarining holati tekshiriladi
+    applications = await q.user_applications(user["id"])
+
+    if not applications:
+        # Birinchi marta — xush kelibsiz xabari
+        await message.answer(
+            await get_welcome_text(),
+            reply_markup=kb.main_menu(ROLE_CANDIDATE, False),
+        )
+    else:
+        # Arizalar bor — oxirgi arizaning holati tekshiriladi
+        latest_app = applications[0]  # eng yangi ariza
+        if latest_app.get("status") == "accepted":
+            # Tasdiqlangan — hodim paneli ko'rsatiladi
+            await send_main_menu(message, user)
+        else:
+            # Tasdiqlanmagan (new/interview/waiting) — kutish xabari
+            await message.answer(
+                "⏳ <b>Arizangiz tekshirilmoqda</b>\n\n"
+                "Bizning HR jamoasi tez orada sizga qayta bog'lanadilari to'g'risida aniqlik bermog'idir.\n"
+                "Sabrli bo'ling! 😊\n\n"
+                "Bosh menyuga qaytish uchun 🏠 tugmasini bosing yoki /start yozing.",
+                reply_markup=kb.main_menu(ROLE_CANDIDATE, True),
+            )
 
 
 @router.message(Reg.phone, F.contact)
