@@ -213,18 +213,71 @@ def application_text(a, full=False):
     return "\n".join(parts)
 
 
+# Arizada MAJBURIY to'ldirilishi shart bo'lgan maydonlar.
+# (FSM kaliti, tahrirlash kaliti, ko'rsatiladigan nomi)
+# Faqat rezyume ixtiyoriy — qolgan hamma savolga javob berilishi shart.
+APPLICATION_REQUIRED = [
+    ("full_name", "full_name", "👤 Ism-sharif"),
+    ("birth_date", "birth_date", "📅 Tug'ilgan sana"),
+    ("city", "city", "🌆 Shahar/viloyat"),
+    ("district", "district", "📍 Tuman"),
+    ("address", "address", "🏠 Aniq manzil"),
+    ("_branch_id", "branch", "🏢 Filial"),
+    ("position", "position", "💼 Lavozim"),
+    ("position_extra", "position_extra", "🧩 Lavozim savoli"),
+    ("shift", "shift", "🕒 Smena"),
+    ("education", "education", "🎓 Ma'lumot"),
+    ("exp_years", "exp_years", "💼 Umumiy tajriba"),
+    ("prev_years", "prev_years", "🏢 Oldingi ish joyida"),
+    ("criminal", "criminal", "⚖️ Sudlanganligi"),
+    ("marital", "marital", "👨‍👩‍👧 Oilaviy holati"),
+    ("children", "children", "👶 Farzandlari"),
+    ("prev_salary", "prev_salary", "💰 Oldingi maosh"),
+    ("expected_salary", "expected_salary", "💵 Kutilayotgan maosh"),
+    ("computer_level", "computer_level", "💻 Kompyuter savodxonligi"),
+    ("languages", "languages", "🌍 Tillar"),
+    ("work_intent", "work_intent", "📅 Ishlash niyati"),
+    ("reason", "reason", "✍️ Sababi"),
+    ("phone", "phone", "📱 Telefon"),
+    ("photo_file_id", "photo", "📸 Rasm (oxirgi 10 kun)"),
+]
+
+
+def missing_application_fields(d):
+    """Arizada to'ldirilmagan majburiy maydonlar: [(tahrir_kaliti, nomi), ...]."""
+    missing = []
+    for key, edit_key, label in APPLICATION_REQUIRED:
+        value = d.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append((edit_key, label))
+    return missing
+
+
 def application_summary(d):
-    """FSM data asosida yakuniy tasdiqlash matni."""
+    """FSM data asosida yakuniy tasdiqlash matni.
+
+    To'ldirilmagan majburiy maydonlar ⚠️ bilan belgilanadi va oxirida
+    ro'yxat qilib ko'rsatiladi — nomzod tasdiqlashdan oldin tuzatsin."""
+    NOT_SET = "⚠️ <b>to'ldirilmagan</b>"
+
     def g(k):
-        return d.get(k) or "-"
-    return (
+        value = d.get(k)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return NOT_SET
+        return value
+
+    # Filial faqat haqiqiy filialga bog'langan bo'lsa to'ldirilgan hisoblanadi
+    branch_val = d.get("branch") if d.get("_branch_id") else NOT_SET
+    missing = missing_application_fields(d)
+
+    text = (
         "📋 <b>Arizangizni tekshiring:</b>\n\n"
         f"👤 Ism: {g('full_name')}\n"
         f"📅 Tug'ilgan sana: {g('birth_date')}\n"
         f"🌆 Shahar/viloyat: {g('city')}\n"
         f"📍 Tuman: {g('district')}\n"
         f"🏠 Aniq manzil: {g('address')}\n"
-        f"🏢 Filial: {g('branch')}\n"
+        f"🏢 Filial: {branch_val}\n"
         f"💼 Lavozim: {g('position')}\n"
         f"🧩 Lavozim savoli: {g('position_extra')}\n"
         f"🕒 Smena: {g('shift')}\n"
@@ -241,9 +294,19 @@ def application_summary(d):
         f"📅 Ishlash niyati: {g('work_intent')}\n"
         f"✍️ Sababi: {g('reason')}\n"
         f"📱 Telefon: {g('phone')}\n"
-        f"📸 Rasm (oxirgi 10 kun): {'✅ biriktirilgan' if d.get('photo_file_id') else '— yo`q'}\n"
-        f"📄 Rezyume: {'✅ biriktirilgan' if d.get('resume_file_id') else '— yo`q'}"
+        f"📸 Rasm (oxirgi 10 kun): "
+        f"{'✅ biriktirilgan' if d.get('photo_file_id') else '⚠️ <b>yuborilmagan</b>'}\n"
+        f"📄 Rezyume: "
+        f"{'✅ biriktirilgan' if d.get('resume_file_id') else '— yo`q (ixtiyoriy)'}"
     )
+    if missing:
+        text += (
+            "\n\n⚠️ <b>Quyidagilar to'ldirilmagan:</b>\n"
+            + "\n".join(f"  • {label}" for _, label in missing)
+            + "\n\n«✏️ Tahrirlash» tugmasi orqali to'ldiring — "
+            "aks holda ariza yuborilmaydi."
+        )
+    return text
 
 
 def employee_profile_text(profile):

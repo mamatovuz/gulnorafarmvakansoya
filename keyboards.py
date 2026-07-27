@@ -332,8 +332,20 @@ def apply_edit_fields_kb():
     b = InlineKeyboardBuilder()
     for key, label in EDIT_FIELDS:
         b.button(text=label, callback_data=f"ef:{key}")
+    b.button(text="📸 Rasm", callback_data="ef:photo")
     b.button(text="⬅️ Orqaga", callback_data="ef_back")
     b.adjust(2)
+    return b.as_markup()
+
+
+def apply_missing_fields_kb(missing):
+    """To'ldirilmagan majburiy maydonlar uchun tugmalar.
+
+    missing — [(tahrir_kaliti, nomi), ...]"""
+    b = InlineKeyboardBuilder()
+    for key, label in missing:
+        b.button(text=f"✏️ {label}", callback_data=f"ef:{key}")
+    b.adjust(1)
     return b.as_markup()
 
 

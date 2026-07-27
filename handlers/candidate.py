@@ -15,6 +15,7 @@ from utils import (
     send_application_resume, send_application_photo, best_vacancy_matches,
     recommendation_text, now_tk, post_application_channel, send_application_card,
     normalize_phone, phone_from_contact, PHONE_HINT, update_interview_channel,
+    missing_application_fields,
 )
 
 router = Router()
@@ -213,6 +214,7 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
     Apply.marital, Apply.children, Apply.prev_salary, Apply.expected_salary,
     Apply.computer_level, Apply.languages, Apply.work_intent,
     Apply.reason, Apply.phone, Apply.photo, Apply.resume, Apply.edit_field,
+    Apply.edit_photo,
 ), F.text == kb.CANCEL_BTN)
 async def apply_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -259,6 +261,12 @@ async def a_birth(message: Message, state: FSMContext):
 @router.message(Apply.city, F.text)
 async def a_city(message: Message, state: FSMContext):
     city = message.text.strip()
+    if len(city) < 3:
+        await message.answer(
+            "❗️ Shahar/viloyatni <b>ro'yxatdan tanlang</b> — bu savol majburiy.",
+            reply_markup=kb.apply_city_kb(),
+        )
+        return
     await state.update_data(city=city)
     await state.set_state(Apply.district)
     await message.answer(
@@ -270,7 +278,16 @@ async def a_city(message: Message, state: FSMContext):
 # 4) Tuman
 @router.message(Apply.district, F.text)
 async def a_district(message: Message, state: FSMContext):
-    await state.update_data(district=message.text.strip())
+    district = message.text.strip()
+    if len(district) < 3:
+        data = await state.get_data()
+        await message.answer(
+            "❗️ Tumanni <b>ro'yxatdan tanlang</b> yoki to'liq yozing — "
+            "bu savol majburiy.",
+            reply_markup=kb.apply_district_kb(data.get("city")),
+        )
+        return
+    await state.update_data(district=district)
     await state.set_state(Apply.address)
     await message.answer(
         "<b>5-savol</b>\n🏠 Aniq manzilingizni yuboring.\n"
@@ -282,12 +299,25 @@ async def a_district(message: Message, state: FSMContext):
 # 5) Aniq manzil
 @router.message(Apply.address, F.text)
 async def a_address(message: Message, state: FSMContext):
-    await state.update_data(address=message.text.strip())
+    address = message.text.strip()
+    if len(address) < 5:
+        await message.answer(
+            "❗️ Manzilni <b>to'liqroq</b> yozing (kamida 5 ta belgi) — "
+            "bu savol majburiy.\nMisol: <i>Xursandlik MFY, 37-uy</i>",
+            reply_markup=kb.cancel_kb(),
+        )
+        return
+    await state.update_data(address=address)
     data = await state.get_data()
-    # Agar vakansiyadan kirilgan bo'lsa — filial va lavozim allaqachon bor
-    if data.get("_from_vacancy"):
+    # Vakansiyadan kirilgan bo'lsa filial allaqachon bor — lekin faqat
+    # vakansiyada filial ko'rsatilgan bo'lsa. Aks holda filial so'raladi.
+    if data.get("_from_vacancy") and data.get("_branch_id"):
         await _ask_position_extra(message, state)
         return
+    await _ask_branch(message, state)
+
+
+async def _ask_branch(message: Message, state: FSMContext):
     branches = await q.list_branches()
     await state.set_state(Apply.branch)
     if branches:
@@ -302,11 +332,26 @@ async def a_address(message: Message, state: FSMContext):
         )
 
 
-# 4) Filial
+# 6) Filial
 @router.message(Apply.branch, F.text)
 async def a_branch(message: Message, state: FSMContext):
     branches = await q.list_branches()
     name, bid = resolve_branch(message.text, branches)
+    # Filial ro'yxatdagi filialga to'g'ri kelmasa — qayta so'raymiz.
+    # (Aks holda ariza filialsiz ketib, moslik filtri ishlamay qolardi.)
+    if branches and not bid:
+        await message.answer(
+            "❗️ Bunday filial topilmadi. Iltimos, <b>quyidagi tugmalardan</b> "
+            "birini tanlang — filial majburiy.",
+            reply_markup=kb.apply_branch_kb(branches),
+        )
+        return
+    if not branches and len(name) < 3:
+        await message.answer(
+            "❗️ Filial nomini to'liq yozing — bu savol majburiy.",
+            reply_markup=kb.cancel_kb(),
+        )
+        return
     await state.update_data(branch=name, _branch_id=bid)
     await state.set_state(Apply.position)
     positions = await q.list_position_names()
@@ -652,6 +697,16 @@ EDIT_KEYBOARDS = {
 async def app_edit_field(call: CallbackQuery, state: FSMContext):
     field = call.data.split(":")[1]
     await state.update_data(_edit_key=field)
+    if field == "photo":
+        # Rasm alohida holatda so'raladi (matn emas, foto kutiladi)
+        await state.set_state(Apply.edit_photo)
+        await call.message.answer(
+            "📸 <b>Oxirgi 10 kun ichida tushgan</b> shaxsiy rasmingizni yuboring.\n"
+            "<i>Faqat rasm qabul qilinadi.</i>",
+            reply_markup=kb.cancel_kb(),
+        )
+        await call.answer()
+        return
     await state.set_state(Apply.edit_field)
     if field == "branch":
         branches = await q.list_branches()
@@ -712,15 +767,45 @@ async def app_edit_save(message: Message, state: FSMContext):
             await message.answer("❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT)
             return
         value = norm
+    # Manzil bo'laklari bo'sh yoki juda qisqa qolmasin
+    MIN_LEN = {"city": 3, "district": 3, "address": 5, "full_name": 3}
+    if field in MIN_LEN and len(value) < MIN_LEN[field]:
+        await message.answer(
+            f"❗️ Bu maydon majburiy — kamida {MIN_LEN[field]} ta belgi kiriting."
+        )
+        return
     if field == "branch":
         branches = await q.list_branches()
         name, bid = resolve_branch(value, branches)
+        if branches and not bid:
+            await message.answer(
+                "❗️ Bunday filial topilmadi. Tugmalardan birini tanlang:",
+                reply_markup=kb.apply_branch_kb(branches),
+            )
+            return
         await state.update_data(branch=name, _branch_id=bid)
     elif field == "uniform_status":
         await state.update_data(uniform_status=uniform_status_from_text(value))
     else:
         await state.update_data(**{field: value})
     await _back_to_summary(message, state)
+
+
+@router.message(Apply.edit_photo, F.photo)
+async def app_edit_photo(message: Message, state: FSMContext):
+    await state.update_data(photo_file_id=message.photo[-1].file_id)
+    await _back_to_summary(message, state)
+
+
+@router.message(Apply.edit_photo)
+async def app_edit_photo_invalid(message: Message):
+    if message.text == kb.CANCEL_BTN:
+        return  # bekor qilish handleri ishlaydi
+    await message.answer(
+        "❗️ Iltimos, <b>rasm (foto)</b> yuboring — oxirgi 10 kun ichida tushgan "
+        "shaxsiy rasmingiz.",
+        reply_markup=kb.cancel_kb(),
+    )
 
 
 async def _back_to_summary(message: Message, state: FSMContext):
@@ -746,6 +831,26 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
+        return
+
+    # MAJBURIY maydonlar tekshiruvi — biror savol javobsiz qolsa ariza
+    # yuborilmaydi (ilgari yarim to'ldirilgan arizalar ham o'tib ketardi).
+    missing = missing_application_fields(data)
+    if missing:
+        await call.answer(
+            f"⚠️ {len(missing)} ta savol to'ldirilmagan.", show_alert=True
+        )
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.message.answer(
+            "⚠️ <b>Ariza yuborilmadi</b>\n\n"
+            "Quyidagi savollarga javob berilmagan:\n"
+            + "\n".join(f"  • {label}" for _, label in missing)
+            + "\n\nUlarni to'ldirish uchun tugmani bosing 👇",
+            reply_markup=kb.apply_missing_fields_kb(missing),
+        )
         return
 
     user = await q.get_user(call.from_user.id)

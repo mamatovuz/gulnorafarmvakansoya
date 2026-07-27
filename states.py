@@ -36,6 +36,7 @@ class Apply(StatesGroup):
     resume = State()           # 22
     confirm = State()          # yakuniy tasdiqlash
     edit_field = State()       # bitta maydonni tahrirlash
+    edit_photo = State()       # rasmni qayta yuborish (tahrirlashda)
 
 
 class VacancyForm(StatesGroup):
