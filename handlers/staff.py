@@ -16,6 +16,7 @@ from states import (
 import keyboards as kb
 from utils import (
     safe_send, manager_request_text, employee_profile_text, fine_text,
+    send_employee_profile,
     application_text, send_application_resume, send_application_photo,
     vacancy_channel_text, mark_vacancy_channel_filled, gender_label,
     broadcast_request,
@@ -450,8 +451,8 @@ async def manager_employee_view(call: CallbackQuery):
     if not profile or (user["role"] != ROLE_ADMIN and profile.get("branch_id") != branch_id):
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    await call.message.answer(
-        employee_profile_text(profile),
+    await send_employee_profile(
+        call.message, profile,
         reply_markup=kb.staff_fire_kb(profile["user_id"]),
     )
     await call.answer()
@@ -639,7 +640,7 @@ async def pharmacist_profile(message: Message):
     if not profile:
         await message.answer("Profil topilmadi. HR bilan bog'laning.")
         return
-    await message.answer(employee_profile_text(profile))
+    await send_employee_profile(message, profile)
 
 
 @router.message(F.text == "💸 Jarimalarim")
@@ -704,8 +705,8 @@ async def director_employee_view(call: CallbackQuery):
         if branch_id and profile.get("branch_id") != branch_id:
             await call.answer("Bu xodim sizning filialingizga tegishli emas.", show_alert=True)
             return
-    await call.message.answer(
-        employee_profile_text(profile),
+    await send_employee_profile(
+        call.message, profile,
         reply_markup=kb.staff_fire_kb(profile["user_id"]),
     )
     await call.answer()

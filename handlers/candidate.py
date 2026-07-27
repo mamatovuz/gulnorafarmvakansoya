@@ -762,6 +762,8 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
     app_data["vacancy_id"] = data.get("_vacancy_id")
     app_data["branch_id"] = data.get("_branch_id")
     aid = await q.add_application(app_data)
+    # Panellarda Telegram nomi emas, anketada kiritilgan ism ko'rinsin
+    await q.set_real_name(tg_id=call.from_user.id, full_name=app_data.get("full_name"))
     await state.clear()
     await q.add_log(
         call.from_user.id, call.from_user.full_name,
@@ -801,7 +803,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
             threshold = 60
         vacs = await q.list_vacancies(active_only=True)
         matches = best_vacancy_matches(app, vacs, threshold=threshold)
-        rec = recommendation_text(matches)
+        rec = recommendation_text(matches, app)
     for tid in set(hr_ids + admin_ids):
         # Rasm + captionda ma'lumot + tugmalar — hammasi BITTA xabarda
         await send_application_card(

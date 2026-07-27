@@ -17,6 +17,7 @@ from states import (
 import keyboards as kb
 from utils import (
     vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
+    send_employee_profile,
     fine_text, manager_request_text, send_application_resume, send_application_photo,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text, update_application_channel, send_application_card,
@@ -532,6 +533,8 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
     new_role = role_from_position(a.get("position") or a.get("vacancy_title"))
     if a.get("applicant_tg"):
         await q.set_role(a["applicant_tg"], new_role, branch_id)
+    # Panellarda arizadagi ism ko'rinsin (Telegram nomi emas)
+    await q.set_real_name(user_id=a["user_id"], full_name=a.get("full_name"))
     # Kelishilgan oylik bo'lsa — profilga yozamiz
     agreed_salary = a.get("offered_salary") if a.get("salary_status") == "agreed" else None
     await q.upsert_employee_profile(
@@ -968,8 +971,8 @@ async def employee_profile_view(call: CallbackQuery):
     if not profile:
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    await call.message.answer(
-        employee_profile_text(profile),
+    await send_employee_profile(
+        call.message, profile,
         reply_markup=kb.uniform_employee_kb(uid, profile.get("uniform_status")),
     )
     await call.answer()
@@ -1022,8 +1025,8 @@ async def pharmacist_view(call: CallbackQuery):
     if not profile:
         await call.answer("Farmatsevt topilmadi.", show_alert=True)
         return
-    await call.message.answer(
-        employee_profile_text(profile),
+    await send_employee_profile(
+        call.message, profile,
         reply_markup=kb.pharmacist_manage_kb(uid, profile.get("uniform_status")),
     )
     await call.answer()

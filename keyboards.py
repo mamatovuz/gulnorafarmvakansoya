@@ -224,13 +224,6 @@ def apply_shift_kb():
     return _choices(["🌞 Ertalabgi smena", "🌙 Kechki smena", "🔄 Farqi yo'q"], row=1)
 
 
-def apply_education_kb():
-    return _choices([
-        "🎓 Oliy ma'lumotli farmatsevt", "📘 O'rta maxsus farmatsevt",
-        "📗 O'rta ta'lim", "📕 Boshqa",
-    ], row=1)
-
-
 def apply_criminal_kb():
     return _choices(["✅ Yo'q", "❌ Ha"], row=2)
 
@@ -274,15 +267,8 @@ def apply_uniform_kb():
 def apply_position_extra_kb(position):
     p = (position or "").lower()
     if "farm" in p:
-        return _choices([
-            "🎓 Oliy ma'lumotli farmatsevt",
-            "📘 O'rta maxsus farmatsevt",
-            "🕗 Tugallanmagan oliy",
-            "🕓 Tugallanmagan o'rta maxsus",
-            "✅ Sertifikatim bor",
-            "❌ Diplom yo'q",
-            "🔀 Boshqa sohada diplom",
-        ], row=1)
+        # Ma'lumot ro'yxati bilan bir xil + sertifikat varianti
+        return _choices(EDUCATION_OPTIONS + ["✅ Sertifikatim bor"], row=1)
     if "filial rahbari" in p:
         return _choices(["🚫 Tajribam yo'q", "👥 1-5 xodim", "👥 6-15 xodim", "👥 15+ xodim"], row=2)
     if "direktor" in p or "director" in p:
@@ -548,10 +534,44 @@ def hr_salary_offer_kb(aid):
 
 
 # ---------------- MA'LUMOTLARNI YANGILASH (admin kampaniyasi) ----------------
-def profile_update_confirm_kb():
-    """Adminga: haqiqatan barcha xodimlardan ma'lumot yangilashni so'raymizmi?"""
+def profile_update_scope_kb():
+    """Kimdan ma'lumot yangilash so'ralsin: hammadan / filialdan / bitta xodimdan."""
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Ha", callback_data="profupd_yes")
+    b.button(text="👥 Barcha xodimlardan", callback_data="profupd_scope:all")
+    b.button(text="🏢 Filial bo'yicha", callback_data="profupd_scope:branch")
+    b.button(text="👤 Bitta xodimdan", callback_data="profupd_scope:one")
+    b.button(text="❌ Bekor qilish", callback_data="profupd_no")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def profile_update_branch_kb(branches):
+    """Qaysi filial xodimlaridan yangilash so'ralsin?"""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"profupd_br:{br['id']}")
+    b.button(text="❌ Bekor qilish", callback_data="profupd_no")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def profile_update_employee_kb(profiles):
+    """Aynan qaysi xodimdan yangilash so'ralsin?"""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        name = p.get("full_name") or "Nomsiz"
+        branch = p.get("branch_name") or "filialsiz"
+        b.button(text=f"👤 {name} · {branch}", callback_data=f"profupd_emp:{p['user_id']}")
+    b.button(text="❌ Bekor qilish", callback_data="profupd_no")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def profile_update_confirm_kb(scope="all", ref_id=None):
+    """Adminga: tanlangan qamrovda ma'lumot yangilashni so'raymizmi?"""
+    b = InlineKeyboardBuilder()
+    payload = f"profupd_yes:{scope}" + (f":{ref_id}" if ref_id else "")
+    b.button(text="✅ Ha", callback_data=payload)
     b.button(text="❌ Yo'q", callback_data="profupd_no")
     b.adjust(2)
     return b.as_markup()
@@ -1348,18 +1368,32 @@ def staff_rest_day_kb():
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
-# Xodim ma'lumoti (diplomi) — «Gulnora Farm hodimi» anketasida so'raladi
+# ---------------- MA'LUMOT (DIPLOM) TURLARI ----------------
+# Bitta ro'yxat — nomzod anketasi, xodim self-registratsiyasi va farmatsevt
+# savolida bir xil variantlar chiqsin (avval har joyda boshqacha edi).
 STAFF_NO_DIPLOMA = "❌ Diplom yo'q"
-STAFF_EDUCATION = [
+EDUCATION_OPTIONS = [
+    "🎓 Oliy farmatsevt",
+    "🕗 Tugallanmagan oliy farmatsevt",
     "📘 O'rta maxsus farmatsevt",
-    "🎓 Oliy ma'lumotli farmatsevt",
-    "🔀 Boshqa yo'nalishda",
+    "🕓 Tugallanmagan o'rta maxsus",
+    "🎓 Oliy — boshqa soha",
+    "🕗 Tugallanmagan oliy — boshqa soha",
+    "📗 Umumiy o'rta ta'lim",
     STAFF_NO_DIPLOMA,
 ]
+STAFF_EDUCATION = EDUCATION_OPTIONS  # eski nom — mos kelishi uchun qoldirilgan
+
+# Diplomsiz hisoblanadigan javoblar statistika uchun `queries.NO_DIPLOMA_VALUES`
+# da turadi — bu ro'yxatni o'zgartirsangiz, o'shanisini ham yangilang.
 
 
 def staff_education_kb():
     return _choices(STAFF_EDUCATION, row=1)
+
+
+def apply_education_kb():
+    return _choices(EDUCATION_OPTIONS, row=1)
 
 
 def staff_since_kb():

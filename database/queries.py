@@ -91,27 +91,63 @@ async def _conn():
 
 # ---------------- FOYDALANUVCHILAR ----------------
 async def get_or_create_user(tg_id, full_name=None, username=None):
+    """Foydalanuvchini topadi yoki yaratadi.
+
+    MUHIM: `full_name` bu yerda Telegram profilidagi nom. Agar foydalanuvchi
+    ro'yxatdan o'tib haqiqiy ismini kiritgan bo'lsa (name_locked=1), Telegram
+    nomi uning ustiga yozilmaydi — panellarda ro'yxatdagi ism ko'rinadi."""
     db = await _conn()
     try:
         cur = await db.execute("SELECT * FROM users WHERE tg_id=?", (tg_id,))
         row = await cur.fetchone()
         if row:
-            # ma'lumotlarni yangilab qo'yamiz
             await db.execute(
-                "UPDATE users SET full_name=COALESCE(?, full_name), username=? WHERE tg_id=?",
-                (full_name, username, tg_id),
+                """UPDATE users
+                   SET tg_name=COALESCE(?, tg_name),
+                       full_name=CASE WHEN name_locked=1
+                                      THEN full_name
+                                      ELSE COALESCE(?, full_name) END,
+                       username=?
+                   WHERE tg_id=?""",
+                (full_name, full_name, username, tg_id),
             )
             await db.commit()
             cur = await db.execute("SELECT * FROM users WHERE tg_id=?", (tg_id,))
             return dict(await cur.fetchone())
         role = ROLE_ADMIN if tg_id in SUPER_ADMINS else ROLE_CANDIDATE
         await db.execute(
-            "INSERT INTO users (tg_id, full_name, username, role) VALUES (?,?,?,?)",
-            (tg_id, full_name, username, role),
+            "INSERT INTO users (tg_id, full_name, tg_name, username, role) VALUES (?,?,?,?,?)",
+            (tg_id, full_name, full_name, username, role),
         )
         await db.commit()
         cur = await db.execute("SELECT * FROM users WHERE tg_id=?", (tg_id,))
         return dict(await cur.fetchone())
+    finally:
+        await db.close()
+
+
+async def set_real_name(tg_id=None, user_id=None, full_name=None):
+    """Ro'yxatdan o'tishda kiritilgan haqiqiy ismni yozadi va qulflaydi.
+
+    Shundan keyin /start bosilganda Telegram nomi uni almashtira olmaydi —
+    HR, direktor, admin panellarida va hisobotlarda shu ism ko'rinadi."""
+    name = (full_name or "").strip()
+    if not name or (tg_id is None and user_id is None):
+        return False
+    db = await _conn()
+    try:
+        if user_id is not None:
+            await db.execute(
+                "UPDATE users SET full_name=?, name_locked=1 WHERE id=?",
+                (name, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET full_name=?, name_locked=1 WHERE tg_id=?",
+                (name, tg_id),
+            )
+        await db.commit()
+        return True
     finally:
         await db.close()
 
@@ -758,28 +794,45 @@ async def uniform_stats(role=None):
 UPDATE_EXEMPT_ROLES = (ROLE_ADMIN, ROLE_HR, ROLE_IT)
 
 
-async def request_profile_update_all():
-    """Barcha xodimlardan ma'lumotlarini yangilashni so'raydi.
+async def request_profile_update_all(branch_id=None, user_id=None):
+    """Xodimlardan ma'lumotlarini yangilashni so'raydi.
 
-    (yangilanishi kerak bo'lgan xodimlar soni, ularning tg_id ro'yxati) qaytaradi."""
+    Qamrov:
+      • hech narsa berilmasa — barcha xodimlar
+      • branch_id — faqat o'sha filial xodimlari
+      • user_id   — faqat bitta xodim
+
+    (so'rov yuborilgan xodimlar soni, ularning tg_id ro'yxati) qaytaradi."""
     db = await _conn()
     try:
         placeholders = ",".join("?" for _ in UPDATE_EXEMPT_ROLES)
+        where = f"u.role NOT IN ({placeholders})"
+        params = list(UPDATE_EXEMPT_ROLES)
+        if user_id:
+            where += " AND ep.user_id=?"
+            params.append(user_id)
+        elif branch_id:
+            where += " AND ep.branch_id=?"
+            params.append(branch_id)
+
         cur = await db.execute(
-            f"""SELECT u.tg_id FROM employee_profiles ep
+            f"""SELECT u.tg_id, ep.user_id FROM employee_profiles ep
                 JOIN users u ON u.id=ep.user_id
-                WHERE u.role NOT IN ({placeholders})""",
-            UPDATE_EXEMPT_ROLES,
+                WHERE {where}""",
+            params,
         )
-        tg_ids = [r["tg_id"] for r in await cur.fetchall()]
-        await db.execute(
-            f"""UPDATE employee_profiles
-                SET update_required=1, update_requested_at=datetime('now','+5 hours')
-                WHERE user_id IN (
-                    SELECT id FROM users WHERE role NOT IN ({placeholders})
-                )""",
-            UPDATE_EXEMPT_ROLES,
-        )
+        rows = [dict(r) for r in await cur.fetchall()]
+        tg_ids = [r["tg_id"] for r in rows]
+        uids = [r["user_id"] for r in rows]
+        if uids:
+            uid_ph = ",".join("?" for _ in uids)
+            await db.execute(
+                f"""UPDATE employee_profiles
+                    SET update_required=1,
+                        update_requested_at=datetime('now','+5 hours')
+                    WHERE user_id IN ({uid_ph})""",
+                uids,
+            )
         await db.commit()
         return len(tg_ids), tg_ids
     finally:
@@ -838,6 +891,11 @@ async def profile_update_progress():
 # ---------------- MA'LUMOTI / DIPLOM STATISTIKASI ----------------
 NO_DIPLOMA = "❌ Diplom yo'q"
 
+# Diplomi bor hisoblanmaydigan javoblar. «Umumiy o'rta ta'lim» ham diplom emas,
+# shuning uchun statistikada diplomsizlar qatoriga kiradi.
+NO_DIPLOMA_VALUES = (NO_DIPLOMA, "📗 Umumiy o'rta ta'lim")
+_ND_PH = ",".join("?" for _ in NO_DIPLOMA_VALUES)
+
 
 async def education_stats(branch_id=None):
     """Xodimlar ma'lumoti bo'yicha umumiy hisob: jami / diplomi bor / yo'q / noma'lum."""
@@ -846,12 +904,12 @@ async def education_stats(branch_id=None):
         sql = f"""SELECT
                     COUNT(*) AS total,
                     SUM(CASE WHEN education IS NOT NULL AND education!=''
-                              AND education!=? THEN 1 ELSE 0 END) AS has_diploma,
-                    SUM(CASE WHEN education=? THEN 1 ELSE 0 END) AS no_diploma,
+                              AND education NOT IN ({_ND_PH}) THEN 1 ELSE 0 END) AS has_diploma,
+                    SUM(CASE WHEN education IN ({_ND_PH}) THEN 1 ELSE 0 END) AS no_diploma,
                     SUM(CASE WHEN education IS NULL OR education=''
                              THEN 1 ELSE 0 END) AS unknown
                   FROM employee_profiles"""
-        params = [NO_DIPLOMA, NO_DIPLOMA]
+        params = [*NO_DIPLOMA_VALUES, *NO_DIPLOMA_VALUES]
         if branch_id:
             sql += " WHERE branch_id=?"
             params.append(branch_id)
@@ -884,15 +942,15 @@ async def education_by_branch():
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT COALESCE(b.name, 'Filialsiz') AS name,
+            f"""SELECT COALESCE(b.name, 'Filialsiz') AS name,
                       COUNT(*) AS total,
                       SUM(CASE WHEN ep.education IS NOT NULL AND ep.education!=''
-                                AND ep.education!=? THEN 1 ELSE 0 END) AS has_diploma,
-                      SUM(CASE WHEN ep.education=? THEN 1 ELSE 0 END) AS no_diploma
+                                AND ep.education NOT IN ({_ND_PH}) THEN 1 ELSE 0 END) AS has_diploma,
+                      SUM(CASE WHEN ep.education IN ({_ND_PH}) THEN 1 ELSE 0 END) AS no_diploma
                FROM employee_profiles ep
                LEFT JOIN branches b ON b.id=ep.branch_id
                GROUP BY 1 ORDER BY total DESC""",
-            (NO_DIPLOMA, NO_DIPLOMA),
+            (*NO_DIPLOMA_VALUES, *NO_DIPLOMA_VALUES),
         )
         return [dict(r) for r in await cur.fetchall()]
     finally:
@@ -903,12 +961,12 @@ async def list_employees_without_diploma(branch_id=None, limit=50):
     """Diplomi yo'q xodimlar ro'yxati."""
     db = await _conn()
     try:
-        sql = """SELECT ep.*, u.full_name, u.tg_id, b.name AS branch_name
+        sql = f"""SELECT ep.*, u.full_name, u.tg_id, b.name AS branch_name
                  FROM employee_profiles ep
                  JOIN users u ON u.id=ep.user_id
                  LEFT JOIN branches b ON b.id=ep.branch_id
-                 WHERE ep.education=?"""
-        params = [NO_DIPLOMA]
+                 WHERE ep.education IN ({_ND_PH})"""
+        params = [*NO_DIPLOMA_VALUES]
         if branch_id:
             sql += " AND ep.branch_id=?"
             params.append(branch_id)

@@ -273,6 +273,34 @@ def employee_profile_text(profile):
     return "\n".join(parts)
 
 
+async def send_employee_profile(target, profile, reply_markup=None, prefix="",
+                                suffix=""):
+    """Xodim profilini RASM bilan yuboradi (rasm bo'lsa — caption ichida matn).
+
+    `target` — Message yoki bot.send_* chaqirilishi mumkin bo'lgan obyekt
+    (Message.answer ishlatiladi). Rasm yo'q bo'lsa oddiy matn ketadi."""
+    text = employee_profile_text(profile)
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    if suffix:
+        text = f"{text}{suffix}"
+    file_id = profile.get("photo_file_id")
+    if file_id:
+        # Telegram caption chegarasi — matn uzun bo'lsa qisqartiramiz
+        caption = _fit_caption(text)
+        try:
+            msg = await target.answer_photo(
+                file_id, caption=caption, reply_markup=reply_markup
+            )
+            # Caption qisqartirilgan bo'lsa — to'liq matnni ortidan yuboramiz
+            if caption != text:
+                await target.answer(text)
+            return msg
+        except Exception:
+            pass  # file_id eskirgan — matn bilan davom etamiz
+    return await target.answer(text, reply_markup=reply_markup)
+
+
 def staff_reg_text(reg):
     """Gulnora Farm hodimi self-registratsiyasi matni (HR uchun)."""
     parts = [
@@ -853,35 +881,58 @@ def text_similarity(a, b):
     return max(seq, jac)
 
 
+def branch_matches(app, vacancy):
+    """Ariza filiali vakansiya filialiga to'g'ri keladimi?
+
+    Uchta holat qaytadi:
+      True  — ikkalasida ham filial bor va bir xil
+      False — ikkalasida ham filial bor, lekin BOSHQA filial
+      None  — biror tomonda filial ko'rsatilmagan (umumiy vakansiya)"""
+    ab, vb = app.get("branch_id"), vacancy.get("branch_id")
+    if not ab or not vb:
+        return None
+    return ab == vb
+
+
 def match_score(app, vacancy):
-    """0..100 — nomzod arizasi vakansiyaga qanchalik mos kelishi (foizda)."""
+    """0..100 — nomzod arizasi vakansiyaga qanchalik mos kelishi (foizda).
+
+    FILIAL — birinchi darajali shart. Nomzod bir filialga ariza bergan bo'lib,
+    vakansiya boshqa filialda bo'lsa, lavozim to'liq mos kelsa ham bu nomzod
+    o'sha vakansiyaga mos emas — 0 qaytadi."""
+    same_branch = branch_matches(app, vacancy)
+    if same_branch is False:
+        return 0  # boshqa filial — tavsiya qilinmaydi
+
     pos_sim = text_similarity(
         app.get("position") or app.get("vacancy_title"),
         vacancy.get("title"),
-    )
-    same_branch = (
-        1.0
-        if app.get("branch_id") and app.get("branch_id") == vacancy.get("branch_id")
-        else 0.0
     )
     same_shift = (
         1.0
         if _norm(app.get("shift")) and _norm(app.get("shift")) == _norm(vacancy.get("shift"))
         else 0.0
     )
-    score = 0.65 * pos_sim + 0.25 * same_branch + 0.10 * same_shift
+    # Filial mos kelsa — to'liq ball; ko'rsatilmagan bo'lsa yarim ball
+    branch_pt = 1.0 if same_branch is True else 0.5
+    score = 0.55 * pos_sim + 0.35 * branch_pt + 0.10 * same_shift
     return round(score * 100)
 
 
 def best_vacancy_matches(app, vacancies, threshold=60, limit=3):
-    """Chegaradan yuqori mos vakansiyalar ro'yxati [(vacancy, score), ...]."""
+    """Chegaradan yuqori mos vakansiyalar ro'yxati [(vacancy, score), ...].
+
+    Avval filiali aynan mos kelganlari, keyin filiali ko'rsatilmaganlari
+    chiqadi — har ikki guruh ichida foiz bo'yicha saralanadi."""
     scored = []
     for v in vacancies or []:
         s = match_score(app, v)
         if s >= threshold:
-            scored.append((v, s))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:limit]
+            # 0 => filiali aynan mos (birinchi turadi), 1 => filial noaniq
+            rank = 0 if branch_matches(app, v) is True else 1
+            scored.append((rank, s, v))
+    scored.sort(key=lambda x: (x[0], -x[1]))
+    return [(v, s) for rank, s, v in scored[:limit]]
 
 
 # ---------------- SINOV MUDDATI (PROBATION) ----------------
@@ -964,8 +1015,10 @@ def probation_text(p, stats=None):
     return "\n".join(lines)
 
 
-def recommendation_text(matches):
-    """HR uchun avtomatik tavsiya bloki."""
+def recommendation_text(matches, app=None):
+    """HR uchun avtomatik tavsiya bloki.
+
+    `app` berilsa — filiali aynan mos kelgan vakansiyalar ✅ bilan belgilanadi."""
     if not matches:
         return ""
     lines = [
@@ -975,6 +1028,15 @@ def recommendation_text(matches):
     ]
     for v, sc in matches:
         branch = v.get("branch_name") or "filial ko'rsatilmagan"
-        lines.append(f"• <b>{v['title']}</b> — {branch} — <b>{sc}%</b> mos (vak #{v['id']})")
-    lines.append("👉 Mos kelsa, nomzodni shu vakansiyaga taklif qiling.")
+        mark = ""
+        if app is not None:
+            bm = branch_matches(app, v)
+            mark = " ✅" if bm is True else (" ❔" if bm is None else "")
+        lines.append(
+            f"• <b>{v['title']}</b> — 🏢 {branch}{mark} — <b>{sc}%</b> mos (vak #{v['id']})"
+        )
+    lines.append(
+        "👉 Ro'yxatda faqat nomzod tanlagan filialdagi (yoki filiali "
+        "ko'rsatilmagan) vakansiyalar bor."
+    )
     return "\n".join(lines)

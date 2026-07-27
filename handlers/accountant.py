@@ -10,7 +10,9 @@ from database import queries as q
 from database.db import ROLE_ADMIN, ROLE_ACCOUNTANT
 from states import AccForm
 import keyboards as kb
-from utils import employee_profile_text, fine_text, safe_send, now_tk
+from utils import (
+    employee_profile_text, fine_text, safe_send, now_tk, send_employee_profile,
+)
 
 router = Router()
 
@@ -103,14 +105,15 @@ async def acc_employee_view(call: CallbackQuery):
     if not profile:
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    text = employee_profile_text(profile)
     last = await q.latest_salary_payment(uid, _period_now())
     if last:
         mark = "✅ berilgan" if last.get("status") == "paid" else "❌ berilmagan"
-        text += f"\n\n🧾 Shu oy ({_period_now()}) oyligi: {mark}"
+        extra = f"\n\n🧾 Shu oy ({_period_now()}) oyligi: {mark}"
     else:
-        text += f"\n\n🧾 Shu oy ({_period_now()}) oyligi: ➖ belgilanmagan"
-    await call.message.answer(text, reply_markup=kb.accountant_employee_kb(uid))
+        extra = f"\n\n🧾 Shu oy ({_period_now()}) oyligi: ➖ belgilanmagan"
+    await send_employee_profile(
+        call.message, profile, reply_markup=kb.accountant_employee_kb(uid), suffix=extra
+    )
     await call.answer()
 
 

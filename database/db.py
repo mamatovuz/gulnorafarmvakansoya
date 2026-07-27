@@ -56,7 +56,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tg_id INTEGER UNIQUE NOT NULL,
-    full_name TEXT,
+    full_name TEXT,               -- ko'rsatiladigan ism (ro'yxatdan o'tgan bo'lsa — o'shanisi)
+    tg_name TEXT,                 -- Telegram profilidagi nom (ma'lumot uchun)
+    name_locked INTEGER NOT NULL DEFAULT 0,  -- 1 => full_name haqiqiy ism, ustiga yozilmaydi
     username TEXT,
     phone TEXT,
     role TEXT NOT NULL DEFAULT 'candidate',
@@ -545,6 +547,11 @@ INTERVIEW_COLUMNS = {
 
 USER_COLUMNS = {
     "blocked": "INTEGER NOT NULL DEFAULT 0",
+    # Telegram profilidagi nom (faqat ma'lumot uchun saqlanadi)
+    "tg_name": "TEXT",
+    # 1 => full_name ro'yxatdan o'tishda kiritilgan haqiqiy ism.
+    # Bunday holatda /start bosilganda Telegram nomi uni almashtirmaydi.
+    "name_locked": "INTEGER NOT NULL DEFAULT 0",
 }
 
 BRANCH_COLUMNS = {
@@ -679,6 +686,43 @@ async def _backfill_accept_kind(db):
         pass  # probations jadvali hali yo'q bo'lsa — keyingi ishga tushishda bajariladi
 
 
+async def _backfill_real_names(db):
+    """Eski bazalarda users.full_name da Telegram nomi turgan bo'lishi mumkin.
+
+    Ro'yxatdan o'tgan ismni (xodim so'rovi yoki arizadan) topib, uni asosiy
+    ism qilib yozamiz va qulflaymiz — panellarda haqiqiy ism ko'rinsin.
+    Xodim so'rovi arizadan ustun turadi (u yangiroq va aniqroq)."""
+    try:
+        # 1) Tasdiqlangan xodim so'rovidagi ism
+        await db.execute(
+            """UPDATE users SET full_name = (
+                   SELECT sr.full_name FROM staff_regs sr
+                   WHERE sr.user_id = users.id
+                     AND sr.full_name IS NOT NULL AND sr.full_name != ''
+                   ORDER BY sr.id DESC LIMIT 1
+               ), name_locked = 1
+               WHERE name_locked = 0
+                 AND EXISTS (SELECT 1 FROM staff_regs sr
+                             WHERE sr.user_id = users.id
+                               AND sr.full_name IS NOT NULL AND sr.full_name != '')"""
+        )
+        # 2) Qolganlari uchun — arizadagi ism
+        await db.execute(
+            """UPDATE users SET full_name = (
+                   SELECT a.full_name FROM applications a
+                   WHERE a.user_id = users.id
+                     AND a.full_name IS NOT NULL AND a.full_name != ''
+                   ORDER BY a.id DESC LIMIT 1
+               ), name_locked = 1
+               WHERE name_locked = 0
+                 AND EXISTS (SELECT 1 FROM applications a
+                             WHERE a.user_id = users.id
+                               AND a.full_name IS NOT NULL AND a.full_name != '')"""
+        )
+    except Exception:
+        pass  # jadvallar hali yo'q bo'lsa — keyingi ishga tushishda bajariladi
+
+
 async def _migrate(db):
     cur = await db.execute("PRAGMA table_info(applications)")
     columns = await cur.fetchall()
@@ -700,9 +744,15 @@ async def _migrate(db):
 
     cur = await db.execute("PRAGMA table_info(users)")
     existing = {row[1] for row in await cur.fetchall()}
+    added_name_cols = False
     for col, coltype in USER_COLUMNS.items():
         if col not in existing:
             await db.execute(f"ALTER TABLE users ADD COLUMN {col} {coltype}")
+            if col == "name_locked":
+                added_name_cols = True
+    if added_name_cols:
+        # Ustun endi qo'shildi — mavjud foydalanuvchilarning haqiqiy ismini tiklaymiz
+        await _backfill_real_names(db)
 
     cur = await db.execute("PRAGMA table_info(branches)")
     existing = {row[1] for row in await cur.fetchall()}

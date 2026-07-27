@@ -30,6 +30,14 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
   (xodim so'rovi, vakansiya so'rovi, ishdan bo'shatish, dam olish, maosh, ish vaqti)
 - **Xabarnoma** — barchaga / xodimlarga / nomzodlarga / filial bo'yicha (rasm, video, fayl)
 - **Qidiruv** — ism / telefon / filial / lavozim bo'yicha
+- **⭐ Avtomatik tavsiya (moslik filtri)** — **filial birinchi darajali shart**: nomzod
+  tanlagan filialdan boshqa filialdagi vakansiya lavozimi to'liq mos kelsa ham
+  tavsiya qilinmaydi. Ro'yxatda avval filiali aynan mos kelganlar (✅), keyin
+  filiali ko'rsatilmagan umumiy vakansiyalar (❔) chiqadi
+- **Xodim kartochkasi rasm bilan** — HR / Direktor / Filial rahbari / Moliya panelida
+  xodim tanlanganda va xodimning **👤 Mening profilim** bo'limida profil rasmi ko'rinadi
+- **Ismlar** — panellarda, hisobotlarda va kanal postlarida Telegram taxallusi emas,
+  **anketada kiritilgan haqiqiy ism-familiya** ko'rsatiladi
 
 ### ➕ Vakansiya (filial rahbari → HR → kanal)
 - Filial rahbari paneli → **➕ Xodim kerak**: yo'nalish, nechta xodim,
@@ -45,7 +53,9 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - `/start` → **🏢 Gulnora Farm hodimi** tugmasi orqali mavjud xodim o'zini ro'yxatdan o'tkazadi
 - Savollar: ism-familiya, tug'ilgan sana, **telefon** (`+998XXXXXXXXX`), **yo'nalish (rol)**,
   manzil, **filial** (admin ro'yxatidan), ish vaqti (dan-gacha), oylik, dam olish kuni,
-  forma bor/yo'q, **ma'lumoti** (o'rta maxsus / oliy farmatsevt / boshqa yo'nalish / diplom yo'q),
+  forma bor/yo'q, **ma'lumoti** (oliy farmatsevt / tugallanmagan oliy farmatsevt /
+  o'rta maxsus farmatsevt / tugallanmagan o'rta maxsus / oliy — boshqa soha /
+  tugallanmagan oliy — boshqa soha / umumiy o'rta ta'lim / diplom yo'q),
   **necha yildan beri Gulnora Farmda ishlaydi**, **oxirgi 10 kundagi rasm**
 - Rolga qarab qo'shimcha savol: filial rahbari/direktor uchun boshqaruv hajmi
 - Yakunda: **HR panelga yuborilsinmi?** → tasdiqlansa xodimga rol va davomat paneli ochiladi
@@ -55,8 +65,10 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - Tasdiqlangach xodim ma'lumotlari **maxfiy kanalga** avtomatik joylanadi (kanal ulangan bo'lsa)
 - **🎓 Diplom statistikasi** (HR va Direktor panelida) — nechta xodimda diplom bor / yo'q,
   ma'lumot turlari va filiallar kesimida + diplomi yo'q xodimlar ro'yxati
-- **🔄 Ma'lumotlarni yangilash** (Admin panel) — tasdiqlangach barcha xodimlarga
-  «ma'lumotlaringizni yangilang» xabari + «🔄 Yangilash» tugmasi boradi. Anketa boshidan
+- **🔄 Ma'lumotlarni yangilash** (Admin panel) — so'rov **3 xil qamrovda** yuboriladi:
+  **👥 barcha xodimlarga** · **🏢 tanlangan filial xodimlariga** · **👤 bitta xodimga**.
+  Tasdiqlangach o'sha xodimlarga «ma'lumotlaringizni yangilang» xabari + «🔄 Yangilash»
+  tugmasi boradi. Anketa boshidan
   to'ldiriladi; **yangilamaguncha xodim botning boshqa bo'limlaridan foydalana olmaydi**.
   Eski ma'lumotlar faqat yakunda tasdiqlangach almashadi, roli o'zgarmaydi
   (yo'nalish o'zgargan bo'lsa HR ga xabar boradi). Nomzodlarga tegishli emas.

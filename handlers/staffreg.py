@@ -495,6 +495,8 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         "education": data.get("education"),
     }
     rid = await q.add_staff_reg(reg)
+    # Panellarda Telegram nomi emas, anketada kiritilgan ism ko'rinsin
+    await q.set_real_name(tg_id=call.from_user.id, full_name=reg.get("full_name"))
     # Foydalanuvchi telefon raqamini ham yangilab qo'yamiz
     if data.get("phone"):
         await q.update_phone(call.from_user.id, data["phone"])
@@ -541,6 +543,8 @@ async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
     old_profile = await q.get_employee_profile(user["id"]) or {}
     await state.clear()
     await q.set_staff_reg_status(rid, "updated", handled_by=user["id"])
+    # Yangilangan anketadagi ism panellarda ko'rinsin
+    await q.set_real_name(user_id=user["id"], full_name=reg.get("full_name"))
     await q.upsert_employee_profile(
         user_id=user["id"],
         application_id=old_profile.get("application_id"),
@@ -667,6 +671,8 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
     # Bitta HR tasdiqladi — qolgan HR/adminlardagi so'rov xabari o'chiriladi
     await close_request_notices(bot, "staff_reg", rid, keep_chat_id=call.from_user.id)
     await q.set_role(reg["user_tg"], role, reg.get("branch_id"))
+    # Panellarda so'rovda kiritilgan ism ko'rinsin (Telegram nomi emas)
+    await q.set_real_name(user_id=reg["user_id"], full_name=reg.get("full_name"))
     await q.upsert_employee_profile(
         user_id=reg["user_id"],
         application_id=None,

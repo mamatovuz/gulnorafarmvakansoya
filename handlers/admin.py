@@ -52,7 +52,7 @@ async def admin_panel(message: Message):
 # ---------------- MA'LUMOTLARNI YANGILASH KAMPANIYASI ----------------
 @router.message(F.text == kb.PROFILE_UPDATE_BTN)
 async def profile_update_ask(message: Message):
-    """Barcha xodimlardan ma'lumotlarini yangilashni so'rash — avval tasdiqlash."""
+    """Ma'lumot yangilash so'rovi — avval kimdan so'ralishi tanlanadi."""
     if not await is_admin(message.from_user.id):
         await message.answer("⛔ Sizda administrator huquqi yo'q.")
         return
@@ -60,13 +60,15 @@ async def profile_update_ask(message: Message):
     note = f"\n\n⏳ Hozir yangilashi kutilayotganlar: <b>{waiting}</b> ta" if waiting else ""
     await message.answer(
         "🔄 <b>Ma'lumotlarni yangilash</b>\n\n"
-        "Siz ma'lumotlarni haqiqatdan yangilamoqchimisiz?\n\n"
-        "«Ha» desangiz — <b>barcha Gulnora Farm xodimlariga</b> ma'lumotlarini "
-        "yangilash haqida xabar boradi va ular yangilamaguncha botning boshqa "
+        "So'rov <b>kimga</b> yuborilsin?\n\n"
+        "👥 <b>Barcha xodimlardan</b> — hamma Gulnora Farm xodimiga\n"
+        "🏢 <b>Filial bo'yicha</b> — faqat tanlangan filial xodimlariga\n"
+        "👤 <b>Bitta xodimdan</b> — faqat tanlangan bitta xodimga\n\n"
+        "So'rov yuborilgan xodim ma'lumotlarini yangilamaguncha botning boshqa "
         "bo'limlaridan foydalana olmaydi.\n"
         "<i>Ishga ariza yuborgan nomzodlarga bu tegishli emas.</i>"
         + note,
-        reply_markup=kb.profile_update_confirm_kb(),
+        reply_markup=kb.profile_update_scope_kb(),
     )
 
 
@@ -83,16 +85,117 @@ async def profile_update_no(call: CallbackQuery):
     await call.answer()
 
 
-@router.callback_query(F.data == "profupd_yes")
-async def profile_update_yes(call: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.startswith("profupd_scope:"))
+async def profile_update_scope(call: CallbackQuery):
+    """Qamrov tanlandi: hamma / filial / bitta xodim."""
     if not await is_admin(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
+    scope = call.data.split(":")[1]
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    total, tg_ids = await q.request_profile_update_all()
+
+    if scope == "all":
+        total = len(await q.list_employee_profiles())
+        await call.message.answer(
+            "👥 <b>Barcha xodimlardan</b> ma'lumot yangilash so'ralsinmi?\n\n"
+            f"Taxminan <b>{total}</b> ta xodimga xabar boradi.",
+            reply_markup=kb.profile_update_confirm_kb("all"),
+        )
+    elif scope == "branch":
+        branches = await q.list_branches()
+        if not branches:
+            await call.message.answer("🏢 Filiallar ro'yxati bo'sh.")
+            await call.answer()
+            return
+        await call.message.answer(
+            "🏢 <b>Qaysi filial</b> xodimlaridan ma'lumot yangilash so'ralsin?",
+            reply_markup=kb.profile_update_branch_kb(branches),
+        )
+    else:  # one
+        profiles = await q.list_employee_profiles()
+        if not profiles:
+            await call.message.answer("👤 Xodimlar ro'yxati bo'sh.")
+            await call.answer()
+            return
+        await call.message.answer(
+            "👤 <b>Qaysi xodimdan</b> ma'lumot yangilash so'ralsin?",
+            reply_markup=kb.profile_update_employee_kb(profiles[:60]),
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("profupd_br:"))
+async def profile_update_pick_branch(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    branch = await q.get_branch(bid)
+    count = len(await q.list_employee_profiles(branch_id=bid))
+    await call.message.answer(
+        f"🏢 <b>{branch['name'] if branch else bid}</b> filiali xodimlaridan "
+        "ma'lumot yangilash so'ralsinmi?\n\n"
+        f"Bu filialda <b>{count}</b> ta xodim bor.",
+        reply_markup=kb.profile_update_confirm_kb("branch", bid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("profupd_emp:"))
+async def profile_update_pick_employee(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"👤 <b>{profile.get('full_name') or '-'}</b>\n"
+        f"💼 {profile.get('position') or '-'} · 🏢 {profile.get('branch_name') or '-'}\n\n"
+        "Shu xodimdan ma'lumotlarini yangilash so'ralsinmi?",
+        reply_markup=kb.profile_update_confirm_kb("one", uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("profupd_yes"))
+async def profile_update_yes(call: CallbackQuery, bot: Bot):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    parts = call.data.split(":")
+    scope = parts[1] if len(parts) > 1 else "all"
+    ref_id = int(parts[2]) if len(parts) > 2 else None
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if scope == "branch":
+        total, tg_ids = await q.request_profile_update_all(branch_id=ref_id)
+        branch = await q.get_branch(ref_id)
+        label = f"🏢 {branch['name']}" if branch else f"🏢 filial #{ref_id}"
+    elif scope == "one":
+        total, tg_ids = await q.request_profile_update_all(user_id=ref_id)
+        profile = await q.get_employee_profile(ref_id)
+        label = f"👤 {profile.get('full_name')}" if profile else f"👤 xodim #{ref_id}"
+    else:
+        total, tg_ids = await q.request_profile_update_all()
+        label = "👥 Barcha xodimlar"
+
     await call.answer("Yuborilmoqda…")
     sent = 0
     for tid in tg_ids:
@@ -102,10 +205,16 @@ async def profile_update_yes(call: CallbackQuery, bot: Bot):
     me = await actor(call.from_user.id)
     await q.add_log(
         call.from_user.id, me["full_name"] if me else "?",
-        "malumot_yangilash_sorovi", f"{sent}/{total} xodimga yuborildi",
+        "malumot_yangilash_sorovi", f"{label} — {sent}/{total} xodimga yuborildi",
     )
+    if not total:
+        await call.message.answer(
+            f"ℹ️ <b>{label}</b> bo'yicha yangilash so'raladigan xodim topilmadi."
+        )
+        return
     await call.message.answer(
         "✅ <b>So'rov yuborildi!</b>\n\n"
+        f"🎯 Qamrov: <b>{label}</b>\n"
         f"👥 Xodimlar: <b>{total}</b> ta\n"
         f"📨 Xabar yetkazildi: <b>{sent}</b> ta\n\n"
         "Ular ma'lumotlarini yangilamaguncha botning boshqa bo'limlaridan "

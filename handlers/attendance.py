@@ -15,6 +15,7 @@ from states import AttendanceForm
 import keyboards as kb
 from utils import (
     haversine_m, employee_profile_text, safe_send, now_tk_hm, fmt_duration,
+    send_employee_profile,
 )
 
 router = Router()
@@ -409,23 +410,24 @@ async def my_profile(message: Message):
     if not profile:
         await message.answer("Profil topilmadi. HR bilan bog'laning.")
         return
-    text = employee_profile_text(profile)
+    extra = ""
     today = await q.get_attendance_today(message.from_user.id)
     if today and today.get("status") == "present":
-        text += f"\n\n📍 Bugun: ✅ Kelgan ({today.get('time') or '-'})"
+        extra += f"\n\n📍 Bugun: ✅ Kelgan ({today.get('time') or '-'})"
         if today.get("on_break"):
-            text += "\n⏸ Hozir tanaffusdasiz"
+            extra += "\n⏸ Hozir tanaffusdasiz"
         if today.get("break_seconds"):
-            text += f"\n⏸ Bugungi tanaffus: {fmt_duration(today.get('break_seconds'))}"
+            extra += f"\n⏸ Bugungi tanaffus: {fmt_duration(today.get('break_seconds'))}"
     else:
-        text += "\n\n📍 Bugun: ⏳ Hali belgilanmagan"
+        extra += "\n\n📍 Bugun: ⏳ Hali belgilanmagan"
     # oxirgi kelishlar
     history = await q.attendance_history(profile["user_id"], limit=7)
     if history:
-        text += "\n\n<b>Oxirgi kelishlar:</b>\n"
+        extra += "\n\n<b>Oxirgi kelishlar:</b>\n"
         for h in history:
-            text += f"  • {h.get('date')} {h.get('time') or ''}\n"
-    await message.answer(text)
+            extra += f"  • {h.get('date')} {h.get('time') or ''}\n"
+    # Profil rasmi bo'lsa — rasm bilan birga chiqadi
+    await send_employee_profile(message, profile, suffix=extra)
 
 
 # ================= DAVOMAT HISOBOTLARI =================
