@@ -615,15 +615,18 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
     # Maxfiy kanalga yuborish (admin panelda ulangan bo'lsa)
     secret_channel = await q.get_setting("secret_channel")
     if secret_channel:
-        period_hdr = (
-            f"\n{meta['emoji']} {meta['noun'].capitalize()}: "
-            f"{iso_to_display(start_iso)} — {iso_to_display(end_iso)}" if end_iso else ""
-        )
+        period_hdr = ""
+        if end_iso:
+            period_hdr = (
+                f"\n{meta['emoji']} {meta['noun'].capitalize()}: "
+                f"<b>{iso_to_display(start_iso)} — {iso_to_display(end_iso)}</b>"
+            )
         posted = await post_application_to_channel(
             bot, secret_channel, a,
             header=(
                 f"{meta['emoji']} <b>Qabul qilingan ariza — {meta['noun']}</b>\n"
                 f"👔 Qabul qildi: {me['full_name']}\n"
+                f"🏢 Filial: {branch_name}\n"
                 f"🎯 Rol: {ROLE_LABELS.get(new_role, new_role)}"
                 f"{period_hdr}"
             ),
