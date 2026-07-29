@@ -479,8 +479,8 @@ async def delete_vacancy(vid):
 
 # ---------------- ARIZALAR ----------------
 APP_FIELDS = [
-    "user_id", "vacancy_id", "branch_id", "full_name", "birth_date", "city",
-    "district", "address", "position", "position_extra", "uniform_status",
+    "user_id", "vacancy_id", "branch_id", "full_name", "birth_date", "gender",
+    "city", "district", "address", "position", "position_extra", "uniform_status",
     "shift", "education", "exp_years", "prev_years", "criminal", "marital",
     "children", "prev_salary", "expected_salary", "computer_level",
     "languages", "work_intent", "reason", "phone", "resume_file_id",
@@ -739,6 +739,78 @@ async def get_employee_profile_by_tg(tg_id):
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def search_employees(text=None, role=None, branch_id=None, limit=50):
+    """Xodimlarni qidiradi: ism / Telegram username / telefon bo'yicha,
+    hamda rol va filial bo'yicha filtrlaydi.
+
+    `text` bo'sh bo'lsa faqat filtrlar ishlaydi (masalan «Asaka filiali
+    farmatsevtlari»). Qidiruv registrga bog'liq emas."""
+    db = await _conn()
+    try:
+        sql = """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
+                        b.name AS branch_name
+                 FROM employee_profiles ep
+                 JOIN users u ON u.id=ep.user_id
+                 LEFT JOIN branches b ON b.id=ep.branch_id
+                 WHERE 1=1"""
+        params = []
+        if text:
+            like = f"%{text.strip().lstrip('@').lower()}%"
+            sql += """ AND (LOWER(COALESCE(u.full_name,'')) LIKE ?
+                        OR LOWER(COALESCE(u.username,'')) LIKE ?
+                        OR LOWER(COALESCE(u.phone,'')) LIKE ?
+                        OR LOWER(COALESCE(ep.position,'')) LIKE ?)"""
+            params += [like, like, like, like]
+        if role:
+            sql += " AND ep.role=?"
+            params.append(role)
+        if branch_id:
+            sql += " AND ep.branch_id=?"
+            params.append(branch_id)
+        sql += f" ORDER BY u.full_name LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_rejected_applications(limit=30):
+    """Rad etilgan arizalar (eng yangilari birinchi)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT a.*, COALESCE(v.title, a.position) AS vacancy_title,
+                      b.name AS branch_name
+               FROM applications a
+               LEFT JOIN vacancies v ON v.id=a.vacancy_id
+               LEFT JOIN branches b ON b.id=COALESCE(a.branch_id, v.branch_id)
+               WHERE a.status='rejected'
+               ORDER BY a.id DESC LIMIT ?""",
+            (int(limit),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_rejected_staff_regs(limit=30):
+    """Rad etilgan xodim so'rovlari (eng yangilari birinchi)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_name
+               FROM staff_regs sr
+               LEFT JOIN users u ON u.id=sr.user_id
+               LEFT JOIN branches b ON b.id=sr.branch_id
+               WHERE sr.status='rejected'
+               ORDER BY sr.id DESC LIMIT ?""",
+            (int(limit),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
 

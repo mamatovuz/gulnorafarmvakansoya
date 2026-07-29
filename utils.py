@@ -219,6 +219,7 @@ def application_text(a, full=False):
 APPLICATION_REQUIRED = [
     ("full_name", "full_name", "👤 Ism-sharif"),
     ("birth_date", "birth_date", "📅 Tug'ilgan sana"),
+    ("gender", "gender", "🚻 Jinsi"),
     ("city", "city", "🌆 Shahar/viloyat"),
     ("district", "district", "📍 Tuman"),
     ("address", "address", "🏠 Aniq manzil"),
@@ -274,6 +275,7 @@ def application_summary(d):
         "📋 <b>Arizangizni tekshiring:</b>\n\n"
         f"👤 Ism: {g('full_name')}\n"
         f"📅 Tug'ilgan sana: {g('birth_date')}\n"
+        f"🚻 Jinsi: {gender_label(d.get('gender')) or NOT_SET}\n"
         f"🌆 Shahar/viloyat: {g('city')}\n"
         f"📍 Tuman: {g('district')}\n"
         f"🏠 Aniq manzil: {g('address')}\n"
@@ -565,6 +567,32 @@ def normalize_chat_id(val):
         return val
 
 
+# ---------------- RAD ETISH: TAYYOR JAVOBLAR ----------------
+# HR arizani rad etganda nomzodga yuboriladigan standart matnlar.
+REJECT_TEMPLATE_LAT = (
+    "Assalomu alaykum!\n\n"
+    "Afsuski, hozirgi vaqtda sizning tajribangiz va malakangizga mos bo'sh ish "
+    "o'rni mavjud emas. Shu sababli, arizangiz ushbu bosqichda rad etildi.\n\n"
+    "Sizga kelgusi ish faoliyatingizda muvaffaqiyat tilaymiz. Kelgusida mos "
+    "bo'sh ish o'rinlari paydo bo'lsa, sizni yana hamkorlikka taklif qilishdan "
+    "mamnun bo'lamiz."
+)
+
+REJECT_TEMPLATE_CYR = (
+    "Ассалому алайкум!\n\n"
+    "Афсуски, ҳозирги вақтда сизнинг тажрибангиз ва малакангизга мос бўш иш "
+    "ўрни мавжуд эмас. Шу сабабли, аризангиз ушбу босқичда рад этилди.\n\n"
+    "Сизга келгуси иш фаолиятингизда муваффақият тилаймиз. Келгусида мос бўш "
+    "иш ўринлари пайдо бўлса, сизни яна ҳамкорликка таклиф қилишдан мамнун "
+    "бўламиз."
+)
+
+REJECT_TEMPLATES = {
+    "lat": ("Lotincha", REJECT_TEMPLATE_LAT),
+    "cyr": ("Кириллча", REJECT_TEMPLATE_CYR),
+}
+
+
 # ---------------- KERAKLI XODIM JINSI ----------------
 GENDER_LABELS = {
     "male": "👨 Erkak",
@@ -731,6 +759,7 @@ def application_caption(a, header=None):
         SEP,
         f"👤 <b>{_v(a, 'full_name')}</b>",
         f"🎂 Tug'ilgan: {_v(a, 'birth_date')}",
+        f"🚻 Jinsi: {gender_label(a.get('gender')) or '-'}",
         f"📱 Telefon: {_v(a, 'phone')}",
         f"📍 Manzil: {_v(a, 'city')}, {_v(a, 'district')}, {_v(a, 'address')}",
         SEP,
@@ -957,43 +986,87 @@ def branch_matches(app, vacancy):
     return ab == vb
 
 
+def gender_matches(app, vacancy):
+    """Nomzod jinsi vakansiya talabiga mos keladimi?
+
+      True  — mos (yoki vakansiya «farqi yo'q» deb belgilangan)
+      False — vakansiya aniq jins so'ragan, nomzod boshqa jinsda
+      None  — biror tomonda ma'lumot yo'q"""
+    want = (vacancy.get("gender") or "").strip().lower()
+    have = (app.get("gender") or "").strip().lower()
+    if not want or want == "any":
+        return True if have else None
+    if not have:
+        return None
+    return want == have
+
+
+def shift_matches(app, vacancy):
+    """Smena mos keladimi? (None — biror tomonda ko'rsatilmagan)"""
+    a, v = _norm(app.get("shift")), _norm(vacancy.get("shift"))
+    if not a or not v:
+        return None
+    # «Farqi yo'q» tanlagan nomzod istalgan smenaga mos
+    if "farqi yo" in a:
+        return True
+    return a == v
+
+
 def match_score(app, vacancy):
     """0..100 — nomzod arizasi vakansiyaga qanchalik mos kelishi (foizda).
 
-    FILIAL — birinchi darajali shart. Nomzod bir filialga ariza bergan bo'lib,
-    vakansiya boshqa filialda bo'lsa, lavozim to'liq mos kelsa ham bu nomzod
-    o'sha vakansiyaga mos emas — 0 qaytadi."""
+    Muhimlik tartibi:
+      1. FILIAL  — hal qiluvchi shart. Boshqa filial bo'lsa 0 qaytadi.
+      2. JINSI   — vakansiya aniq jins so'ragan bo'lsa, mos kelmasa 0.
+      3. SMENA   — mos kelsa ball qo'shiladi.
+    Lavozim o'xshashligi shundan keyin hisobga olinadi."""
+    # 1) Filial
     same_branch = branch_matches(app, vacancy)
     if same_branch is False:
         return 0  # boshqa filial — tavsiya qilinmaydi
+
+    # 2) Jins
+    same_gender = gender_matches(app, vacancy)
+    if same_gender is False:
+        return 0  # vakansiya boshqa jinsdagi xodim so'ragan
+
+    # 3) Smena
+    same_shift = shift_matches(app, vacancy)
 
     pos_sim = text_similarity(
         app.get("position") or app.get("vacancy_title"),
         vacancy.get("title"),
     )
-    same_shift = (
-        1.0
-        if _norm(app.get("shift")) and _norm(app.get("shift")) == _norm(vacancy.get("shift"))
-        else 0.0
-    )
-    # Filial mos kelsa — to'liq ball; ko'rsatilmagan bo'lsa yarim ball
+    # Ma'lum bo'lmagan mezon yarim ball oladi — noaniqlik jazolanmasin
     branch_pt = 1.0 if same_branch is True else 0.5
-    score = 0.55 * pos_sim + 0.35 * branch_pt + 0.10 * same_shift
+    gender_pt = 1.0 if same_gender is True else 0.5
+    shift_pt = 1.0 if same_shift is True else (0.5 if same_shift is None else 0.0)
+
+    score = 0.40 * branch_pt + 0.25 * gender_pt + 0.15 * shift_pt + 0.20 * pos_sim
     return round(score * 100)
+
+
+def match_rank(app, vacancy):
+    """Saralash kaliti — kichikroq qiymat yuqorida turadi.
+
+    Tartib: filiali mos → jinsi mos → smenasi mos."""
+    return (
+        0 if branch_matches(app, vacancy) is True else 1,
+        0 if gender_matches(app, vacancy) is True else 1,
+        0 if shift_matches(app, vacancy) is True else 1,
+    )
 
 
 def best_vacancy_matches(app, vacancies, threshold=60, limit=3):
     """Chegaradan yuqori mos vakansiyalar ro'yxati [(vacancy, score), ...].
 
-    Avval filiali aynan mos kelganlari, keyin filiali ko'rsatilmaganlari
-    chiqadi — har ikki guruh ichida foiz bo'yicha saralanadi."""
+    Saralash: avval filiali mos kelganlar, keyin jinsi, keyin smenasi —
+    har bir guruh ichida foiz bo'yicha."""
     scored = []
     for v in vacancies or []:
         s = match_score(app, v)
         if s >= threshold:
-            # 0 => filiali aynan mos (birinchi turadi), 1 => filial noaniq
-            rank = 0 if branch_matches(app, v) is True else 1
-            scored.append((rank, s, v))
+            scored.append((match_rank(app, v), s, v))
     scored.sort(key=lambda x: (x[0], -x[1]))
     return [(v, s) for rank, s, v in scored[:limit]]
 
@@ -1089,17 +1162,21 @@ def recommendation_text(matches, app=None):
         "⭐ <b>Avtomatik tavsiya</b>",
         "Bu nomzod quyidagi ochiq vakansiya(lar)ga mos keladi:",
     ]
+    def _mark(fn):
+        if app is None:
+            return ""
+        r = fn(app, v)
+        return " ✅" if r is True else (" ❔" if r is None else " ❌")
+
     for v, sc in matches:
-        branch = v.get("branch_name") or "filial ko'rsatilmagan"
-        mark = ""
-        if app is not None:
-            bm = branch_matches(app, v)
-            mark = " ✅" if bm is True else (" ❔" if bm is None else "")
-        lines.append(
-            f"• <b>{v['title']}</b> — 🏢 {branch}{mark} — <b>{sc}%</b> mos (vak #{v['id']})"
-        )
+        branch = v.get("branch_name") or "ko'rsatilmagan"
+        lines.append(f"• <b>{v['title']}</b> — <b>{sc}%</b> mos (vak #{v['id']})")
+        lines.append(f"    🏢 Filial: {branch}{_mark(branch_matches)}")
+        want_g = gender_label(v.get("gender")) or "farqi yo'q"
+        lines.append(f"    🚻 Jinsi: {want_g}{_mark(gender_matches)}")
+        lines.append(f"    🕒 Smena: {v.get('shift') or '—'}{_mark(shift_matches)}")
     lines.append(
-        "👉 Ro'yxatda faqat nomzod tanlagan filialdagi (yoki filiali "
-        "ko'rsatilmagan) vakansiyalar bor."
+        "\n👉 Tartib: <b>1) filial · 2) jinsi · 3) smena</b>. Filiali yoki "
+        "jinsi mos kelmagan vakansiyalar ro'yxatga umuman kirmaydi."
     )
     return "\n".join(lines)

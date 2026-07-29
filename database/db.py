@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS applications (
     branch_id INTEGER,
     full_name TEXT,
     birth_date TEXT,
+    gender TEXT,                  -- male / female (vakansiyaga moslik uchun)
     city TEXT,
     district TEXT,
     address TEXT,
@@ -515,6 +516,7 @@ APP_COLUMNS = {
     "photo_file_id": "TEXT",
     "channel_chat_id": "TEXT", "channel_message_id": "INTEGER",
     "accept_kind": "TEXT",
+    "gender": "TEXT",                 # male / female — vakansiyaga moslik uchun
 }
 
 VACANCY_COLUMNS = {

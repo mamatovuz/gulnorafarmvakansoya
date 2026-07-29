@@ -39,6 +39,7 @@ MENU_ESCAPE_BUTTONS = {
     "💸 HR ga so'rov",  # eski nomdagi tugma (kesh qolgan klaviaturalar uchun)
     "💼 Vakansiyalar", "📄 Mening arizalarim", "🏠 Asosiy menyu",
     "👨‍💼 HR panel", "👑 Admin panel", "📈 Direktor panel", "🧮 Moliya bo'limi",
+    "❌ Rad etilgan murojaatlar", "👥 Xodimlar",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
 }
 
@@ -224,6 +225,10 @@ def apply_shift_kb():
     return _choices(["🌞 Ertalabgi smena", "🌙 Kechki smena", "🔄 Farqi yo'q"], row=1)
 
 
+def apply_gender_kb():
+    return _choices(["👨 Erkak", "👩 Ayol"], row=2)
+
+
 def apply_criminal_kb():
     return _choices(["✅ Yo'q", "❌ Ha"], row=2)
 
@@ -338,6 +343,16 @@ def apply_edit_fields_kb():
     return b.as_markup()
 
 
+def reject_reason_kb(aid):
+    """Arizani rad etishda: tayyor javob (lotin/kirill) yoki o'z matni."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Lotincha (tayyor javob)", callback_data=f"apprejt:{aid}:lat")
+    b.button(text="🔡 Кириллча (тайёр жавоб)", callback_data=f"apprejt:{aid}:cyr")
+    b.button(text="✍️ O'zim yozaman", callback_data=f"apprejw:{aid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def apply_missing_fields_kb(missing):
     """To'ldirilmagan majburiy maydonlar uchun tugmalar.
 
@@ -438,6 +453,8 @@ def hr_menu():
     b.button(text="💊 Farmatsevtlar")
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
+    b.button(text="❌ Rad etilgan murojaatlar")
+    b.button(text="👥 Xodimlar")
     b.button(text="📍 Davomat")
     b.button(text="🛌 Kunlik dam olish")
     b.button(text="⚙️ Davomat sozlamalari")
@@ -451,8 +468,23 @@ def hr_menu():
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+def rejected_requests_kb(apps, regs):
+    """Rad etilgan arizalar va xodim so'rovlari — bitta inline ro'yxatda."""
+    b = InlineKeyboardBuilder()
+    for a in apps:
+        name = a.get("full_name") or "Nomzod"
+        pos = a.get("vacancy_title") or a.get("position") or "-"
+        b.button(text=f"📄 #{a['id']} {name} · {pos}", callback_data=f"appview:{a['id']}")
+    for r in regs:
+        name = r.get("full_name") or "Xodim"
+        pos = r.get("position") or "-"
+        b.button(text=f"🧾 #{r['id']} {name} · {pos}", callback_data=f"rejreg:{r['id']}")
+    b.adjust(1)
+    return b.as_markup()
 
 
 def probations_list_kb(probations, prefix="probview"):
@@ -862,8 +894,11 @@ def vacancies_manage_list_kb(vacancies, prefix="vman"):
     return b.as_markup()
 
 
-def employee_profiles_list_kb(profiles, prefix="empview"):
+def employee_profiles_list_kb(profiles, prefix="empview", with_search=True):
+    """Xodimlar ro'yxati. `with_search` — tepasida «🔍 Qidiruv» tugmasi."""
     b = InlineKeyboardBuilder()
+    if with_search:
+        b.button(text="🔍 Xodim qidirish", callback_data="empsrch")
     for p in profiles:
         role = p.get("role") or "xodim"
         branch = f" · {p['branch_name']}" if p.get("branch_name") else ""
@@ -871,6 +906,46 @@ def employee_profiles_list_kb(profiles, prefix="empview"):
             text=f"{p.get('full_name') or p.get('tg_id')} · {role}{branch}",
             callback_data=f"{prefix}:{p['user_id']}",
         )
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- XODIM QIDIRUVI ----------------
+EMP_SEARCH_ROLES = [
+    (ROLE_PHARMACIST, "💊 Farmatsevt"),
+    (ROLE_MANAGER, "👨‍💼 Filial rahbari"),
+    (ROLE_DIRECTOR, "👔 Direktor"),
+    (ROLE_ACCOUNTANT, "🧮 Moliya bo'limi"),
+    (ROLE_EMPLOYEE, "👷 Oddiy xodim"),
+    (ROLE_HR, "🧑‍💼 HR"),
+]
+
+
+def employee_search_kb():
+    """Xodim qidirish usullari."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Ism / username / telefon", callback_data="empsrch:text")
+    b.button(text="🏢 Filial bo'yicha", callback_data="empsrch:branch")
+    b.button(text="💼 Lavozim bo'yicha", callback_data="empsrch:role")
+    b.button(text="👥 Barcha xodimlar", callback_data="empsrch:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def employee_search_branch_kb(branches):
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"empsrchb:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="empsrch")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def employee_search_role_kb():
+    b = InlineKeyboardBuilder()
+    for role, label in EMP_SEARCH_ROLES:
+        b.button(text=label, callback_data=f"empsrchr:{role}")
+    b.button(text="⬅️ Orqaga", callback_data="empsrch")
     b.adjust(1)
     return b.as_markup()
 

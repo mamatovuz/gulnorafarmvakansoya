@@ -11,7 +11,8 @@ class Apply(StatesGroup):
     """Ishga ariza topshirish."""
     full_name = State()        # 1
     birth_date = State()       # 2 (kun.oy.yil)
-    city = State()             # 3
+    gender = State()           # 3 jins (vakansiyaga moslik uchun)
+    city = State()             # 4
     district = State()         # 4
     address = State()          # 5
     branch = State()           # 6
@@ -80,6 +81,11 @@ class Broadcast(StatesGroup):
 
 
 class SearchForm(StatesGroup):
+    query = State()
+
+
+class EmployeeSearchForm(StatesGroup):
+    """HR/admin xodimlarni ism, username, telefon yoki lavozim bo'yicha izlaydi."""
     query = State()
 
 

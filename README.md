@@ -8,14 +8,16 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 ### 🧑 Nomzod
 - Majburiy obuna tekshiruvi (bir nechta kanal)
 - Vakansiyalarni ko'rish
-- **📝 Ishga ariza topshirish** — 20 savoldan iborat to'liq anketa:
-  ism, tug'ilgan sana (`kun.oy.yil` — majburiy tekshiriladi), manzil, filial, lavozim,
+- **📝 Ishga ariza topshirish** — 24 savoldan iborat to'liq anketa:
+  ism, tug'ilgan sana (`kun.oy.yil` — majburiy tekshiriladi), **jinsi**, manzil, filial, lavozim,
   smena, ma'lumot, ish tajribasi, sudlanganlik, oilaviy holat, farzandlar,
   oldingi/kutilayotgan maosh, **kompyuter savodxonligi** (Ha / O'rtacha / Yo'q),
   tillar, ishlash niyati, sabab,
   **telefon** (faqat `+998XXXXXXXXX` — bo'sh joysiz, bitta raqam),
   rezyume/diplom (fayl yoki o'tkazib yuborish)
 - Yakuniy tasdiqlash: **✅ Tasdiqlash · ✏️ Tahrirlash · ❌ Bekor qilish**
+- **Barcha savollar majburiy** (rezyumedan tashqari): javobsiz qolgan savol bo'lsa
+  ariza yuborilmaydi — to'ldirilmaganlar ro'yxati va tuzatish tugmalari chiqadi
 - Tasdiqlangach ariza avtomatik HR va Adminlarga yuboriladi
 - Suhbat taklifini tasdiqlash yoki boshqa vaqt taklif qilish
 - «Mening arizalarim» — holatni kuzatish
@@ -24,16 +26,23 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - **Dashboard** — bugungi / haftalik / oylik arizalar, holatlar, filial va vakansiya statistikasi
 - **Arizalar** — holat bo'yicha filtrlash (yangi / suhbat / qabul / rad)
   - 👁 Batafsil ko'rish · 📅 Suhbatga chaqirish · ✅ Ishga qabul · ❌ Rad etish · 📝 Izoh
+  - **Rad etishda tayyor javob**: 🔤 lotincha yoki 🔡 kirillcha standart matn
+    bitta tugma bilan yuboriladi (yoki ✍️ HR o'z sababini yozadi)
 - **Vakansiyalar** — yaratish / tahrirlash / yopish / qayta ochish / o'chirish
 - **Bir so'rov — bitta javob**: bir xil so'rov barcha HR/adminlarga boradi, lekin
   kim birinchi tasdiqlasa/rad etsa — qolganlaridagi xabar **avtomatik o'chiriladi**
   (xodim so'rovi, vakansiya so'rovi, ishdan bo'shatish, dam olish, maosh, ish vaqti)
 - **Xabarnoma** — barchaga / xodimlarga / nomzodlarga / filial bo'yicha (rasm, video, fayl)
 - **Qidiruv** — ism / telefon / filial / lavozim bo'yicha
-- **⭐ Avtomatik tavsiya (moslik filtri)** — **filial birinchi darajali shart**: nomzod
-  tanlagan filialdan boshqa filialdagi vakansiya lavozimi to'liq mos kelsa ham
-  tavsiya qilinmaydi. Ro'yxatda avval filiali aynan mos kelganlar (✅), keyin
-  filiali ko'rsatilmagan umumiy vakansiyalar (❔) chiqadi
+- **⭐ Avtomatik tavsiya (moslik filtri)** — muhimlik tartibi:
+  **1) 🏢 Filial · 2) 🚻 Jinsi · 3) 🕒 Smena**. Filiali yoki jinsi mos kelmagan
+  vakansiya lavozimi to'liq mos kelsa ham ro'yxatga kirmaydi (0%). Har bir
+  vakansiya yonida uch mezon ✅ / ❔ / ❌ bilan ko'rsatiladi
+- **❌ Rad etilgan murojaatlar** — rad etilgan ishga arizalar va xodim so'rovlari
+  bitta ro'yxatda, inline tugma bo'lib chiqadi (sabab bilan)
+- **👥 Xodimlar + 🔍 qidiruv** — xodimni **ism / @username / telefon / lavozim**
+  bo'yicha izlash, hamda **filial** va **lavozim** bo'yicha filtrlash.
+  Qidiruv tugmasi barcha xodimlar ro'yxati tepasida turadi
 - **Xodim kartochkasi rasm bilan** — HR / Direktor / Filial rahbari / Moliya panelida
   xodim tanlanganda va xodimning **👤 Mening profilim** bo'limida profil rasmi ko'rinadi
 - **Ismlar** — panellarda, hisobotlarda va kanal postlarida Telegram taxallusi emas,

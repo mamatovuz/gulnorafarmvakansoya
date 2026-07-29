@@ -12,7 +12,7 @@ from database.db import (
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
-    ProbationForm, TerminationRejectForm, SalaryNegoForm,
+    ProbationForm, TerminationRejectForm, SalaryNegoForm, EmployeeSearchForm,
 )
 import keyboards as kb
 from utils import (
@@ -22,7 +22,8 @@ from utils import (
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text, update_application_channel, send_application_card,
     close_request_notices, post_interview_to_channel, update_interview_channel,
-    interview_confirm_label, interview_attendance_label,
+    interview_confirm_label, interview_attendance_label, REJECT_TEMPLATES,
+    staff_reg_text,
 )
 from services import export
 
@@ -819,15 +820,81 @@ async def probation_view(call: CallbackQuery):
 
 # ------- Rad etish -------
 @router.callback_query(F.data.startswith("apprej:"))
-async def app_reject_start(call: CallbackQuery, state: FSMContext):
+async def app_reject_start(call: CallbackQuery):
+    """Rad etish — avval javob turini tanlaymiz: tayyor matn yoki o'z sababi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    aid = int(call.data.split(":")[1])
+    a = await q.get_application(aid)
+    if not a:
+        await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"❌ <b>Ariza #{aid} — {a.get('full_name') or '-'}</b>\n\n"
+        "Nomzodga qanday javob yuborilsin?",
+        reply_markup=kb.reject_reason_kb(aid),
+    )
+    await call.answer()
+
+
+async def _do_reject(bot: Bot, target, me, aid, notice, comment=None):
+    """Arizani rad etadi va nomzodga `notice` matnini yuboradi.
+
+    target — HR ga javob qaytariladigan Message obyekti."""
+    await q.set_application_status(aid, ST_REJECTED, handled_by=me["id"])
+    if comment:
+        await q.set_application_comment(aid, comment)
+    a = await q.get_application(aid)
+    if not a:
+        await target.answer("Ariza topilmadi.")
+        return
+    # Kanaldagi post statusini «❌ Rad etilgan» ga yangilaymiz
+    await update_application_channel(bot, a)
+    await q.add_log(me["tg_id"], me["full_name"], "ariza_rad", f"Ariza #{aid}")
+    delivered = False
+    if a.get("applicant_tg"):
+        delivered = await safe_send(bot, a["applicant_tg"], notice)
+    status = "📨 Nomzodga yuborildi." if delivered else "⚠️ Nomzodga yetkazilmadi."
+    await target.answer(f"❌ Ariza #{aid} — <b>rad etildi</b>.\n{status}")
+
+
+@router.callback_query(F.data.startswith("apprejt:"))
+async def app_reject_template(call: CallbackQuery, bot: Bot):
+    """Tayyor javob bilan rad etish (lotincha / kirillcha)."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, aid, lang = call.data.split(":")
+    aid = int(aid)
+    label, text = REJECT_TEMPLATES.get(lang, REJECT_TEMPLATES["lat"])
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    me = await actor(call.from_user.id)
+    await _do_reject(
+        bot, call.message, me, aid, text,
+        comment=f"Standart rad javobi ({label})",
+    )
+    await call.answer("Rad etildi")
+
+
+@router.callback_query(F.data.startswith("apprejw:"))
+async def app_reject_write(call: CallbackQuery, state: FSMContext):
+    """HR sababni o'zi yozadi."""
     if not await is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
     aid = int(call.data.split(":")[1])
     await state.update_data(reject_aid=aid)
     await state.set_state(RejectForm.reason)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     await call.message.answer(
-        "❌ Rad etish sababini yozing (nomzodga yuboriladi). "
+        "✍️ Rad etish sababini yozing (nomzodga yuboriladi). "
         "Sababsiz bo'lsa «-» deb yozing:"
     )
     await call.answer()
@@ -840,22 +907,18 @@ async def app_reject_finish(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     me = await actor(message.from_user.id)
     reason = message.text.strip()
-    await q.set_application_status(aid, ST_REJECTED, handled_by=me["id"])
-    if reason and reason != "-":
-        await q.set_application_comment(aid, reason)
     a = await q.get_application(aid)
-    # Kanaldagi post statusini «❌ Rad etilgan» ga yangilaymiz
-    await update_application_channel(bot, a)
-    await q.add_log(message.from_user.id, me["full_name"], "ariza_rad", f"Ariza #{aid}")
-    await message.answer(f"❌ Ariza #{aid} — <b>rad etildi</b>.")
-    if a.get("applicant_tg"):
-        extra = f"\n\nSabab: {reason}" if reason and reason != "-" else ""
-        await safe_send(
-            bot, a["applicant_tg"],
-            f"😔 «{a['vacancy_title']}» vakansiyasi bo'yicha arizangiz "
-            f"bu safar ma'qullanmadi.{extra}\n\n"
-            f"Boshqa vakansiyalarga ariza topshirishingiz mumkin. Omad tilaymiz!",
-        )
+    title = a.get("vacancy_title") if a else "-"
+    extra = f"\n\nSabab: {reason}" if reason and reason != "-" else ""
+    notice = (
+        f"😔 «{title}» vakansiyasi bo'yicha arizangiz bu safar ma'qullanmadi."
+        f"{extra}\n\n"
+        "Boshqa vakansiyalarga ariza topshirishingiz mumkin. Omad tilaymiz!"
+    )
+    await _do_reject(
+        bot, message, me, aid, notice,
+        comment=reason if reason and reason != "-" else None,
+    )
 
 
 # ------- Izoh qoldirish -------
@@ -1781,6 +1844,164 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
 
 
 # ---------------- QIDIRUV ----------------
+# ---------------- RAD ETILGAN MUROJAATLAR ----------------
+@router.message(F.text == "❌ Rad etilgan murojaatlar")
+async def rejected_requests(message: Message):
+    """Rad etilgan ishga arizalar + rad etilgan xodim so'rovlari."""
+    if not await is_staff(message.from_user.id):
+        return
+    apps = await q.list_rejected_applications(limit=30)
+    regs = await q.list_rejected_staff_regs(limit=30)
+    if not apps and not regs:
+        await message.answer("✅ Rad etilgan murojaatlar yo'q.")
+        return
+    await message.answer(
+        "❌ <b>Rad etilgan murojaatlar</b>\n\n"
+        f"📄 Ishga arizalar: <b>{len(apps)}</b> ta\n"
+        f"🧾 Xodim so'rovlari: <b>{len(regs)}</b> ta\n\n"
+        "Batafsil ko'rish uchun tanlang:",
+        reply_markup=kb.rejected_requests_kb(apps, regs),
+    )
+
+
+@router.callback_query(F.data.startswith("rejreg:"))
+async def rejected_staff_reg_view(call: CallbackQuery):
+    """Rad etilgan xodim so'rovi kartochkasi (sabab bilan)."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    reg = await q.get_staff_reg(rid)
+    if not reg:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    text = staff_reg_text(reg)
+    if reg.get("reject_reason"):
+        text += f"\n\n✍️ <b>Rad etish sababi:</b> {reg['reject_reason']}"
+    photo = reg.get("photo_file_id")
+    if photo:
+        try:
+            await call.message.answer_photo(photo, caption=text[:1024])
+            await call.answer()
+            return
+        except Exception:
+            pass
+    await call.message.answer(text)
+    await call.answer()
+
+
+# ---------------- XODIMLAR VA QIDIRUV ----------------
+@router.message(F.text == "👥 Xodimlar")
+async def hr_employees(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    profiles = await q.list_employee_profiles()
+    if not profiles:
+        await message.answer("👥 Hali xodimlar yo'q.")
+        return
+    await message.answer(
+        f"👥 <b>Xodimlar</b> — jami <b>{len(profiles)}</b> ta\n\n"
+        "Kerakli xodimni topish uchun «🔍 Xodim qidirish» tugmasidan "
+        "foydalaning yoki ro'yxatdan tanlang:",
+        reply_markup=kb.employee_profiles_list_kb(profiles[:30]),
+    )
+
+
+@router.callback_query(F.data == "empsrch")
+async def employee_search_menu(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await call.message.answer(
+        "🔍 <b>Xodim qidirish</b>\n\nQaysi usulda qidiramiz?",
+        reply_markup=kb.employee_search_kb(),
+    )
+    await call.answer()
+
+
+async def _send_employee_results(target, profiles, title):
+    if not profiles:
+        await target.answer(
+            f"{title}\n\n😔 Hech kim topilmadi. Boshqa so'z bilan urinib ko'ring.",
+            reply_markup=kb.employee_search_kb(),
+        )
+        return
+    await target.answer(
+        f"{title}\n\n👥 Topildi: <b>{len(profiles)}</b> ta\n"
+        "Batafsil ko'rish uchun xodimni tanlang:",
+        reply_markup=kb.employee_profiles_list_kb(profiles[:30]),
+    )
+
+
+@router.callback_query(F.data.startswith("empsrch:"))
+async def employee_search_pick(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    mode = call.data.split(":")[1]
+    if mode == "text":
+        await state.set_state(EmployeeSearchForm.query)
+        await call.message.answer(
+            "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+            "<b>lavozimini</b> yozing.\n"
+            "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
+        )
+    elif mode == "branch":
+        branches = await q.list_branches()
+        await call.message.answer(
+            "🏢 Qaysi filial xodimlarini ko'rmoqchisiz?",
+            reply_markup=kb.employee_search_branch_kb(branches),
+        )
+    elif mode == "role":
+        await call.message.answer(
+            "💼 Qaysi lavozim bo'yicha qidiramiz?",
+            reply_markup=kb.employee_search_role_kb(),
+        )
+    else:  # all
+        profiles = await q.search_employees()
+        await _send_employee_results(call.message, profiles, "👥 <b>Barcha xodimlar</b>")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("empsrchb:"))
+async def employee_search_by_branch(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    profiles = await q.search_employees(branch_id=bid)
+    await _send_employee_results(
+        call.message, profiles,
+        f"🏢 <b>{branch['name'] if branch else 'Filial'}</b> xodimlari",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("empsrchr:"))
+async def employee_search_by_role(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    role = call.data.split(":")[1]
+    label = dict(kb.EMP_SEARCH_ROLES).get(role, role)
+    profiles = await q.search_employees(role=role)
+    await _send_employee_results(call.message, profiles, f"💼 <b>{label}</b>")
+    await call.answer()
+
+
+@router.message(EmployeeSearchForm.query, F.text)
+async def employee_search_run(message: Message, state: FSMContext):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text)
+    await _send_employee_results(message, profiles, f"🔍 <b>Qidiruv:</b> {text}")
+
+
 @router.message(F.text == "🔍 Qidiruv")
 async def search_start(message: Message):
     if not await is_staff(message.from_user.id):

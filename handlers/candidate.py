@@ -115,6 +115,16 @@ def normalize_choice(text):
     return text.replace("✅", "").replace("❌", "").strip()
 
 
+def gender_from_text(text):
+    """«👨 Erkak» / «👩 Ayol» tugmasidan male/female ni aniqlaydi."""
+    lower = (text or "").lower()
+    if "erkak" in lower or "👨" in lower:
+        return "male"
+    if "ayol" in lower or "👩" in lower:
+        return "female"
+    return None
+
+
 def is_pharmacist(position):
     return "farm" in (position or "").lower()
 
@@ -132,17 +142,17 @@ def position_extra_prompt(position):
     p = (position or "").lower()
     if "farm" in p:
         return (
-            "<b>8-savol</b>\n💊 Farmatsevtlik bo'yicha hujjatingiz yoki "
+            "<b>9-savol</b>\n💊 Farmatsevtlik bo'yicha hujjatingiz yoki "
             "sertifikatingiz holatini tanlang."
         )
     if "filial rahbari" in p:
         return (
-            "<b>8-savol</b>\n🏢 Oldin nechta xodimdan iborat jamoani "
+            "<b>9-savol</b>\n🏢 Oldin nechta xodimdan iborat jamoani "
             "boshqargansiz?"
         )
     if "direktor" in p or "director" in p:
-        return "<b>8-savol</b>\n👔 Direktor sifatida boshqaruv tajribangiz qancha?"
-    return f"<b>8-savol</b>\n💼 «{position}» bo'yicha ish tajribangizni tanlang."
+        return "<b>9-savol</b>\n👔 Direktor sifatida boshqaruv tajribangiz qancha?"
+    return f"<b>9-savol</b>\n💼 «{position}» bo'yicha ish tajribangizni tanlang."
 
 
 async def _start_apply(message: Message, state: FSMContext, vacancy=None):
@@ -208,7 +218,8 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
 
 # --- BEKOR QILISH (istalgan bosqichda) ---
 @router.message(StateFilter(
-    Apply.full_name, Apply.birth_date, Apply.city, Apply.district, Apply.address,
+    Apply.full_name, Apply.birth_date, Apply.gender, Apply.city, Apply.district,
+    Apply.address,
     Apply.branch, Apply.position, Apply.position_extra, Apply.uniform, Apply.shift,
     Apply.education, Apply.exp_years, Apply.prev_years, Apply.criminal,
     Apply.marital, Apply.children, Apply.prev_salary, Apply.expected_salary,
@@ -250,9 +261,27 @@ async def a_birth(message: Message, state: FSMContext):
         )
         return
     await state.update_data(birth_date=normalized)
+    await state.set_state(Apply.gender)
+    await message.answer(
+        "<b>3-savol</b>\n🚻 Jinsingizni tanlang.",
+        reply_markup=kb.apply_gender_kb(),
+    )
+
+
+# 3) Jins — vakansiyaga moslikni aniqlashda ishlatiladi
+@router.message(Apply.gender, F.text)
+async def a_gender(message: Message, state: FSMContext):
+    gender = gender_from_text(message.text)
+    if not gender:
+        await message.answer(
+            "❗️ Jinsni <b>tugmalardan</b> tanlang — bu savol majburiy.",
+            reply_markup=kb.apply_gender_kb(),
+        )
+        return
+    await state.update_data(gender=gender)
     await state.set_state(Apply.city)
     await message.answer(
-        "<b>3-savol</b>\n🌆 Qaysi shahar/viloyatda yashaysiz?",
+        "<b>4-savol</b>\n🌆 Qaysi shahar/viloyatda yashaysiz?",
         reply_markup=kb.apply_city_kb(),
     )
 
@@ -270,7 +299,7 @@ async def a_city(message: Message, state: FSMContext):
     await state.update_data(city=city)
     await state.set_state(Apply.district)
     await message.answer(
-        "<b>4-savol</b>\n📍 Tumaningizni tanlang.",
+        "<b>5-savol</b>\n📍 Tumaningizni tanlang.",
         reply_markup=kb.apply_district_kb(city),
     )
 
@@ -290,7 +319,7 @@ async def a_district(message: Message, state: FSMContext):
     await state.update_data(district=district)
     await state.set_state(Apply.address)
     await message.answer(
-        "<b>5-savol</b>\n🏠 Aniq manzilingizni yuboring.\n"
+        "<b>6-savol</b>\n🏠 Aniq manzilingizni yuboring.\n"
         "Misol: <i>Xursandlik MFY, 37-uy</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -322,12 +351,12 @@ async def _ask_branch(message: Message, state: FSMContext):
     await state.set_state(Apply.branch)
     if branches:
         await message.answer(
-            "<b>6-savol</b>\n🏢 Ishlamoqchi bo'lgan filialni tanlang.",
+            "<b>7-savol</b>\n🏢 Ishlamoqchi bo'lgan filialni tanlang.",
             reply_markup=kb.apply_branch_kb(branches),
         )
     else:
         await message.answer(
-            "<b>6-savol</b>\n🏢 Ishlamoqchi bo'lgan filial nomini yozing:",
+            "<b>7-savol</b>\n🏢 Ishlamoqchi bo'lgan filial nomini yozing:",
             reply_markup=kb.cancel_kb(),
         )
 
@@ -356,7 +385,7 @@ async def a_branch(message: Message, state: FSMContext):
     await state.set_state(Apply.position)
     positions = await q.list_position_names()
     await message.answer(
-        "<b>7-savol</b>\n💼 Qaysi yo'nalish bo'yicha ishga kirmoqchisiz?",
+        "<b>8-savol</b>\n💼 Qaysi yo'nalish bo'yicha ishga kirmoqchisiz?",
         reply_markup=kb.apply_position_kb(positions),
     )
 
@@ -389,7 +418,7 @@ async def a_position_extra(message: Message, state: FSMContext):
 async def _ask_shift(message: Message, state: FSMContext):
     await state.set_state(Apply.shift)
     await message.answer(
-        "<b>9-savol</b>\n🕒 Qaysi smenada ishlay olasiz?",
+        "<b>10-savol</b>\n🕒 Qaysi smenada ishlay olasiz?",
         reply_markup=kb.apply_shift_kb(),
     )
 
@@ -400,7 +429,7 @@ async def a_shift(message: Message, state: FSMContext):
     await state.update_data(shift=message.text.strip())
     await state.set_state(Apply.education)
     await message.answer(
-        "<b>10-savol</b>\n🎓 Ma'lumot darajangizni tanlang.",
+        "<b>11-savol</b>\n🎓 Ma'lumot darajangizni tanlang.",
         reply_markup=kb.apply_education_kb(),
     )
 
@@ -411,7 +440,7 @@ async def a_education(message: Message, state: FSMContext):
     await state.update_data(education=message.text.strip())
     await state.set_state(Apply.exp_years)
     await message.answer(
-        "<b>11-savol</b>\n💼 Umumiy ish tajribangiz qancha?",
+        "<b>12-savol</b>\n💼 Umumiy ish tajribangiz qancha?",
         reply_markup=kb.apply_experience_kb(),
     )
 
@@ -422,7 +451,7 @@ async def a_exp(message: Message, state: FSMContext):
     await state.update_data(exp_years=message.text.strip())
     await state.set_state(Apply.prev_years)
     await message.answer(
-        "<b>12-savol</b>\n🏢 Oldingi ish joyingizda qancha ishlagansiz?",
+        "<b>13-savol</b>\n🏢 Oldingi ish joyingizda qancha ishlagansiz?",
         reply_markup=kb.apply_prev_years_kb(),
     )
 
@@ -433,7 +462,7 @@ async def a_prev(message: Message, state: FSMContext):
     await state.update_data(prev_years=message.text.strip())
     await state.set_state(Apply.criminal)
     await message.answer(
-        "<b>13-savol</b>\n⚖️ Sudlanganmisiz?",
+        "<b>14-savol</b>\n⚖️ Sudlanganmisiz?",
         reply_markup=kb.apply_criminal_kb(),
     )
 
@@ -444,7 +473,7 @@ async def a_criminal(message: Message, state: FSMContext):
     await state.update_data(criminal=message.text.strip())
     await state.set_state(Apply.marital)
     await message.answer(
-        "<b>14-savol</b>\n👨‍👩‍👧 Oilaviy holatingizni tanlang.",
+        "<b>15-savol</b>\n👨‍👩‍👧 Oilaviy holatingizni tanlang.",
         reply_markup=kb.apply_marital_kb(),
     )
 
@@ -466,7 +495,7 @@ async def a_children(message: Message, state: FSMContext):
     await state.update_data(children=message.text.strip())
     await state.set_state(Apply.prev_salary)
     await message.answer(
-        "<b>15-savol</b>\n💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?\n"
+        "<b>16-savol</b>\n💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?\n"
         "Misol: <i>2 000 000 so'm</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -478,7 +507,7 @@ async def a_prevsalary(message: Message, state: FSMContext):
     await state.update_data(prev_salary=message.text.strip())
     await state.set_state(Apply.expected_salary)
     await message.answer(
-        "<b>16-savol</b>\n💵 Qancha maoshga ishlashni xohlaysiz?\n"
+        "<b>17-savol</b>\n💵 Qancha maoshga ishlashni xohlaysiz?\n"
         "Misol: <i>3 000 000 so'm</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -490,7 +519,7 @@ async def a_expsalary(message: Message, state: FSMContext):
     await state.update_data(expected_salary=message.text.strip())
     await state.set_state(Apply.computer_level)
     await message.answer(
-        "<b>17-savol</b>\n💻 Kompyuter savodxonligingiz bormi?",
+        "<b>18-savol</b>\n💻 Kompyuter savodxonligingiz bormi?",
         reply_markup=kb.apply_computer_kb(),
     )
 
@@ -508,7 +537,7 @@ async def a_computer(message: Message, state: FSMContext):
     await state.update_data(computer_level=text)
     await state.set_state(Apply.languages)
     await message.answer(
-        "<b>18-savol</b>\n🌍 Qaysi tillarni bilasiz?\n"
+        "<b>19-savol</b>\n🌍 Qaysi tillarni bilasiz?\n"
         "Misol: <i>O'zbek - A'lo, Rus - O'rtacha, Ingliz - Boshlang'ich</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -520,7 +549,7 @@ async def a_languages(message: Message, state: FSMContext):
     await state.update_data(languages=message.text.strip())
     await state.set_state(Apply.work_intent)
     await message.answer(
-        "<b>19-savol</b>\n📅 «Gulnora Farm»da qancha muddat ishlash niyatingiz bor?",
+        "<b>20-savol</b>\n📅 «Gulnora Farm»da qancha muddat ishlash niyatingiz bor?",
         reply_markup=kb.apply_work_intent_kb(),
     )
 
@@ -531,7 +560,7 @@ async def a_intent(message: Message, state: FSMContext):
     await state.update_data(work_intent=message.text.strip())
     await state.set_state(Apply.reason)
     await message.answer(
-        "<b>20-savol</b>\n✍️ Nima uchun aynan Gulnora Farmda ishlashni xohlaysiz?\n"
+        "<b>21-savol</b>\n✍️ Nima uchun aynan Gulnora Farmda ishlashni xohlaysiz?\n"
         "Misol: <i>Jamoasi yaxshi, rivojlanish imkoniyati bor.</i>",
         reply_markup=kb.cancel_kb(),
     )
@@ -543,7 +572,7 @@ async def a_reason(message: Message, state: FSMContext):
     await state.update_data(reason=message.text.strip())
     await state.set_state(Apply.phone)
     await message.answer(
-        "<b>21-savol</b>\n" + PHONE_ASK,
+        "<b>22-savol</b>\n" + PHONE_ASK,
         reply_markup=kb.apply_phone_kb(),
     )
 
@@ -576,7 +605,7 @@ async def _ask_photo(message: Message, state: FSMContext):
     """Oxirgi 10 kunda tushgan rasm — majburiy."""
     await state.set_state(Apply.photo)
     await message.answer(
-        "<b>22-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
+        "<b>23-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
         "rasmingizni yuboring.\n\n"
         "<i>Rasm aniq va yaqinda olingan bo'lishi shart. Bu majburiy bosqich.</i>",
         reply_markup=kb.cancel_kb(),
@@ -602,7 +631,7 @@ async def a_photo_invalid(message: Message):
 async def _ask_resume(message: Message, state: FSMContext):
     await state.set_state(Apply.resume)
     await message.answer(
-        "<b>23-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
+        "<b>24-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
         "Faylni yuboring yoki «⏭️ O'tkazib yuborish» tugmasini bosing.",
         reply_markup=kb.apply_resume_kb(),
     )
@@ -855,7 +884,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
 
     user = await q.get_user(call.from_user.id)
     db_fields = [
-        "full_name", "birth_date", "city", "district", "address", "position",
+        "full_name", "birth_date", "gender", "city", "district", "address", "position",
         "position_extra", "uniform_status", "shift", "education", "exp_years",
         "prev_years", "criminal", "marital", "children", "prev_salary",
         "expected_salary", "computer_level", "languages",
