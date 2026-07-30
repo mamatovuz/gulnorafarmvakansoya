@@ -12,6 +12,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER
 from states import DayoffForm
 import keyboards as kb
+from i18n import t, tf
 from utils import safe_send, broadcast_request, close_request_notices
 
 router = Router()
@@ -32,7 +33,7 @@ def _req_text(r):
 
 
 # ---------------- XODIM: SO'ROV YUBORISH ----------------
-@router.message(F.text == "🔄 Dam olish kunini almashtirish")
+@router.message(tf("btn.dayoff"))
 async def dayoff_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:

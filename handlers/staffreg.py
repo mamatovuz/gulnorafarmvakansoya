@@ -18,6 +18,7 @@ from database.db import (
 )
 from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
+from i18n import t, tf
 from utils import (
     safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
     post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE, broadcast_request,
@@ -125,19 +126,20 @@ UPDATE_INTRO = (
 )
 
 
-async def _begin_staff_form(message: Message, state: FSMContext, update_mode=False):
+async def _begin_staff_form(message: Message, state: FSMContext, update_mode=False,
+                            lang=None):
     await state.clear()
     await state.update_data(_update_mode=update_mode)
     await state.set_state(StaffReg.full_name)
     await message.answer(
-        UPDATE_INTRO if update_mode else REG_INTRO,
-        reply_markup=kb.staff_photo_kb(),  # faqat Bekor qilish tugmasi
+        UPDATE_INTRO if update_mode else t("sreg.intro", lang),
+        reply_markup=kb.staff_photo_kb(lang),  # faqat Bekor qilish tugmasi
     )
 
 
-@router.message(F.text == "🏢 Gulnora Farm hodimi")
-async def staff_reg_start(message: Message, state: FSMContext):
-    await _begin_staff_form(message, state, update_mode=False)
+@router.message(tf("btn.staffreg"))
+async def staff_reg_start(message: Message, state: FSMContext, lang: str = None):
+    await _begin_staff_form(message, state, update_mode=False, lang=lang)
 
 
 @router.callback_query(F.data == "profupd_start")
@@ -161,8 +163,8 @@ async def staff_update_start(call: CallbackQuery, state: FSMContext):
     StaffReg.address, StaffReg.branch, StaffReg.shift, StaffReg.work_hours,
     StaffReg.salary, StaffReg.rest_day, StaffReg.uniform, StaffReg.education,
     StaffReg.since, StaffReg.extra, StaffReg.photo,
-), F.text == kb.CANCEL_BTN)
-async def staff_reg_cancel(message: Message, state: FSMContext):
+), F.text.in_(kb.CANCEL_BUTTONS))
+async def staff_reg_cancel(message: Message, state: FSMContext, lang: str = None):
     data = await state.get_data()
     update_mode = bool(data.get("_update_mode"))
     await state.clear()
@@ -174,71 +176,68 @@ async def staff_reg_cancel(message: Message, state: FSMContext):
         return
     user = await q.get_user(message.from_user.id)
     await message.answer(
-        "❌ Ro'yxatdan o'tish bekor qilindi.",
-        reply_markup=kb.main_menu(user["role"] if user else "candidate"),
+        t("sreg.cancelled", lang),
+        reply_markup=kb.main_menu(user["role"] if user else "candidate", lang=lang),
     )
 
 
 # 1) Ism-familiya
 @router.message(StaffReg.full_name, F.text)
-async def sr_name(message: Message, state: FSMContext):
+async def sr_name(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(full_name=message.text.strip())
     await state.set_state(StaffReg.birth_date)
     await message.answer(
-        "<b>2-savol</b>\n📅 Tug'ilgan sanangizni kiriting.\n"
-        "Format: <b>kun.oy.yil</b>\nMisol: <i>29.08.1995</i>",
-        reply_markup=kb.staff_photo_kb(),
+        f"{t('apply.q_num', lang, n=2)}\n{t('sreg.birth', lang)}",
+        reply_markup=kb.staff_photo_kb(lang),
     )
 
 
 # 2) Tug'ilgan sana
 @router.message(StaffReg.birth_date, F.text)
-async def sr_birth(message: Message, state: FSMContext):
+async def sr_birth(message: Message, state: FSMContext, lang: str = None):
     norm = parse_birthdate(message.text)
     if not norm:
         await message.answer(
-            "❗️ Sana noto'g'ri. <b>kun.oy.yil</b> ko'rinishida kiriting. Misol: <i>29.08.1995</i>",
-            reply_markup=kb.staff_photo_kb(),
+            t("apply.birth_bad", lang),
+            reply_markup=kb.staff_photo_kb(lang),
         )
         return
     await state.update_data(birth_date=norm)
     await state.set_state(StaffReg.phone)
     await message.answer(
-        "<b>3-savol</b>\n📱 Telefon raqamingizni <b>qo'lda yozing</b>.\n"
-        "Faqat <b>bitta</b> raqam, <b>+998</b> bilan va orada bo'sh joysiz.\n"
-        "Misol: <code>+998932303410</code>",
-        reply_markup=kb.staff_photo_kb(),
+        f"{t('apply.q_num', lang, n=3)}\n{t('sreg.phone', lang)}",
+        reply_markup=kb.staff_photo_kb(lang),
     )
 
 
 # 3) Telefon raqam (qo'lda yoziladi) — faqat +998XXXXXXXXX
 @router.message(StaffReg.phone, F.text)
-async def sr_phone(message: Message, state: FSMContext):
+async def sr_phone(message: Message, state: FSMContext, lang: str = None):
     phone = normalize_phone(message.text)
     if not phone:
         await message.answer(
-            "❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT,
-            reply_markup=kb.staff_photo_kb(),
+            t("apply.phone_bad", lang),
+            reply_markup=kb.staff_photo_kb(lang),
         )
         return
     await state.update_data(phone=phone)
     await state.set_state(StaffReg.role)
     names = await q.list_position_names()
     await message.answer(
-        "<b>4-savol</b>\n💼 Qaysi yo'nalishda ishlaysiz? Tanlang:",
+        f"{t('apply.q_num', lang, n=4)}\n{t('sreg.role', lang)}",
         reply_markup=kb.staff_role_kb(names),
     )
 
 
 # 4) Rol / yo'nalish
 @router.message(StaffReg.role, F.text)
-async def sr_role(message: Message, state: FSMContext):
+async def sr_role(message: Message, state: FSMContext, lang: str = None):
     names = await q.list_position_names()
     mapping = {label: (role, pos) for label, role, pos in kb.staff_role_options(names)}
     got = mapping.get(message.text.strip())
     if not got:
         await message.answer(
-            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            t("common.pick_buttons", lang),
             reply_markup=kb.staff_role_kb(names),
         )
         return
@@ -246,39 +245,38 @@ async def sr_role(message: Message, state: FSMContext):
     await state.update_data(role=role, position=position)
     await state.set_state(StaffReg.address)
     await message.answer(
-        "<b>5-savol</b>\n🏠 Yashash manzilingizni yozing.\n"
-        "Misol: <i>Chilonzor tumani, 12-kvartal</i>",
-        reply_markup=kb.staff_photo_kb(),
+        f"{t('apply.q_num', lang, n=5)}\n{t('sreg.address', lang)}",
+        reply_markup=kb.staff_photo_kb(lang),
     )
 
 
 # 4) Manzil
 @router.message(StaffReg.address, F.text)
-async def sr_address(message: Message, state: FSMContext):
+async def sr_address(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(address=message.text.strip())
     branches = await q.list_branches()
     await state.set_state(StaffReg.branch)
     if branches:
         await message.answer(
-            "<b>6-savol</b>\n🏢 Qaysi filialda ishlaysiz? Tanlang:",
+            f"{t('apply.q_num', lang, n=6)}\n{t('sreg.branch', lang)}",
             reply_markup=kb.apply_branch_kb(branches),
         )
     else:
         await message.answer(
-            "<b>6-savol</b>\n🏢 Qaysi filialda ishlaysiz? Filial nomini yozing:",
-            reply_markup=kb.staff_photo_kb(),
+            f"{t('apply.q_num', lang, n=6)}\n{t('sreg.branch_write', lang)}",
+            reply_markup=kb.staff_photo_kb(lang),
         )
 
 
 # 5) Filial
 @router.message(StaffReg.branch, F.text)
-async def sr_branch(message: Message, state: FSMContext):
+async def sr_branch(message: Message, state: FSMContext, lang: str = None):
     branches = await q.list_branches()
     name, bid = resolve_branch(message.text, branches)
     await state.update_data(branch_name=name, branch_id=bid)
     await state.set_state(StaffReg.shift)
     await message.answer(
-        "<b>7-savol</b>\n🔀 Qaysi smenada ishlaysiz? Tanlang:\n\n"
+        f"{t('apply.q_num', lang, n=7)}\n{t('sreg.shift', lang)}\n\n"
         f"{kb.STAFF_SHIFT_DAY} — odatda 08:00 - 17:00\n"
         f"{kb.STAFF_SHIFT_NIGHT} — odatda 14:00 - 00:00\n"
         f"{kb.STAFF_SHIFT_DOUBLE} — ikkala smena",
@@ -288,35 +286,34 @@ async def sr_branch(message: Message, state: FSMContext):
 
 # 6) Smena
 @router.message(StaffReg.shift, F.text)
-async def sr_shift(message: Message, state: FSMContext):
+async def sr_shift(message: Message, state: FSMContext, lang: str = None):
     text = message.text.strip()
     valid = (kb.STAFF_SHIFT_DAY, kb.STAFF_SHIFT_NIGHT, kb.STAFF_SHIFT_DOUBLE)
     if text not in valid:
         await message.answer(
-            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
+            t("common.pick_buttons", lang),
             reply_markup=kb.staff_shift_kb(),
         )
         return
     await state.update_data(shift=text)
     await state.set_state(StaffReg.work_hours)
     await message.answer(
-        "<b>8-savol</b>\n🕒 Ish vaqtingiz nechidan nechigacha? Tayyor variantni tanlang "
-        "yoki «✏️ Boshqa vaqt (custom)» orqali o'zingiz yozing (masalan <i>09:00 - 18:00</i>):",
+        f"{t('apply.q_num', lang, n=8)}\n{t('sreg.work_hours', lang)}",
         reply_markup=kb.staff_work_hours_kb(text),
     )
 
 
 # 7) Ish vaqti
 @router.message(StaffReg.work_hours, F.text)
-async def sr_hours(message: Message, state: FSMContext):
+async def sr_hours(message: Message, state: FSMContext, lang: str = None):
     text = message.text.strip()
     data = await state.get_data()
     shift = data.get("shift")
     # «Boshqa vaqt» tugmasi bosilsa — foydalanuvchidan qo'lda yozishni so'raymiz
     if text == kb.STAFF_HOURS_CUSTOM:
         await message.answer(
-            "✏️ Ish vaqtingizni <b>qo'lda yozing</b>.\nMisol: <i>09:00 - 18:00</i>",
-            reply_markup=kb.staff_photo_kb(),
+            t("sreg.work_hours", lang),
+            reply_markup=kb.staff_photo_kb(lang),
         )
         return
     hours = (text.replace("🕘", "").replace("🕗", "").replace("🕙", "")
@@ -326,59 +323,59 @@ async def sr_hours(message: Message, state: FSMContext):
     await state.update_data(work_hours=f"{shift_prefix}{hours}")
     await state.set_state(StaffReg.salary)
     await message.answer(
-        "<b>9-savol</b>\n💰 Oyligingiz qancha?\nMisol: <i>4 000 000 so'm</i>",
-        reply_markup=kb.staff_photo_kb(),
+        f"{t('apply.q_num', lang, n=9)}\n{t('sreg.salary', lang)}",
+        reply_markup=kb.staff_photo_kb(lang),
     )
 
 
 # 7) Oylik
 @router.message(StaffReg.salary, F.text)
-async def sr_salary(message: Message, state: FSMContext):
+async def sr_salary(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(salary=message.text.strip())
     await state.set_state(StaffReg.rest_day)
     await message.answer(
-        "<b>10-savol</b>\n🛌 Haftaning qaysi kuni dam olasiz? Tanlang:",
-        reply_markup=kb.staff_rest_day_kb(),
+        f"{t('apply.q_num', lang, n=10)}\n{t('sreg.rest_day', lang)}",
+        reply_markup=kb.staff_rest_day_kb(lang),
     )
 
 
 # 8) Dam olish kuni
 @router.message(StaffReg.rest_day, F.text)
-async def sr_rest(message: Message, state: FSMContext):
-    await state.update_data(rest_day=message.text.strip())
+async def sr_rest(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(rest_day=canon("rest_day", message.text))
     await state.set_state(StaffReg.uniform)
     await message.answer(
-        "<b>11-savol</b>\n👕 Ish formangiz bormi?",
-        reply_markup=kb.apply_uniform_kb(),
+        f"{t('apply.q_num', lang, n=11)}\n{t('sreg.uniform', lang)}",
+        reply_markup=kb.apply_uniform_kb(lang),
     )
 
 
 # 9) Forma
 @router.message(StaffReg.uniform, F.text)
-async def sr_uniform(message: Message, state: FSMContext):
+async def sr_uniform(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(uniform_status=uniform_status_from_text(message.text))
     await state.set_state(StaffReg.education)
     await message.answer(
-        "<b>12-savol</b>\n🎓 Ma'lumotingiz qanday? Tanlang:",
-        reply_markup=kb.staff_education_kb(),
+        f"{t('apply.q_num', lang, n=12)}\n{t('sreg.education', lang)}",
+        reply_markup=kb.staff_education_kb(lang),
     )
 
 
 # 9b) Ma'lumoti / diplomi
 @router.message(StaffReg.education, F.text)
-async def sr_education(message: Message, state: FSMContext):
-    text = message.text.strip()
+async def sr_education(message: Message, state: FSMContext, lang: str = None):
+    text = canon("education", message.text)
     if text not in kb.STAFF_EDUCATION:
         await message.answer(
-            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
-            reply_markup=kb.staff_education_kb(),
+            t("common.pick_buttons", lang),
+            reply_markup=kb.staff_education_kb(lang),
         )
         return
     await state.update_data(education=text)
     await state.set_state(StaffReg.since)
     await message.answer(
-        "<b>13-savol</b>\n⏳ Necha yildan beri Gulnora Farmda ishlaysiz?",
-        reply_markup=kb.staff_since_kb(),
+        f"{t('apply.q_num', lang, n=13)}\n{t('sreg.since', lang)}",
+        reply_markup=kb.staff_since_kb(lang),
     )
 
 

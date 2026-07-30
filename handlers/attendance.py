@@ -13,6 +13,7 @@ from database.db import (
 )
 from states import AttendanceForm
 import keyboards as kb
+from i18n import t, tf
 from utils import (
     haversine_m, employee_profile_text, safe_send, now_tk_hm, fmt_duration,
     send_employee_profile,
@@ -74,7 +75,7 @@ async def _no_open_shift_reason(tg_id):
 
 
 # ================= ISHGA KELDIM (CHECK-IN) =================
-@router.message(F.text == "📍 Ishga keldim")
+@router.message(tf("btn.checkin"))
 async def checkin_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:
@@ -177,7 +178,7 @@ async def checkin_need_location(message: Message):
 
 
 # ================= ISHDAN KETDIM (CHECK-OUT) =================
-@router.message(F.text == "🏁 Ishdan ketdim")
+@router.message(tf("btn.checkout"))
 async def checkout_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:
@@ -252,7 +253,7 @@ async def checkout_need_location(message: Message):
 
 
 # ================= TANAFFUS (BREAK) =================
-@router.message(F.text == "⏸ Tanaffus")
+@router.message(tf("btn.break"))
 async def break_start(message: Message, state: FSMContext):
     # Yarim qolgan boshqa oqim tanaffusga xalaqit qilmasin
     await state.clear()
@@ -277,7 +278,7 @@ async def break_start(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "▶️ Ishni davom ettirish")
+@router.message(tf("btn.resume"))
 async def break_end(message: Message, state: FSMContext):
     await state.clear()
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
@@ -404,7 +405,7 @@ async def break_report_cb(call: CallbackQuery):
 
 
 # ================= MENING PROFILIM (xodim) =================
-@router.message(F.text == "👤 Mening profilim")
+@router.message(tf("btn.profile"))
 async def my_profile(message: Message):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:

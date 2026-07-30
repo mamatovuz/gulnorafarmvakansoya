@@ -19,6 +19,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import WorkHoursForm, HRMessageForm
 import keyboards as kb
+from i18n import t, variants
 from utils import safe_send, broadcast_request, close_request_notices
 from handlers.salaryraise import start_raise_flow
 
@@ -103,7 +104,7 @@ def _hr_request_text(req):
 # ================= XODIM: MUROJAAT MENYUSI =================
 # Eski «💸 HR ga so'rov» tugmasi ham shu menyuni ochadi — foydalanuvchilarda
 # klaviatura /start bosilgunicha eskiligicha qolishi mumkin.
-@router.message(F.text.in_({kb.HR_REQUEST_BTN, "💸 HR ga so'rov"}))
+@router.message(F.text.in_(variants("btn.hr_request") | {"💸 HR ga so'rov"}))
 async def hr_request_menu(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     if not profile:

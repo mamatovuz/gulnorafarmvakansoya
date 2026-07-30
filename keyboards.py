@@ -308,18 +308,20 @@ def apply_position_extra_kb(position, lang=None):
     return _group_kb("experience", row=2, lang=lang)
 
 
-def apply_phone_kb():
+def apply_phone_kb(lang=None):
     b = ReplyKeyboardBuilder()
-    b.button(text="📲 Telefon raqamni yuborish", request_contact=True)
-    b.button(text=CANCEL_BTN)
+    share = ("📲 Отправить номер телефона" if (lang or "uz") == "ru"
+             else "📲 Telefon raqamni yuborish")
+    b.button(text=share, request_contact=True)
+    b.button(text=cancel_text(lang))
     b.adjust(1)
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
-def apply_resume_kb():
+def apply_resume_kb(lang=None):
     b = ReplyKeyboardBuilder()
-    b.button(text="⏭️ O'tkazib yuborish")
-    b.button(text=CANCEL_BTN)
+    b.button(text=t("btn.skip", lang))
+    b.button(text=cancel_text(lang))
     b.adjust(1)
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
@@ -1493,16 +1495,8 @@ def staff_work_hours_kb(shift=None):
     return _choices(options, row=2)
 
 
-def staff_rest_day_kb():
-    b = ReplyKeyboardBuilder()
-    for day in [
-        "Dushanba", "Seshanba", "Chorshanba", "Payshanba",
-        "Juma", "Shanba", "Yakshanba", "Dam olishsiz",
-    ]:
-        b.button(text=day)
-    b.button(text=CANCEL_BTN)
-    b.adjust(2)
-    return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+def staff_rest_day_kb(lang=None):
+    return _group_kb("rest_day", row=2, lang=lang)
 
 
 # ---------------- MA'LUMOT (DIPLOM) TURLARI ----------------
@@ -1533,15 +1527,13 @@ def apply_education_kb(lang=None):
     return _group_kb("education", row=1, lang=lang)
 
 
-def staff_since_kb():
-    return _choices(
-        ["🟡 1 yildan kam", "🟠 1-3 yil", "🟢 3-5 yil", "🔵 5+ yil"], row=2
-    )
+def staff_since_kb(lang=None):
+    return _group_kb("since", row=2, lang=lang)
 
 
-def staff_photo_kb():
+def staff_photo_kb(lang=None):
     b = ReplyKeyboardBuilder()
-    b.button(text=CANCEL_BTN)
+    b.button(text=cancel_text(lang))
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 

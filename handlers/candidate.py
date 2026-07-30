@@ -10,6 +10,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ST_NEW
 from states import Apply, RescheduleForm, SalaryNegoForm
 import keyboards as kb
+from i18n import t, tf, canon, norm_lang
 from utils import (
     vacancy_text, application_text, application_summary, safe_send,
     send_application_resume, send_application_photo, best_vacancy_matches,
@@ -28,7 +29,7 @@ PHONE_ASK = (
 
 
 # ---------------- VAKANSIYALARNI KO'RISH ----------------
-@router.message(F.text == "💼 Vakansiyalar")
+@router.message(tf("btn.vacancies"))
 async def show_vacancies(message: Message):
     user = await q.get_user(message.from_user.id)
     # HR/Admin uchun shu tugma boshqaruv ro'yxatini ochadi — tahrirlash, yopish, o'chirish
@@ -138,24 +139,33 @@ def uniform_status_from_text(text):
     return "unknown"
 
 
-def position_extra_prompt(position):
+def q_head(n, lang=None):
+    """«N-savol» / «Вопрос N» sarlavhasi."""
+    return t("apply.q_num", lang, n=n)
+
+
+def position_extra_prompt(position, lang=None):
+    head = q_head(9, lang)
     p = (position or "").lower()
+    ru = norm_lang(lang) == "ru"
     if "farm" in p:
-        return (
-            "<b>9-savol</b>\n💊 Farmatsevtlik bo'yicha hujjatingiz yoki "
-            "sertifikatingiz holatini tanlang."
-        )
-    if "filial rahbari" in p:
-        return (
-            "<b>9-savol</b>\n🏢 Oldin nechta xodimdan iborat jamoani "
-            "boshqargansiz?"
-        )
-    if "direktor" in p or "director" in p:
-        return "<b>9-savol</b>\n👔 Direktor sifatida boshqaruv tajribangiz qancha?"
-    return f"<b>9-savol</b>\n💼 «{position}» bo'yicha ish tajribangizni tanlang."
+        body = ("💊 Выберите статус вашего фармацевтического документа или "
+                "сертификата." if ru else
+                "💊 Farmatsevtlik bo'yicha hujjatingiz yoki sertifikatingiz "
+                "holatini tanlang.")
+    elif "filial rahbari" in p:
+        body = ("🏢 Командой из скольких сотрудников вы руководили ранее?" if ru else
+                "🏢 Oldin nechta xodimdan iborat jamoani boshqargansiz?")
+    elif "direktor" in p or "director" in p:
+        body = ("👔 Каков ваш управленческий опыт в должности директора?" if ru else
+                "👔 Direktor sifatida boshqaruv tajribangiz qancha?")
+    else:
+        body = (f"💼 Выберите ваш опыт работы по направлению «{position}»." if ru else
+                f"💼 «{position}» bo'yicha ish tajribangizni tanlang.")
+    return f"{head}\n{body}"
 
 
-async def _start_apply(message: Message, state: FSMContext, vacancy=None):
+async def _start_apply(message: Message, state: FSMContext, vacancy=None, lang=None):
     await state.clear()
     if vacancy:
         # Vakansiyadan kirilganda filial va lavozim oldindan to'ldiriladi
@@ -169,16 +179,17 @@ async def _start_apply(message: Message, state: FSMContext, vacancy=None):
     else:
         await state.update_data(_vacancy_id=None, _from_vacancy=False)
     await state.set_state(Apply.full_name)
-    await message.answer(INTRO, reply_markup=kb.cancel_kb())
+    await message.answer(t("apply.intro", lang), reply_markup=kb.cancel_kb(lang))
 
 
 # Menyu tugmasi
-@router.message(F.text == "📝 Ishga ariza topshirish")
-async def apply_menu(message: Message, state: FSMContext):
-    await _start_apply(message, state)
+@router.message(tf("btn.apply"))
+async def apply_menu(message: Message, state: FSMContext, lang: str = None):
+    await _start_apply(message, state, lang=lang)
 
 
-async def start_apply_from_deeplink(message: Message, state: FSMContext, payload):
+async def start_apply_from_deeplink(message: Message, state: FSMContext, payload,
+                                    lang=None):
     """Kanaldagi «📝 Ishga ariza yuborish» tugmasidan kelingan `/start vac_<id>`.
 
     Anketa o'sha vakansiya uchun (filial va lavozim to'ldirilgan holda)
@@ -200,20 +211,20 @@ async def start_apply_from_deeplink(message: Message, state: FSMContext, payload
         f"💼 <b>{v['title']}</b> — {v.get('branch_name') or 'filial'}\n"
         "Ariza topshirish uchun quyidagi savollarga javob bering."
     )
-    await _start_apply(message, state, vacancy=v)
+    await _start_apply(message, state, vacancy=v, lang=lang)
     return True
 
 
 # Vakansiya ichidan "Ariza topshirish"
 @router.callback_query(F.data.startswith("apply:"))
-async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
+async def apply_from_vacancy(call: CallbackQuery, state: FSMContext, lang: str = None):
     vid = int(call.data.split(":")[1])
     v = await q.get_vacancy(vid)
     if not v or not v["is_active"]:
         await call.answer("Vakansiya endi mavjud emas.", show_alert=True)
         return
     await call.answer()
-    await _start_apply(call.message, state, vacancy=v)
+    await _start_apply(call.message, state, vacancy=v, lang=lang)
 
 
 # --- BEKOR QILISH (istalgan bosqichda) ---
@@ -226,114 +237,106 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext):
     Apply.computer_level, Apply.languages, Apply.work_intent,
     Apply.reason, Apply.phone, Apply.photo, Apply.resume, Apply.edit_field,
     Apply.edit_photo,
-), F.text == kb.CANCEL_BTN)
-async def apply_cancel(message: Message, state: FSMContext):
+), F.text.in_(kb.CANCEL_BUTTONS))
+async def apply_cancel(message: Message, state: FSMContext, lang: str = None):
     await state.clear()
     user = await q.get_user(message.from_user.id)
     has_applied = bool(user) and await q.count_applications(user["id"]) > 0
     await message.answer(
-        "❌ Ariza bekor qilindi.",
-        reply_markup=kb.main_menu(user["role"] if user else "candidate", has_applied),
+        t("apply.cancelled", lang),
+        reply_markup=kb.main_menu(user["role"] if user else "candidate",
+                                  has_applied, lang),
     )
 
 
 # 1) Ism
 @router.message(Apply.full_name, F.text)
-async def a_name(message: Message, state: FSMContext):
+async def a_name(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(full_name=message.text.strip())
     await state.set_state(Apply.birth_date)
     await message.answer(
-        "<b>2-savol</b>\n📅 Tug'ilgan sanangizni kiriting.\n"
-        "Format: <b>kun.oy.yil</b>\nMisol: <i>29.08.2009</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(2, lang)}\n{t('apply.birth', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
 # 2) Tug'ilgan sana
 @router.message(Apply.birth_date, F.text)
-async def a_birth(message: Message, state: FSMContext):
+async def a_birth(message: Message, state: FSMContext, lang: str = None):
     normalized = parse_birthdate(message.text)
     if not normalized:
         await message.answer(
-            "❗️ Sana noto'g'ri. Iltimos <b>kun.oy.yil</b> ko'rinishida kiriting.\n"
-            "Misol: <i>29.08.2009</i>",
-            reply_markup=kb.cancel_kb(),
+            t("apply.birth_bad", lang), reply_markup=kb.cancel_kb(lang)
         )
         return
     await state.update_data(birth_date=normalized)
     await state.set_state(Apply.gender)
     await message.answer(
-        "<b>3-savol</b>\n🚻 Jinsingizni tanlang.",
-        reply_markup=kb.apply_gender_kb(),
+        f"{q_head(3, lang)}\n{t('apply.gender', lang)}",
+        reply_markup=kb.apply_gender_kb(lang),
     )
 
 
 # 3) Jins — vakansiyaga moslikni aniqlashda ishlatiladi
 @router.message(Apply.gender, F.text)
-async def a_gender(message: Message, state: FSMContext):
+async def a_gender(message: Message, state: FSMContext, lang: str = None):
     gender = gender_from_text(message.text)
     if not gender:
         await message.answer(
-            "❗️ Jinsni <b>tugmalardan</b> tanlang — bu savol majburiy.",
-            reply_markup=kb.apply_gender_kb(),
+            t("apply.gender_bad", lang), reply_markup=kb.apply_gender_kb(lang)
         )
         return
     await state.update_data(gender=gender)
     await state.set_state(Apply.city)
     await message.answer(
-        "<b>4-savol</b>\n🌆 Qaysi shahar/viloyatda yashaysiz?",
+        f"{q_head(4, lang)}\n{t('apply.city', lang)}",
         reply_markup=kb.apply_city_kb(),
     )
 
 
-# 3) Shahar/viloyat
+# 4) Shahar/viloyat
 @router.message(Apply.city, F.text)
-async def a_city(message: Message, state: FSMContext):
+async def a_city(message: Message, state: FSMContext, lang: str = None):
     city = message.text.strip()
     if len(city) < 3:
         await message.answer(
-            "❗️ Shahar/viloyatni <b>ro'yxatdan tanlang</b> — bu savol majburiy.",
-            reply_markup=kb.apply_city_kb(),
+            t("apply.city_bad", lang), reply_markup=kb.apply_city_kb()
         )
         return
     await state.update_data(city=city)
     await state.set_state(Apply.district)
     await message.answer(
-        "<b>5-savol</b>\n📍 Tumaningizni tanlang.",
+        f"{q_head(5, lang)}\n{t('apply.district', lang)}",
         reply_markup=kb.apply_district_kb(city),
     )
 
 
-# 4) Tuman
+# 5) Tuman
 @router.message(Apply.district, F.text)
-async def a_district(message: Message, state: FSMContext):
+async def a_district(message: Message, state: FSMContext, lang: str = None):
     district = message.text.strip()
     if len(district) < 3:
         data = await state.get_data()
         await message.answer(
-            "❗️ Tumanni <b>ro'yxatdan tanlang</b> yoki to'liq yozing — "
-            "bu savol majburiy.",
+            t("apply.district_bad", lang),
             reply_markup=kb.apply_district_kb(data.get("city")),
         )
         return
     await state.update_data(district=district)
     await state.set_state(Apply.address)
     await message.answer(
-        "<b>6-savol</b>\n🏠 Aniq manzilingizni yuboring.\n"
-        "Misol: <i>Xursandlik MFY, 37-uy</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(6, lang)}\n{t('apply.address', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
-# 5) Aniq manzil
+# 6) Aniq manzil
 @router.message(Apply.address, F.text)
-async def a_address(message: Message, state: FSMContext):
+async def a_address(message: Message, state: FSMContext, lang: str = None):
     address = message.text.strip()
     if len(address) < 5:
         await message.answer(
-            "❗️ Manzilni <b>to'liqroq</b> yozing (kamida 5 ta belgi) — "
-            "bu savol majburiy.\nMisol: <i>Xursandlik MFY, 37-uy</i>",
-            reply_markup=kb.cancel_kb(),
+            t("apply.address_bad", lang), reply_markup=kb.cancel_kb(lang)
         )
         return
     await state.update_data(address=address)
@@ -341,338 +344,331 @@ async def a_address(message: Message, state: FSMContext):
     # Vakansiyadan kirilgan bo'lsa filial allaqachon bor — lekin faqat
     # vakansiyada filial ko'rsatilgan bo'lsa. Aks holda filial so'raladi.
     if data.get("_from_vacancy") and data.get("_branch_id"):
-        await _ask_position_extra(message, state)
+        await _ask_position_extra(message, state, lang)
         return
-    await _ask_branch(message, state)
+    await _ask_branch(message, state, lang)
 
 
-async def _ask_branch(message: Message, state: FSMContext):
+async def _ask_branch(message: Message, state: FSMContext, lang=None):
     branches = await q.list_branches()
     await state.set_state(Apply.branch)
     if branches:
         await message.answer(
-            "<b>7-savol</b>\n🏢 Ishlamoqchi bo'lgan filialni tanlang.",
+            f"{q_head(7, lang)}\n{t('apply.branch', lang)}",
             reply_markup=kb.apply_branch_kb(branches),
         )
     else:
         await message.answer(
-            "<b>7-savol</b>\n🏢 Ishlamoqchi bo'lgan filial nomini yozing:",
-            reply_markup=kb.cancel_kb(),
+            f"{q_head(7, lang)}\n{t('apply.branch_write', lang)}",
+            reply_markup=kb.cancel_kb(lang),
         )
 
 
-# 6) Filial
+# 7) Filial
 @router.message(Apply.branch, F.text)
-async def a_branch(message: Message, state: FSMContext):
+async def a_branch(message: Message, state: FSMContext, lang: str = None):
     branches = await q.list_branches()
     name, bid = resolve_branch(message.text, branches)
     # Filial ro'yxatdagi filialga to'g'ri kelmasa — qayta so'raymiz.
     # (Aks holda ariza filialsiz ketib, moslik filtri ishlamay qolardi.)
     if branches and not bid:
         await message.answer(
-            "❗️ Bunday filial topilmadi. Iltimos, <b>quyidagi tugmalardan</b> "
-            "birini tanlang — filial majburiy.",
+            t("apply.branch_bad", lang),
             reply_markup=kb.apply_branch_kb(branches),
         )
         return
     if not branches and len(name) < 3:
         await message.answer(
-            "❗️ Filial nomini to'liq yozing — bu savol majburiy.",
-            reply_markup=kb.cancel_kb(),
+            t("apply.branch_bad", lang), reply_markup=kb.cancel_kb(lang)
         )
         return
     await state.update_data(branch=name, _branch_id=bid)
     await state.set_state(Apply.position)
     positions = await q.list_position_names()
     await message.answer(
-        "<b>8-savol</b>\n💼 Qaysi yo'nalish bo'yicha ishga kirmoqchisiz?",
+        f"{q_head(8, lang)}\n{t('apply.position', lang)}",
         reply_markup=kb.apply_position_kb(positions),
     )
 
 
-# 7) Lavozim
+# 8) Lavozim
 @router.message(Apply.position, F.text)
-async def a_position(message: Message, state: FSMContext):
+async def a_position(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(position=message.text.strip())
-    await _ask_position_extra(message, state)
+    await _ask_position_extra(message, state, lang)
 
 
-async def _ask_position_extra(message: Message, state: FSMContext):
+async def _ask_position_extra(message: Message, state: FSMContext, lang=None):
     data = await state.get_data()
     position = data.get("position")
     await state.set_state(Apply.position_extra)
     await message.answer(
-        position_extra_prompt(position),
-        reply_markup=kb.apply_position_extra_kb(position),
+        position_extra_prompt(position, lang),
+        reply_markup=kb.apply_position_extra_kb(position, lang),
     )
 
 
+# 9) Lavozim savoli
 @router.message(Apply.position_extra, F.text)
-async def a_position_extra(message: Message, state: FSMContext):
-    await state.update_data(position_extra=message.text.strip())
+async def a_position_extra(message: Message, state: FSMContext, lang: str = None):
+    # Ma'lumot ro'yxatidan tanlangan bo'lsa — kanonik (uz) qiymatga qaytaramiz
+    await state.update_data(position_extra=canon("education", message.text))
     # Forma savoli ishga arizada so'ralmaydi (u faqat «Gulnora Farm hodimi»da).
     await state.update_data(uniform_status="unknown")
-    await _ask_shift(message, state)
+    await _ask_shift(message, state, lang)
 
 
-async def _ask_shift(message: Message, state: FSMContext):
+async def _ask_shift(message: Message, state: FSMContext, lang=None):
     await state.set_state(Apply.shift)
     await message.answer(
-        "<b>10-savol</b>\n🕒 Qaysi smenada ishlay olasiz?",
-        reply_markup=kb.apply_shift_kb(),
+        f"{q_head(10, lang)}\n{t('apply.shift', lang)}",
+        reply_markup=kb.apply_shift_kb(lang),
     )
 
 
-# 6) Smena
+# 10) Smena
 @router.message(Apply.shift, F.text)
-async def a_shift(message: Message, state: FSMContext):
-    await state.update_data(shift=message.text.strip())
+async def a_shift(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(shift=canon("shift", message.text))
     await state.set_state(Apply.education)
     await message.answer(
-        "<b>11-savol</b>\n🎓 Ma'lumot darajangizni tanlang.",
-        reply_markup=kb.apply_education_kb(),
+        f"{q_head(11, lang)}\n{t('apply.education', lang)}",
+        reply_markup=kb.apply_education_kb(lang),
     )
 
 
-# 7) Ma'lumot
+# 11) Ma'lumot
 @router.message(Apply.education, F.text)
-async def a_education(message: Message, state: FSMContext):
-    await state.update_data(education=message.text.strip())
+async def a_education(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(education=canon("education", message.text))
     await state.set_state(Apply.exp_years)
     await message.answer(
-        "<b>12-savol</b>\n💼 Umumiy ish tajribangiz qancha?",
-        reply_markup=kb.apply_experience_kb(),
+        f"{q_head(12, lang)}\n{t('apply.exp', lang)}",
+        reply_markup=kb.apply_experience_kb(lang),
     )
 
 
-# 8) Umumiy tajriba
+# 12) Umumiy tajriba
 @router.message(Apply.exp_years, F.text)
-async def a_exp(message: Message, state: FSMContext):
-    await state.update_data(exp_years=message.text.strip())
+async def a_exp(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(exp_years=canon("experience", message.text))
     await state.set_state(Apply.prev_years)
     await message.answer(
-        "<b>13-savol</b>\n🏢 Oldingi ish joyingizda qancha ishlagansiz?",
-        reply_markup=kb.apply_prev_years_kb(),
+        f"{q_head(13, lang)}\n{t('apply.prev_years', lang)}",
+        reply_markup=kb.apply_prev_years_kb(lang),
     )
 
 
-# 9) Oldingi ish joyi yili
+# 13) Oldingi ish joyi yili
 @router.message(Apply.prev_years, F.text)
-async def a_prev(message: Message, state: FSMContext):
-    await state.update_data(prev_years=message.text.strip())
+async def a_prev(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(prev_years=canon("prev_years", message.text))
     await state.set_state(Apply.criminal)
     await message.answer(
-        "<b>14-savol</b>\n⚖️ Sudlanganmisiz?",
-        reply_markup=kb.apply_criminal_kb(),
+        f"{q_head(14, lang)}\n{t('apply.criminal', lang)}",
+        reply_markup=kb.apply_criminal_kb(lang),
     )
 
 
-# 10) Sudlanganlik
+# 14) Sudlanganlik
 @router.message(Apply.criminal, F.text)
-async def a_criminal(message: Message, state: FSMContext):
-    await state.update_data(criminal=message.text.strip())
+async def a_criminal(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(criminal=canon("criminal", message.text))
     await state.set_state(Apply.marital)
     await message.answer(
-        "<b>15-savol</b>\n👨‍👩‍👧 Oilaviy holatingizni tanlang.",
-        reply_markup=kb.apply_marital_kb(),
+        f"{q_head(15, lang)}\n{t('apply.marital', lang)}",
+        reply_markup=kb.apply_marital_kb(lang),
     )
 
 
-# 11) Oilaviy holat
+# 15) Oilaviy holat
 @router.message(Apply.marital, F.text)
-async def a_marital(message: Message, state: FSMContext):
-    await state.update_data(marital=message.text.strip())
+async def a_marital(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(marital=canon("marital", message.text))
     await state.set_state(Apply.children)
     await message.answer(
-        "👶 Farzandlaringiz bormi?",
-        reply_markup=kb.apply_children_kb(),
+        t("apply.children", lang), reply_markup=kb.apply_children_kb(lang)
     )
 
 
-# 11b) Farzandlar
+# 15b) Farzandlar
 @router.message(Apply.children, F.text)
-async def a_children(message: Message, state: FSMContext):
-    await state.update_data(children=message.text.strip())
+async def a_children(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(children=canon("children", message.text))
     await state.set_state(Apply.prev_salary)
     await message.answer(
-        "<b>16-savol</b>\n💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?\n"
-        "Misol: <i>2 000 000 so'm</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(16, lang)}\n{t('apply.prev_salary', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
-# 12) Oldingi maosh
+# 16) Oldingi maosh
 @router.message(Apply.prev_salary, F.text)
-async def a_prevsalary(message: Message, state: FSMContext):
+async def a_prevsalary(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(prev_salary=message.text.strip())
     await state.set_state(Apply.expected_salary)
     await message.answer(
-        "<b>17-savol</b>\n💵 Qancha maoshga ishlashni xohlaysiz?\n"
-        "Misol: <i>3 000 000 so'm</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(17, lang)}\n{t('apply.expected_salary', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
-# 13) Kutilayotgan maosh
+# 17) Kutilayotgan maosh
 @router.message(Apply.expected_salary, F.text)
-async def a_expsalary(message: Message, state: FSMContext):
+async def a_expsalary(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(expected_salary=message.text.strip())
     await state.set_state(Apply.computer_level)
     await message.answer(
-        "<b>18-savol</b>\n💻 Kompyuter savodxonligingiz bormi?",
-        reply_markup=kb.apply_computer_kb(),
+        f"{q_head(18, lang)}\n{t('apply.computer', lang)}",
+        reply_markup=kb.apply_computer_kb(lang),
     )
 
 
-# 14) Kompyuter savodxonligi (Word va Excel savollari o'rniga bitta savol)
+# 18) Kompyuter savodxonligi (Word va Excel savollari o'rniga bitta savol)
 @router.message(Apply.computer_level, F.text)
-async def a_computer(message: Message, state: FSMContext):
-    text = message.text.strip()
-    if text not in kb.COMPUTER_LEVELS:
+async def a_computer(message: Message, state: FSMContext, lang: str = None):
+    value = canon("computer", message.text)
+    if value not in kb.COMPUTER_LEVELS:
         await message.answer(
-            "❗️ Iltimos, quyidagi tugmalardan birini tanlang:",
-            reply_markup=kb.apply_computer_kb(),
+            t("common.pick_buttons", lang),
+            reply_markup=kb.apply_computer_kb(lang),
         )
         return
-    await state.update_data(computer_level=text)
+    await state.update_data(computer_level=value)
     await state.set_state(Apply.languages)
     await message.answer(
-        "<b>19-savol</b>\n🌍 Qaysi tillarni bilasiz?\n"
-        "Misol: <i>O'zbek - A'lo, Rus - O'rtacha, Ingliz - Boshlang'ich</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(19, lang)}\n{t('apply.languages', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
-# 16) Tillar
+# 19) Tillar
 @router.message(Apply.languages, F.text)
-async def a_languages(message: Message, state: FSMContext):
+async def a_languages(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(languages=message.text.strip())
     await state.set_state(Apply.work_intent)
     await message.answer(
-        "<b>20-savol</b>\n📅 «Gulnora Farm»da qancha muddat ishlash niyatingiz bor?",
-        reply_markup=kb.apply_work_intent_kb(),
+        f"{q_head(20, lang)}\n{t('apply.work_intent', lang)}",
+        reply_markup=kb.apply_work_intent_kb(lang),
     )
 
 
-# 17) Ishlash niyati
+# 20) Ishlash niyati
 @router.message(Apply.work_intent, F.text)
-async def a_intent(message: Message, state: FSMContext):
-    await state.update_data(work_intent=message.text.strip())
+async def a_intent(message: Message, state: FSMContext, lang: str = None):
+    await state.update_data(work_intent=canon("work_intent", message.text))
     await state.set_state(Apply.reason)
     await message.answer(
-        "<b>21-savol</b>\n✍️ Nima uchun aynan Gulnora Farmda ishlashni xohlaysiz?\n"
-        "Misol: <i>Jamoasi yaxshi, rivojlanish imkoniyati bor.</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(21, lang)}\n{t('apply.reason', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
-# 18) Sabab
+# 21) Sabab
 @router.message(Apply.reason, F.text)
-async def a_reason(message: Message, state: FSMContext):
+async def a_reason(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(reason=message.text.strip())
     await state.set_state(Apply.phone)
     await message.answer(
-        "<b>22-savol</b>\n" + PHONE_ASK,
-        reply_markup=kb.apply_phone_kb(),
+        f"{q_head(22, lang)}\n{t('apply.phone', lang)}",
+        reply_markup=kb.apply_phone_kb(lang),
     )
 
 
-# 19) Telefon — faqat +998XXXXXXXXX (bo'sh joysiz, bitta raqam)
+# 22) Telefon — faqat +998XXXXXXXXX (bo'sh joysiz, bitta raqam)
 @router.message(Apply.phone, F.contact)
-async def a_phone_contact(message: Message, state: FSMContext):
+async def a_phone_contact(message: Message, state: FSMContext, lang: str = None):
     phone = phone_from_contact(message.contact.phone_number)
     if not phone:
-        await message.answer("❗️ " + PHONE_HINT, reply_markup=kb.apply_phone_kb())
-        return
-    await state.update_data(phone=phone)
-    await _ask_photo(message, state)
-
-
-@router.message(Apply.phone, F.text)
-async def a_phone_text(message: Message, state: FSMContext):
-    phone = normalize_phone(message.text)
-    if not phone:
         await message.answer(
-            "❗️ Telefon raqam noto'g'ri.\n" + PHONE_HINT,
-            reply_markup=kb.apply_phone_kb(),
+            t("apply.phone_bad", lang), reply_markup=kb.apply_phone_kb(lang)
         )
         return
     await state.update_data(phone=phone)
-    await _ask_photo(message, state)
+    await _ask_photo(message, state, lang)
 
 
-async def _ask_photo(message: Message, state: FSMContext):
+@router.message(Apply.phone, F.text)
+async def a_phone_text(message: Message, state: FSMContext, lang: str = None):
+    phone = normalize_phone(message.text)
+    if not phone:
+        await message.answer(
+            t("apply.phone_bad", lang), reply_markup=kb.apply_phone_kb(lang)
+        )
+        return
+    await state.update_data(phone=phone)
+    await _ask_photo(message, state, lang)
+
+
+async def _ask_photo(message: Message, state: FSMContext, lang=None):
     """Oxirgi 10 kunda tushgan rasm — majburiy."""
     await state.set_state(Apply.photo)
     await message.answer(
-        "<b>23-savol</b>\n📸 Iltimos, <b>oxirgi 10 kun ichida tushgan</b> shaxsiy "
-        "rasmingizni yuboring.\n\n"
-        "<i>Rasm aniq va yaqinda olingan bo'lishi shart. Bu majburiy bosqich.</i>",
-        reply_markup=kb.cancel_kb(),
+        f"{q_head(23, lang)}\n{t('apply.photo', lang)}",
+        reply_markup=kb.cancel_kb(lang),
     )
 
 
 @router.message(Apply.photo, F.photo)
-async def a_photo(message: Message, state: FSMContext):
+async def a_photo(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(photo_file_id=message.photo[-1].file_id)
-    await _ask_resume(message, state)
+    await _ask_resume(message, state, lang)
 
 
 @router.message(Apply.photo)
-async def a_photo_invalid(message: Message):
+async def a_photo_invalid(message: Message, lang: str = None):
     # Rasm o'rniga boshqa narsa yuborilsa — qayta so'raymiz (majburiy)
     await message.answer(
-        "❗️ Iltimos, <b>rasm (foto)</b> yuboring — oxirgi 10 kun ichida tushgan "
-        "shaxsiy rasmingiz. Faqat rasm qabul qilinadi.",
-        reply_markup=kb.cancel_kb(),
+        t("apply.photo_bad", lang), reply_markup=kb.cancel_kb(lang)
     )
 
 
-async def _ask_resume(message: Message, state: FSMContext):
+async def _ask_resume(message: Message, state: FSMContext, lang=None):
     await state.set_state(Apply.resume)
     await message.answer(
-        "<b>24-savol</b>\n📄 Rezyume (CV) yoki diplom rasmini yubormoqchimisiz?\n"
-        "Faylni yuboring yoki «⏭️ O'tkazib yuborish» tugmasini bosing.",
-        reply_markup=kb.apply_resume_kb(),
+        f"{q_head(24, lang)}\n{t('apply.resume', lang)}",
+        reply_markup=kb.apply_resume_kb(lang),
     )
 
 
-# 20) Rezyume
+# 24) Rezyume (ixtiyoriy)
 @router.message(Apply.resume, F.document)
-async def a_resume_doc(message: Message, state: FSMContext):
+async def a_resume_doc(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(resume_file_id=message.document.file_id, resume_type="document")
-    await _show_summary(message, state)
+    await _show_summary(message, state, lang)
 
 
 @router.message(Apply.resume, F.photo)
-async def a_resume_photo(message: Message, state: FSMContext):
+async def a_resume_photo(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(resume_file_id=message.photo[-1].file_id, resume_type="photo")
-    await _show_summary(message, state)
+    await _show_summary(message, state, lang)
 
 
 @router.message(Apply.resume, F.text)
-async def a_resume_skip(message: Message, state: FSMContext):
+async def a_resume_skip(message: Message, state: FSMContext, lang: str = None):
     # "⏭️ O'tkazib yuborish" yoki boshqa matn
-    await _show_summary(message, state)
+    await _show_summary(message, state, lang)
 
 
 # --------- YAKUNIY TASDIQLASH ---------
-async def _show_summary(message: Message, state: FSMContext):
+async def _show_summary(message: Message, state: FSMContext, lang=None):
     data = await state.get_data()
     await state.set_state(Apply.confirm)
-    await message.answer("✅ Ma'lumotlar to'plandi.", reply_markup=kb.main_menu(
-        (await q.get_user(message.from_user.id) or {}).get("role", "candidate")
-    ))
+    role = (await q.get_user(message.from_user.id) or {}).get("role", "candidate")
+    await message.answer(
+        t("apply.collected", lang), reply_markup=kb.main_menu(role, lang=lang)
+    )
     await message.answer(application_summary(data), reply_markup=kb.apply_confirm_kb())
 
 
 @router.callback_query(F.data == "app_cancel")
-async def app_cancel_cb(call: CallbackQuery, state: FSMContext):
+async def app_cancel_cb(call: CallbackQuery, state: FSMContext, lang: str = None):
     await state.clear()
+    text = t("apply.cancelled", lang)
     try:
-        await call.message.edit_text("❌ Ariza bekor qilindi.")
+        await call.message.edit_text(text)
     except Exception:
-        await call.message.answer("❌ Ariza bekor qilindi.")
+        await call.message.answer(text)
     await call.answer()
 
 
@@ -959,7 +955,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 
 # ---------------- MENING ARIZALARIM ----------------
-@router.message(F.text == "📄 Mening arizalarim")
+@router.message(tf("btn.my_apps"))
 async def my_applications(message: Message):
     user = await q.get_user(message.from_user.id)
     apps = await q.user_applications(user["id"])
