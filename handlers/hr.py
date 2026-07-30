@@ -1789,32 +1789,107 @@ async def broadcast_start(message: Message, state: FSMContext):
     )
 
 
+ASK_CONTENT = (
+    "✍️ Yubormoqchi bo'lgan xabarni yuboring (matn, rasm, video, fayl):"
+)
+
+
 @router.callback_query(F.data.startswith("bc:"))
 async def broadcast_target(call: CallbackQuery, state: FSMContext):
     if not await is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
     target = call.data.split(":")[1]
-    if target == "branch":
+
+    if target == "back":
+        await state.clear()
+        await call.message.answer(
+            "📢 <b>Xabarnoma</b>\nKimga yubormoqchisiz?",
+            reply_markup=kb.broadcast_target_kb(),
+        )
+        await call.answer()
+        return
+
+    # Filial xodimlariga / bitta xodimga — ikkalasi ham avval filial so'raydi
+    if target in ("branch", "one"):
         branches = await q.list_branches()
         if not branches:
             await call.answer("Filiallar yo'q.", show_alert=True)
             return
-        await call.message.answer("Filialni tanlang:", reply_markup=kb.branch_pick_kb(branches, "bcbr"))
+        await state.update_data(bc_mode=target)
+        head = (
+            "🏬 <b>Filial xodimlariga</b>\n\nQaysi filial xodimlariga yuboramiz?"
+            if target == "branch" else
+            "👤 <b>Bitta xodimga</b>\n\nAvval xodim qaysi filialda ekanini tanlang:"
+        )
+        await call.message.answer(
+            head, reply_markup=kb.broadcast_branch_kb(branches)
+        )
         await call.answer()
         return
-    await state.update_data(bc_target=target, bc_branch=None)
+
+    await state.update_data(bc_target=target, bc_branch=None, bc_user=None)
     await state.set_state(Broadcast.content)
-    await call.message.answer("✍️ Yubormoqchi bo'lgan xabarni yuboring (matn, rasm, video, fayl):")
+    await call.message.answer(ASK_CONTENT)
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("bcbr:"))
 async def broadcast_branch(call: CallbackQuery, state: FSMContext):
+    """Filial tanlandi. «branch» rejimida darhol matn so'raymiz,
+    «one» rejimida esa o'sha filial xodimlari ro'yxatini chiqaramiz."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
     bid = int(call.data.split(":")[1])
-    await state.update_data(bc_target="branch", bc_branch=bid if bid else None)
+    data = await state.get_data()
+    mode = data.get("bc_mode", "branch")
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+
+    if mode == "one":
+        profiles = await q.search_employees(branch_id=bid)
+        if not profiles:
+            await call.message.answer(
+                f"🏢 <b>{bname}</b> filialida xodim yo'q. Boshqa filialni tanlang."
+            )
+            await call.answer()
+            return
+        await state.update_data(bc_branch=bid)
+        await call.message.answer(
+            f"🏢 <b>{bname}</b> — <b>{len(profiles)}</b> ta xodim\n\n"
+            "Xabar yuboriladigan xodimni tanlang:",
+            reply_markup=kb.broadcast_employee_kb(profiles[:40], bid),
+        )
+        await call.answer()
+        return
+
+    await state.update_data(bc_target="branch", bc_branch=bid, bc_user=None)
     await state.set_state(Broadcast.content)
-    await call.message.answer("✍️ Yubormoqchi bo'lgan xabarni yuboring:")
+    await call.message.answer(
+        f"🏬 Qabul qiluvchilar: <b>{bname}</b> filiali xodimlari\n\n{ASK_CONTENT}"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bcemp:"))
+async def broadcast_pick_employee(call: CallbackQuery, state: FSMContext):
+    """Aynan bitta xodim tanlandi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await state.update_data(bc_target="one", bc_user=uid)
+    await state.set_state(Broadcast.content)
+    await call.message.answer(
+        f"👤 Qabul qiluvchi: <b>{profile.get('full_name') or '-'}</b>\n"
+        f"💼 {profile.get('position') or '-'} · 🏢 {profile.get('branch_name') or '-'}\n\n"
+        f"{ASK_CONTENT}"
+    )
     await call.answer()
 
 
@@ -1823,24 +1898,46 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     target = data.get("bc_target")
     branch = data.get("bc_branch")
+    bc_user = data.get("bc_user")
     await state.clear()
 
-    if target == "all":
-        ids = await q.all_user_tg_ids()
+    if target == "one":
+        # Bitta xodim — profil orqali tg_id ni olamiz
+        profile = await q.get_employee_profile(bc_user) if bc_user else None
+        ids = [profile["tg_id"]] if profile and profile.get("tg_id") else []
+        label = f"bitta xodim ({profile.get('full_name') if profile else '-'})"
     elif target == "branch":
-        ids = await q.all_user_tg_ids(branch_id=branch)
+        # Filial XODIMLARI (nomzodlar emas) — profil jadvalidan olinadi
+        profiles = await q.search_employees(branch_id=branch)
+        ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
+        br = await q.get_branch(branch) if branch else None
+        label = f"filial: {br['name'] if br else branch}"
+    elif target == "staff":
+        # Barcha xodimlar — profili bor hamma
+        profiles = await q.search_employees()
+        ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
+        label = "barcha xodimlar"
+    elif target == "all":
+        ids = await q.all_user_tg_ids()
+        label = "barchaga"
     else:
         ids = await q.all_user_tg_ids(role=target)
+        label = f"rol: {target}"
 
     ids = list(set(ids))
     if not ids:
-        await message.answer("Bu guruhda foydalanuvchilar yo'q.")
+        await message.answer("❗️ Bu guruhda foydalanuvchi topilmadi.")
         return
     await message.answer(f"📤 Yuborilmoqda... ({len(ids)} ta)")
     ok, fail = await broadcast(bot, ids, message)
     me = await actor(message.from_user.id)
-    await q.add_log(message.from_user.id, me["full_name"], "xabarnoma", f"{target}: {ok} ta")
-    await message.answer(f"✅ Yuborildi: {ok} ta\n❌ Yuborilmadi: {fail} ta")
+    await q.add_log(message.from_user.id, me["full_name"], "xabarnoma", f"{label}: {ok} ta")
+    await message.answer(
+        f"✅ <b>Xabarnoma yakunlandi</b>\n\n"
+        f"🎯 Qabul qiluvchilar: <b>{label}</b>\n"
+        f"✅ Yuborildi: <b>{ok}</b> ta\n"
+        f"❌ Yuborilmadi: <b>{fail}</b> ta"
+    )
 
 
 # ---------------- QIDIRUV ----------------

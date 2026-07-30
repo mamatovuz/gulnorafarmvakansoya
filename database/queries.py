@@ -126,6 +126,27 @@ async def get_or_create_user(tg_id, full_name=None, username=None):
         await db.close()
 
 
+async def get_user_lang(tg_id):
+    """Foydalanuvchi tanlagan til (uz/ru) yoki None — hali tanlamagan."""
+    db = await _conn()
+    try:
+        cur = await db.execute("SELECT lang FROM users WHERE tg_id=?", (tg_id,))
+        row = await cur.fetchone()
+        return row["lang"] if row else None
+    finally:
+        await db.close()
+
+
+async def set_user_lang(tg_id, lang):
+    """Interfeys tilini saqlaydi."""
+    db = await _conn()
+    try:
+        await db.execute("UPDATE users SET lang=? WHERE tg_id=?", (lang, tg_id))
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def set_real_name(tg_id=None, user_id=None, full_name=None):
     """Ro'yxatdan o'tishda kiritilgan haqiqiy ismni yozadi va qulflaydi.
 

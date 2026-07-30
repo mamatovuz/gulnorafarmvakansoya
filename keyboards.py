@@ -6,6 +6,7 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from i18n import t, choices as i18n_choices, LANG_NAMES, LANGS
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
@@ -44,8 +45,8 @@ MENU_ESCAPE_BUTTONS = {
 }
 
 
-def main_menu(role, has_applied=False):
-    """Rolga qarab asosiy menyu.
+def main_menu(role, has_applied=False, lang=None):
+    """Rolga qarab asosiy menyu (foydalanuvchi tilida).
 
     Yangi foydalanuvchi (nomzod, hali ariza topshirmagan) uchun faqat 2 ta tugma
     ko'rinadi. Ariza topshirgach yoki rol berilgach to'liq menyu chiqadi.
@@ -54,22 +55,24 @@ def main_menu(role, has_applied=False):
     # «Ishga ariza topshirish» va «Gulnora Farm hodimi» tugmalari faqat nomzodga
     # ko'rinadi. Xodim sifatida tasdiqlangach (rol berilgach) ular olib tashlanadi.
     if role == ROLE_CANDIDATE:
-        b.button(text="📝 Ishga ariza topshirish")
-        b.button(text="🏢 Gulnora Farm hodimi")
-        # Nomzod hali ariza topshirmagan bo'lsa — faqat shu 2 ta tugma
+        b.button(text=t("btn.apply", lang))
+        b.button(text=t("btn.staffreg", lang))
+        # Nomzod hali ariza topshirmagan bo'lsa — shu 2 ta tugma + til
         if not has_applied:
+            b.button(text=t("btn.lang", lang))
             b.adjust(1)
             return b.as_markup(resize_keyboard=True)
-    b.button(text="💼 Vakansiyalar")
+    b.button(text=t("btn.vacancies", lang))
     # Ro'yxatdan o'tgan (tasdiqlangan) xodimlar uchun davomat
     if role in EMPLOYEE_ROLES:
-        b.button(text="📍 Ishga keldim")
-        b.button(text="🏁 Ishdan ketdim")
-        b.button(text="⏸ Tanaffus")
-        b.button(text="▶️ Ishni davom ettirish")
-        b.button(text="👤 Mening profilim")
-        b.button(text="🔄 Dam olish kunini almashtirish")
-        b.button(text=HR_REQUEST_BTN)
+        b.button(text=t("btn.checkin", lang))
+        b.button(text=t("btn.checkout", lang))
+        b.button(text=t("btn.break", lang))
+        b.button(text=t("btn.resume", lang))
+        b.button(text=t("btn.profile", lang))
+        b.button(text=t("btn.dayoff", lang))
+        b.button(text=t("btn.hr_request", lang))
+        b.button(text=t("btn.lang", lang))
     if role == ROLE_MANAGER:
         b.button(text="🏢 Filial rahbari panel")
     if role == ROLE_PHARMACIST:
@@ -92,23 +95,43 @@ def main_menu(role, has_applied=False):
     return b.as_markup(resize_keyboard=True)
 
 
-# ---------------- ARIZA (20 savol) klaviaturalari ----------------
-CANCEL_BTN = "❌ Bekor qilish"
+# ---------------- ARIZA klaviaturalari ----------------
+CANCEL_BTN = "❌ Bekor qilish"          # kanonik (o'zbekcha) variant
+# Bekor qilish tugmasining barcha tildagi ko'rinishlari — filtrlar uchun
+CANCEL_BUTTONS = {CANCEL_BTN, "❌ Отмена"}
 
 
-def _choices(options, row=2):
+def cancel_text(lang=None):
+    return t("btn.cancel", lang)
+
+
+def _choices(options, row=2, lang=None):
     b = ReplyKeyboardBuilder()
     for o in options:
         b.button(text=o)
-    b.button(text=CANCEL_BTN)
+    b.button(text=cancel_text(lang))
     b.adjust(row)
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
-def cancel_kb():
+def _group_kb(group, row=2, lang=None):
+    """i18n tanlov guruhi bo'yicha klaviatura (foydalanuvchi tilida)."""
+    return _choices(i18n_choices(group, lang), row=row, lang=lang)
+
+
+def cancel_kb(lang=None):
     b = ReplyKeyboardBuilder()
-    b.button(text=CANCEL_BTN)
+    b.button(text=cancel_text(lang))
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+def lang_pick_kb():
+    """Til tanlash (inline) — /start da va «🌐 Til» tugmasida."""
+    b = InlineKeyboardBuilder()
+    for code in LANGS:
+        b.button(text=LANG_NAMES[code], callback_data=f"setlang:{code}")
+    b.adjust(1)
+    return b.as_markup()
 
 
 REGION_DISTRICTS = {
@@ -221,64 +244,68 @@ def positions_manage_kb(positions):
     return b.as_markup()
 
 
-def apply_shift_kb():
-    return _choices(["🌞 Ertalabgi smena", "🌙 Kechki smena", "🔄 Farqi yo'q"], row=1)
+def apply_shift_kb(lang=None):
+    return _group_kb("shift", row=1, lang=lang)
 
 
-def apply_gender_kb():
-    return _choices(["👨 Erkak", "👩 Ayol"], row=2)
+def apply_gender_kb(lang=None):
+    return _group_kb("gender", row=2, lang=lang)
 
 
-def apply_criminal_kb():
-    return _choices(["✅ Yo'q", "❌ Ha"], row=2)
+def apply_criminal_kb(lang=None):
+    return _group_kb("criminal", row=2, lang=lang)
 
 
-def apply_marital_kb():
-    return _choices(["💍 Turmush qurganman", "🙋 Turmush qurmaganman", "💔 Ajrashganman"], row=1)
+def apply_marital_kb(lang=None):
+    return _group_kb("marital", row=1, lang=lang)
 
 
-def apply_children_kb():
-    return _choices(["👶 Ha", "🚫 Yo'q"], row=2)
+def apply_children_kb(lang=None):
+    return _group_kb("children", row=2, lang=lang)
 
 
-def apply_level_kb():
-    return _choices(["❌ Bilmayman", "🟡 Bazaviy", "🟠 O'rtacha", "🟢 Yaxshi"], row=2)
+def apply_level_kb(lang=None):
+    return _choices(["❌ Bilmayman", "🟡 Bazaviy", "🟠 O'rtacha", "🟢 Yaxshi"],
+                    row=2, lang=lang)
 
 
 # Kompyuter savodxonligi — Word/Excel savollari o'rniga bitta savol
 COMPUTER_LEVELS = ["✅ Ha", "🟠 O'rtacha", "❌ Yo'q"]
 
 
-def apply_computer_kb():
-    return _choices(COMPUTER_LEVELS, row=3)
+def apply_computer_kb(lang=None):
+    return _group_kb("computer", row=3, lang=lang)
 
 
-def apply_experience_kb():
-    return _choices(["🚫 Tajribam yo'q", "🟡 1 yilgacha", "🟠 1-3 yil", "🟢 3+ yil"], row=2)
+def apply_experience_kb(lang=None):
+    return _group_kb("experience", row=2, lang=lang)
 
 
-def apply_prev_years_kb():
-    return _choices(["🚫 Ishlamaganman", "🟡 1 yilgacha", "🟠 1-3 yil", "🟢 3+ yil"], row=2)
+def apply_prev_years_kb(lang=None):
+    return _group_kb("prev_years", row=2, lang=lang)
 
 
-def apply_work_intent_kb():
-    return _choices(["🟡 1 yilgacha", "🟠 1-3 yil", "🟢 3+ yil", "🔒 Uzoq muddat"], row=2)
+def apply_work_intent_kb(lang=None):
+    return _group_kb("work_intent", row=2, lang=lang)
 
 
-def apply_uniform_kb():
-    return _choices(["✅ Ha, bor", "❌ Yo'q, kerak"], row=1)
+def apply_uniform_kb(lang=None):
+    return _group_kb("uniform", row=1, lang=lang)
 
 
-def apply_position_extra_kb(position):
+def apply_position_extra_kb(position, lang=None):
     p = (position or "").lower()
     if "farm" in p:
         # Ma'lumot ro'yxati bilan bir xil + sertifikat varianti
-        return _choices(EDUCATION_OPTIONS + ["✅ Sertifikatim bor"], row=1)
+        extra = "✅ Sertifikatim bor" if (lang or "uz") == "uz" else "✅ Есть сертификат"
+        return _choices(i18n_choices("education", lang) + [extra], row=1, lang=lang)
     if "filial rahbari" in p:
-        return _choices(["🚫 Tajribam yo'q", "👥 1-5 xodim", "👥 6-15 xodim", "👥 15+ xodim"], row=2)
+        return _choices(["🚫 Tajribam yo'q", "👥 1-5 xodim", "👥 6-15 xodim",
+                         "👥 15+ xodim"], row=2, lang=lang)
     if "direktor" in p or "director" in p:
-        return _choices(["🟡 1-3 yil", "🟠 3-5 yil", "🟢 5+ yil", "🚫 Tajribam yo'q"], row=2)
-    return _choices(["🚫 Tajribam yo'q", "🟡 1 yilgacha", "🟠 1-3 yil", "🟢 3+ yil"], row=2)
+        return _choices(["🟡 1-3 yil", "🟠 3-5 yil", "🟢 5+ yil", "🚫 Tajribam yo'q"],
+                        row=2, lang=lang)
+    return _group_kb("experience", row=2, lang=lang)
 
 
 def apply_phone_kb():
@@ -846,11 +873,34 @@ def vacancy_edit_fields_kb(vid):
 def broadcast_target_kb():
     b = InlineKeyboardBuilder()
     b.button(text="👥 Barchaga", callback_data="bc:all")
-    b.button(text="👷 Xodimlarga", callback_data="bc:employee")
+    b.button(text="👷 Barcha xodimlarga", callback_data="bc:staff")
     b.button(text="🧑‍💼 Nomzodlarga", callback_data="bc:candidate")
     b.button(text="🏢 Filial rahbarlariga", callback_data="bc:manager")
-    b.button(text="🏬 Filial bo'yicha", callback_data="bc:branch")
-    b.adjust(2, 2, 1)
+    b.button(text="🏬 Filial xodimlariga", callback_data="bc:branch")
+    b.button(text="👤 Bitta xodimga", callback_data="bc:one")
+    b.adjust(2, 2, 2)
+    return b.as_markup()
+
+
+def broadcast_branch_kb(branches, prefix="bcbr"):
+    """Xabarnoma uchun filial tanlash (filialsiz varianti yo'q)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"{prefix}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="bc:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def broadcast_employee_kb(profiles, branch_id):
+    """Tanlangan filial xodimlari — bittasiga xabar yuborish uchun."""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        name = p.get("full_name") or str(p.get("tg_id"))
+        pos = p.get("position") or p.get("role") or "-"
+        b.button(text=f"👤 {name} · {pos}", callback_data=f"bcemp:{p['user_id']}")
+    b.button(text="⬅️ Filialni qayta tanlash", callback_data="bc:one")
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -1475,12 +1525,12 @@ STAFF_EDUCATION = EDUCATION_OPTIONS  # eski nom — mos kelishi uchun qoldirilga
 # da turadi — bu ro'yxatni o'zgartirsangiz, o'shanisini ham yangilang.
 
 
-def staff_education_kb():
-    return _choices(STAFF_EDUCATION, row=1)
+def staff_education_kb(lang=None):
+    return _group_kb("education", row=1, lang=lang)
 
 
-def apply_education_kb():
-    return _choices(EDUCATION_OPTIONS, row=1)
+def apply_education_kb(lang=None):
+    return _group_kb("education", row=1, lang=lang)
 
 
 def staff_since_kb():

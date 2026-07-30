@@ -314,6 +314,55 @@ async def hr_transfer_approve(call: CallbackQuery, bot: Bot):
             f"🏢 Yangi filialingiz: <b>{req.get('to_branch_name')}</b>\n\n"
             "Endi davomat (kelish-ketish) shu filial manzili bo'yicha hisoblanadi.",
         )
+    # Ikkala filial rahbariga ham xabar beramiz
+    await _notify_branch_managers(bot, req)
+
+
+async def _notify_branch_managers(bot: Bot, req):
+    """Filial almashganda eski va yangi filial rahbarlariga xabar yuboradi.
+
+    Eski filial rahbari: «bu xodim sizning filialingizdan ketmoqda».
+    Yangi filial rahbari: «bu xodim sizning filialingizga o'tmoqda».
+    Bir odam ikkala filialning ham rahbari bo'lsa — bitta xabar oladi."""
+    name = req.get("full_name") or "-"
+    position = req.get("position") or "-"
+    phone = req.get("phone") or "-"
+    from_name = req.get("from_branch_name") or "belgilanmagan"
+    to_name = req.get("to_branch_name") or "-"
+
+    from_ids = set(await q.branch_manager_tg_ids(req.get("from_branch_id")))
+    to_ids = set(await q.branch_manager_tg_ids(req.get("to_branch_id")))
+    # Ikkala filialga ham rahbar bo'lsa — faqat «keldi» xabarini olsin
+    from_ids -= to_ids
+
+    out_text = (
+        "📤 <b>Xodim filialingizdan ketmoqda</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{name}</b>\n"
+        f"💼 Lavozim: {position}\n"
+        f"📱 Telefon: {phone}\n"
+        "━━━━━━━━━━━━\n"
+        f"🏢 Sizning filialingiz: <b>{from_name}</b>\n"
+        f"➡️ O'tayotgan filiali: <b>{to_name}</b>\n\n"
+        "So'rov HR tomonidan tasdiqlandi — bu xodim endi sizning "
+        "filialingiz ro'yxatida ko'rinmaydi."
+    )
+    in_text = (
+        "📥 <b>Filialingizga yangi xodim o'tdi</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{name}</b>\n"
+        f"💼 Lavozim: {position}\n"
+        f"📱 Telefon: {phone}\n"
+        "━━━━━━━━━━━━\n"
+        f"⬅️ Qaysi filialdan: <b>{from_name}</b>\n"
+        f"🏢 Sizning filialingiz: <b>{to_name}</b>\n\n"
+        "So'rov HR tomonidan tasdiqlandi — bu xodim endi sizning "
+        "filialingiz ro'yxatida."
+    )
+    for tid in from_ids:
+        await safe_send(bot, tid, out_text)
+    for tid in to_ids:
+        await safe_send(bot, tid, in_text)
 
 
 # ---------------- HR: BEKOR QILISH ----------------

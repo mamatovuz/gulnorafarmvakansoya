@@ -21,6 +21,7 @@ from database import queries as q
 from handlers import register_all
 import keyboards as kb
 from keyboards import MENU_ESCAPE_BUTTONS
+from i18n import norm_lang
 from utils import PROFILE_UPDATE_NOTICE
 from services.reminders import (
     interview_reminder_loop, probation_reminder_loop, location_check_loop,
@@ -81,6 +82,25 @@ class ProfileUpdateMiddleware(BaseMiddleware):
         return None
 
 
+class LangMiddleware(BaseMiddleware):
+    """Har bir handlerga foydalanuvchi tilini (`lang`) uzatadi.
+
+    Handler `lang: str` parametrini qabul qilsa — o'sha tilda javob beradi.
+    Til tanlanmagan bo'lsa standart til (o'zbekcha) ishlatiladi."""
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        lang = None
+        if user:
+            try:
+                lang = await q.get_user_lang(user.id)
+            except Exception:
+                lang = None
+        data["lang"] = norm_lang(lang)
+        data["lang_chosen"] = bool(lang)
+        return await handler(event, data)
+
+
 class MenuEscapeMiddleware(BaseMiddleware):
     """Asosiy menyu tugmasi bosilsa — yarim qolgan anketani (FSM) bekor qiladi.
 
@@ -127,6 +147,9 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(BlockMiddleware())
+    # Til hamma joyda kerak — eng birinchi bo'lib aniqlanadi
+    dp.message.outer_middleware(LangMiddleware())
+    dp.callback_query.outer_middleware(LangMiddleware())
     # Yangilash talabi menyu tugmalaridan oldin tekshiriladi
     dp.message.outer_middleware(ProfileUpdateMiddleware())
     dp.callback_query.outer_middleware(ProfileUpdateMiddleware())

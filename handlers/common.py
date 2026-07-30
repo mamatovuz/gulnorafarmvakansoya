@@ -8,6 +8,7 @@ from database import queries as q
 from database.db import ROLE_CANDIDATE
 from states import Reg
 import keyboards as kb
+from i18n import t, tf, norm_lang
 from utils import check_subscription, get_welcome_text
 
 router = Router()
@@ -25,19 +26,62 @@ async def show_subscription(message: Message):
     return True
 
 
-async def send_main_menu(message: Message, user):
+async def send_main_menu(message: Message, user, lang=None):
     has_applied = False
     if user.get("role") == ROLE_CANDIDATE:
         has_applied = await q.count_applications(user["id"]) > 0
+    lang = lang or user.get("lang")
     await message.answer(
-        "🏠 Asosiy menyu",
-        reply_markup=kb.main_menu(user["role"], has_applied),
+        t("menu.main", lang),
+        reply_markup=kb.main_menu(user["role"], has_applied, lang),
     )
+
+
+# ---------------- TIL TANLASH ----------------
+@router.message(tf("btn.lang"))
+async def change_lang(message: Message, state: FSMContext, lang: str = None):
+    """«🌐 Til» tugmasi — istalgan paytda tilni almashtirish."""
+    await state.clear()
+    await message.answer(t("lang.ask", lang), reply_markup=kb.lang_pick_kb())
+
+
+@router.callback_query(F.data.startswith("setlang:"))
+async def set_lang(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Til tanlandi — saqlaymiz va menyuni yangi tilda qayta chiqaramiz."""
+    new_lang = norm_lang(call.data.split(":")[1])
+    await q.get_or_create_user(
+        call.from_user.id, call.from_user.full_name, call.from_user.username,
+    )
+    await q.set_user_lang(call.from_user.id, new_lang)
+    await state.clear()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(t("lang.changed", new_lang))
+
+    user = await q.get_user(call.from_user.id)
+    # Majburiy obuna tekshiruvi tildan keyin
+    not_joined = await check_subscription(bot, call.from_user.id)
+    if not_joined:
+        await show_subscription(call.message)
+        await call.answer()
+        return
+    has_applied = (
+        user.get("role") == ROLE_CANDIDATE
+        and await q.count_applications(user["id"]) > 0
+    )
+    await call.message.answer(
+        t("start.welcome", new_lang),
+        reply_markup=kb.main_menu(user["role"], has_applied, new_lang),
+    )
+    await call.answer()
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot,
-                    command: CommandObject = None):
+                    command: CommandObject = None, lang: str = None,
+                    lang_chosen: bool = False):
     await state.clear()
     user = await q.get_or_create_user(
         message.from_user.id,
@@ -48,7 +92,13 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot,
 
     # Bloklangan foydalanuvchi
     if user.get("blocked"):
-        await message.answer("⛔ Kechirasiz, siz botdan foydalana olmaysiz.")
+        await message.answer(t("start.blocked", lang))
+        return
+
+    # Til hali tanlanmagan (yangi odam) — avval tilni so'raymiz.
+    # Til tanlangach `set_lang` menyuni o'zi chiqaradi.
+    if not lang_chosen:
+        await message.answer(t("lang.ask", lang), reply_markup=kb.lang_pick_kb())
         return
 
     # Majburiy obuna
@@ -72,7 +122,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot,
     # Agar hodim (employee, pharmacist, manager, director, accountant, it, admin, hr)
     # yoki HR tomonidan tasdiqlangan nomzod => asosiy menyu
     if role != ROLE_CANDIDATE:
-        await send_main_menu(message, user)
+        await send_main_menu(message, user, lang)
         return
 
     # Agar nomzod => arizalarining holati tekshiriladi
@@ -81,23 +131,20 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot,
     if not applications:
         # Birinchi marta — xush kelibsiz xabari
         await message.answer(
-            await get_welcome_text(),
-            reply_markup=kb.main_menu(ROLE_CANDIDATE, False),
+            t("start.welcome", lang),
+            reply_markup=kb.main_menu(ROLE_CANDIDATE, False, lang),
         )
     else:
         # Arizalar bor — oxirgi arizaning holati tekshiriladi
         latest_app = applications[0]  # eng yangi ariza
         if latest_app.get("status") == "accepted":
             # Tasdiqlangan — hodim paneli ko'rsatiladi
-            await send_main_menu(message, user)
+            await send_main_menu(message, user, lang)
         else:
             # Tasdiqlanmagan (new/interview/waiting) — kutish xabari
             await message.answer(
-                "⏳ <b>Arizangiz tekshirilmoqda</b>\n\n"
-                "Bizning HR jamoasi tez orada sizga qayta bog'lanadilari to'g'risida aniqlik bermog'idir.\n"
-                "Sabrli bo'ling! 😊\n\n"
-                "Bosh menyuga qaytish uchun 🏠 tugmasini bosing yoki /start yozing.",
-                reply_markup=kb.main_menu(ROLE_CANDIDATE, True),
+                t("start.pending", lang),
+                reply_markup=kb.main_menu(ROLE_CANDIDATE, True, lang),
             )
 
 
@@ -150,14 +197,14 @@ async def check_sub_cb(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
-@router.message(F.text == "🏠 Asosiy menyu")
-async def to_main(message: Message, state: FSMContext):
+@router.message(tf("btn.main_menu"))
+async def to_main(message: Message, state: FSMContext, lang: str = None):
     await state.clear()
     user = await q.get_user(message.from_user.id)
-    await send_main_menu(message, user)
+    await send_main_menu(message, user, lang)
 
 
-@router.message(F.text == "ℹ️ Yordam")
+@router.message(tf("btn.help"))
 @router.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(

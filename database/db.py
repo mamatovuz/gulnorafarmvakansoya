@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS users (
     name_locked INTEGER NOT NULL DEFAULT 0,  -- 1 => full_name haqiqiy ism, ustiga yozilmaydi
     username TEXT,
     phone TEXT,
+    lang TEXT,                    -- interfeys tili: uz / ru (NULL => tanlanmagan)
     role TEXT NOT NULL DEFAULT 'candidate',
     branch_id INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
@@ -554,6 +555,8 @@ USER_COLUMNS = {
     # 1 => full_name ro'yxatdan o'tishda kiritilgan haqiqiy ism.
     # Bunday holatda /start bosilganda Telegram nomi uni almashtirmaydi.
     "name_locked": "INTEGER NOT NULL DEFAULT 0",
+    # Interfeys tili: uz / ru. NULL => hali tanlanmagan (/start da so'raladi).
+    "lang": "TEXT",
 }
 
 BRANCH_COLUMNS = {
