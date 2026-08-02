@@ -291,6 +291,26 @@ CREATE TABLE IF NOT EXISTS dayoff_requests (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+-- Oylikdan foiz kesish (moliya bo'limi).
+-- Har bir yozuv AYNAN BITTA OYGA tegishli (period = YYYY-MM).
+CREATE TABLE IF NOT EXISTS salary_deductions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_user_id INTEGER NOT NULL,   -- kimdan kesildi (users.id)
+    branch_id INTEGER,
+    period TEXT NOT NULL,                -- qaysi oy: YYYY-MM
+    kind TEXT NOT NULL,                  -- manager (filial rahbari) / employee (xodim)
+    percent INTEGER NOT NULL,            -- kesilgan foiz: 10 / 5
+    base_salary TEXT,                    -- kesish paytidagi oylik (matn, snapshot)
+    base_amount INTEGER,                 -- o'sha oylikning raqamli qiymati
+    amount INTEGER,                      -- kesilgan summa (so'm)
+    remaining INTEGER,                   -- shu oydagi barcha kesimlardan keyin qolgani
+    created_by INTEGER,                  -- kim kesdi (users.id)
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_salary_deductions_period
+    ON salary_deductions(employee_user_id, period);
+
 CREATE TABLE IF NOT EXISTS fines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_user_id INTEGER NOT NULL,

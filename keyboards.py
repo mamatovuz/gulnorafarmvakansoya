@@ -1657,11 +1657,63 @@ def accountant_menu():
     b.button(text="⏰ Kech/erta hisobot")
     b.button(text="🏢 Filial tanlab ko'rish")
     b.button(text="👥 Xodimlar (oylik/jarima)")
+    b.button(text="✂️ Oylik kesish")
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 1, 1, 1)
+    b.adjust(2, 2, 1, 1, 1, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+# ---------------- OYLIKDAN FOIZ KESISH ----------------
+# Kimdan qancha foiz kesiladi
+DEDUCTION_PERCENT = {"manager": 10, "employee": 5}
+DEDUCTION_LABELS = {
+    "manager": "👨‍💼 Filial rahbaridan",
+    "employee": "👷 Xodimdan",
+}
+
+
+def deduction_target_kb():
+    """Oylik kesish — kimdan kesiladi?"""
+    b = InlineKeyboardBuilder()
+    for kind, label in DEDUCTION_LABELS.items():
+        pct = DEDUCTION_PERCENT[kind]
+        b.button(text=f"{label} ({pct}%)", callback_data=f"ded:{kind}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def deduction_branch_kb(branches, kind):
+    """Filial tanlash (kesish oqimi uchun)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"dedbr:{kind}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="ded:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def deduction_people_kb(profiles, kind):
+    """Filialdagi odamlar ro'yxati (rahbar yoki xodim)."""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        name = p.get("full_name") or str(p.get("tg_id"))
+        pos = p.get("position") or p.get("role") or "-"
+        b.button(text=f"👤 {name} · {pos}", callback_data=f"dedemp:{kind}:{p['user_id']}")
+    b.button(text="⬅️ Orqaga", callback_data=f"ded:{kind}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def deduction_confirm_kb(user_id, kind):
+    """Profil kartochkasi tagidagi «N% kesish» tugmasi."""
+    pct = DEDUCTION_PERCENT.get(kind, 5)
+    b = InlineKeyboardBuilder()
+    b.button(text=f"✂️ Oylikdan {pct}% kesish", callback_data=f"dedgo:{kind}:{user_id}")
+    b.button(text="❌ Bekor qilish", callback_data="ded:back")
+    b.adjust(1)
+    return b.as_markup()
 
 
 def accountant_branch_kb(branches, prefix="accbr"):

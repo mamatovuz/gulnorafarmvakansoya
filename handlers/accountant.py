@@ -12,6 +12,7 @@ from states import AccForm
 import keyboards as kb
 from utils import (
     employee_profile_text, fine_text, safe_send, now_tk, send_employee_profile,
+    parse_money, fmt_money,
 )
 
 router = Router()
@@ -162,6 +163,228 @@ async def acc_salary_save(message: Message, state: FSMContext, bot: Bot):
         await safe_send(
             bot, profile["tg_id"],
             f"💰 Sizning oyligingiz yangilandi: <b>{value}</b>",
+        )
+
+
+# ================= OYLIKDAN FOIZ KESISH =================
+# Filial rahbaridan 10%, oddiy xodimdan 5%. Kesim faqat joriy oyga yoziladi.
+@router.message(F.text == "✂️ Oylik kesish")
+async def deduction_start(message: Message):
+    if not await _is_accountant(message.from_user.id):
+        await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
+        return
+    await message.answer(
+        "✂️ <b>Oylik kesish</b>\n\n"
+        f"Kimning oyligidan kesamiz?\n\n"
+        f"👨‍💼 Filial rahbaridan — <b>{kb.DEDUCTION_PERCENT['manager']}%</b>\n"
+        f"👷 Xodimdan — <b>{kb.DEDUCTION_PERCENT['employee']}%</b>\n\n"
+        f"<i>Kesim faqat joriy oyga ({_period_now()}) yoziladi.</i>",
+        reply_markup=kb.deduction_target_kb(),
+    )
+
+
+@router.callback_query(F.data == "ded:back")
+async def deduction_back(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await call.message.answer(
+        "✂️ <b>Oylik kesish</b>\n\nKimning oyligidan kesamiz?",
+        reply_markup=kb.deduction_target_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ded:"))
+async def deduction_pick_kind(call: CallbackQuery):
+    """Rahbardan yoki xodimdan — keyin filial tanlanadi."""
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    kind = call.data.split(":")[1]
+    if kind not in kb.DEDUCTION_PERCENT:
+        await call.answer()
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await call.message.answer("🏢 Hali filiallar qo'shilmagan.")
+        await call.answer()
+        return
+    who = "filial rahbari" if kind == "manager" else "xodim"
+    await call.message.answer(
+        f"🏢 Qaysi filialning {who}sidan kesamiz?\n"
+        f"Filialni tanlang:",
+        reply_markup=kb.deduction_branch_kb(branches, kind),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dedbr:"))
+async def deduction_pick_branch(call: CallbackQuery):
+    """Filial tanlandi — rahbar(lar) yoki xodimlar ro'yxati chiqadi."""
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, kind, bid = call.data.split(":")
+    bid = int(bid)
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+
+    if kind == "manager":
+        people = await q.branch_managers(bid)
+        if not people:
+            await call.message.answer(
+                f"🏢 <b>{bname}</b> filialiga rahbar biriktirilmagan."
+            )
+            await call.answer()
+            return
+        # Rahbar bitta bo'lsa — darhol kartochkasini ko'rsatamiz
+        if len(people) == 1:
+            await _show_deduction_card(call.message, people[0], kind)
+            await call.answer()
+            return
+        await call.message.answer(
+            f"🏢 <b>{bname}</b> — <b>{len(people)}</b> ta rahbar. Kimni tanlaysiz?",
+            reply_markup=kb.deduction_people_kb(people, kind),
+        )
+        await call.answer()
+        return
+
+    people = await q.search_employees(branch_id=bid)
+    if not people:
+        await call.message.answer(f"🏢 <b>{bname}</b> filialida xodim yo'q.")
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{bname}</b> — <b>{len(people)}</b> ta xodim.\n"
+        "Oyligidan kesiladigan xodimni tanlang:",
+        reply_markup=kb.deduction_people_kb(people[:40], kind),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dedemp:"))
+async def deduction_pick_person(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, kind, uid = call.data.split(":")
+    profile = await q.get_employee_profile(int(uid))
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await _show_deduction_card(call.message, profile, kind)
+    await call.answer()
+
+
+async def _show_deduction_card(target, profile, kind):
+    """Rasm + ma'lumot + «N% kesish» tugmasi."""
+    period = _period_now()
+    pct = kb.DEDUCTION_PERCENT.get(kind, 5)
+    base = parse_money(profile.get("monthly_salary"))
+    already, cnt = await q.deductions_total(profile["user_id"], period)
+
+    if base is None:
+        extra = (
+            f"\n\n⚠️ <b>Oylik belgilanmagan</b> — kesish uchun avval "
+            "«👥 Xodimlar (oylik/jarima)» bo'limidan oylik kiriting."
+        )
+        await send_employee_profile(target, profile, suffix=extra)
+        return
+
+    amount = round(base * pct / 100)
+    remaining = max(0, base - already - amount)
+    extra = (
+        f"\n\n✂️ <b>Kesish oldidan hisob</b>\n"
+        f"📅 Davr: <b>{period}</b>\n"
+        f"💰 Oylik: <b>{fmt_money(base)}</b>\n"
+    )
+    if already:
+        extra += f"➖ Shu oyda allaqachon kesilgan: <b>{fmt_money(already)}</b> ({cnt} marta)\n"
+    extra += (
+        f"➖ Hozir kesiladi ({pct}%): <b>{fmt_money(amount)}</b>\n"
+        f"✅ Qoladigan oylik: <b>{fmt_money(remaining)}</b>"
+    )
+    await send_employee_profile(
+        target, profile,
+        reply_markup=kb.deduction_confirm_kb(profile["user_id"], kind),
+        suffix=extra,
+    )
+
+
+@router.callback_query(F.data.startswith("dedgo:"))
+async def deduction_apply(call: CallbackQuery, bot: Bot):
+    """Kesimni amalga oshiradi va xodimga xabar yuboradi."""
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, kind, uid = call.data.split(":")
+    uid = int(uid)
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+
+    base = parse_money(profile.get("monthly_salary"))
+    if base is None:
+        await call.answer("Bu xodimning oyligi belgilanmagan.", show_alert=True)
+        return
+
+    period = _period_now()
+    pct = kb.DEDUCTION_PERCENT.get(kind, 5)
+    amount = round(base * pct / 100)
+    already, _cnt = await q.deductions_total(uid, period)
+    remaining = max(0, base - already - amount)
+
+    me = await q.get_user(call.from_user.id)
+    await q.add_salary_deduction(
+        employee_user_id=uid,
+        period=period,
+        kind=kind,
+        percent=pct,
+        base_salary=profile.get("monthly_salary"),
+        base_amount=base,
+        amount=amount,
+        remaining=remaining,
+        branch_id=profile.get("branch_id"),
+        created_by=me["id"] if me else None,
+    )
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?", "oylik_kesildi",
+        f"user#{uid} {period} -{pct}% = {amount}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # Moliya xodimiga hisobot
+    await call.message.answer(
+        f"✅ <b>Oylikdan {pct}% kesildi</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 {profile.get('full_name') or '-'}\n"
+        f"💼 {profile.get('position') or '-'} · 🏢 {profile.get('branch_name') or '-'}\n"
+        f"📅 Davr: <b>{period}</b>\n"
+        f"💰 Oylik: <b>{fmt_money(base)}</b>\n"
+        f"➖ Kesildi: <b>{fmt_money(amount)}</b>\n"
+        f"✅ Qoladigan oylik: <b>{fmt_money(remaining)}</b>"
+    )
+    await call.answer(f"{pct}% kesildi ✅")
+
+    # Xodimning o'ziga xabar (rahbar ham, oddiy xodim ham bir xil ko'radi)
+    if profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"✂️ <b>Oyligingizdan {pct}% kesildi</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"📅 Davr: <b>{period}</b>\n"
+            f"💰 Oyligingiz: <b>{fmt_money(base)}</b>\n"
+            f"➖ Kesilgan summa: <b>{fmt_money(amount)}</b>\n"
+            f"✅ Siz oladigan oylik: <b>{fmt_money(remaining)}</b>\n"
+            "━━━━━━━━━━━━\n"
+            "Kesim <b>moliya bo'limi</b> tomonidan amalga oshirildi va "
+            f"faqat <b>{period}</b> oyiga tegishli.\n"
+            "Savollaringiz bo'lsa moliya bo'limiga murojaat qiling.",
         )
 
 

@@ -54,6 +54,28 @@ def phone_from_contact(number):
     return None
 
 
+def parse_money(text):
+    """Matndan pul miqdorini ajratib oladi: «4 000 000 so'm» -> 4000000.
+
+    Oylik bazada erkin matn sifatida saqlanadi, shuning uchun faqat raqamlar
+    olinadi. Raqam topilmasa None qaytadi."""
+    digits = "".join(c for c in str(text or "") if c.isdigit())
+    if not digits:
+        return None
+    try:
+        value = int(digits)
+    except ValueError:
+        return None
+    return value or None
+
+
+def fmt_money(amount):
+    """4000000 -> «4 000 000 so'm» (uch xonalik ajratgich bilan)."""
+    if amount is None:
+        return "-"
+    return f"{int(amount):,}".replace(",", " ") + " so'm"
+
+
 def fmt_duration(seconds):
     """Sekundlarni 'X soat Y daqiqa' ko'rinishiga o'giradi."""
     seconds = int(seconds or 0)

@@ -108,6 +108,13 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
 - **📍 Davomat** va **⏰ Kech/erta hisobot** (barcha filiallar bo'yicha)
 - **🏢 Filial tanlab ko'rish** — tanlangan filial xodimlari va bugungi keldi/ketti
 - **👥 Xodimlar** — oylik belgilash / oshirish, **oylik berildi/berilmadi**, jarima yozish, to'lovlar tarixi
+- **✂️ Oylik kesish** — ikki yo'nalish:
+  - **👨‍💼 Filial rahbaridan — 10%**: filial tanlanadi → o'sha filial rahbari chiqadi
+  - **👷 Xodimdan — 5%**: filial tanlanadi → filial xodimlari chiqadi → xodim tanlanadi
+  - Har ikkalasida ham **rasm + profil ma'lumotlari** ko'rinadi, tagida «✂️ N% kesish» tugmasi
+  - Kesim **faqat joriy oyga** (`YYYY-MM`) yoziladi; bir oyda bir necha marta kesilsa jamlanadi
+  - Xodimga xabar boradi: kesilgan foiz, **kesilgan summa** va **qo'lga tegadigan oylik**
+  - Oylik belgilanmagan bo'lsa kesish bloklanadi
 - **🛌 Dam olish so'rovlari**
 
 ### 👑 Administrator paneli

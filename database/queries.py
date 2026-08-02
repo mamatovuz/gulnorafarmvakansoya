@@ -1126,6 +1126,90 @@ async def add_fine(employee_user_id, amount, reason, created_by):
         await db.close()
 
 
+# ---------------- OYLIKDAN FOIZ KESISH (moliya bo'limi) ----------------
+async def add_salary_deduction(employee_user_id, period, kind, percent,
+                               base_salary=None, base_amount=None, amount=None,
+                               remaining=None, branch_id=None, created_by=None):
+    """Oylikdan kesim yozuvini qo'shadi (faqat berilgan oyga tegishli)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO salary_deductions
+               (employee_user_id, branch_id, period, kind, percent, base_salary,
+                base_amount, amount, remaining, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (employee_user_id, branch_id, period, kind, percent, base_salary,
+             base_amount, amount, remaining, created_by),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def deductions_total(employee_user_id, period):
+    """Shu oyda ushbu xodimdan kesilgan umumiy summa va kesimlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS cnt
+               FROM salary_deductions
+               WHERE employee_user_id=? AND period=?""",
+            (employee_user_id, period),
+        )
+        row = dict(await cur.fetchone())
+        return row.get("total") or 0, row.get("cnt") or 0
+    finally:
+        await db.close()
+
+
+async def list_salary_deductions(employee_user_id=None, period=None, limit=50):
+    """Kesimlar ro'yxati (xodim va/yoki oy bo'yicha)."""
+    db = await _conn()
+    try:
+        sql = """SELECT d.*, u.full_name, u.tg_id, b.name AS branch_name,
+                        a.full_name AS created_by_name
+                 FROM salary_deductions d
+                 LEFT JOIN users u ON u.id=d.employee_user_id
+                 LEFT JOIN branches b ON b.id=d.branch_id
+                 LEFT JOIN users a ON a.id=d.created_by
+                 WHERE 1=1"""
+        params = []
+        if employee_user_id:
+            sql += " AND d.employee_user_id=?"
+            params.append(employee_user_id)
+        if period:
+            sql += " AND d.period=?"
+            params.append(period)
+        sql += f" ORDER BY d.id DESC LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def branch_managers(branch_id):
+    """Filial rahbarlarining profillari (ism, rasm, oylik bilan)."""
+    if not branch_id:
+        return []
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
+                      b.name AS branch_name
+               FROM employee_profiles ep
+               JOIN users u ON u.id=ep.user_id
+               LEFT JOIN branches b ON b.id=ep.branch_id
+               WHERE u.role=? AND (u.branch_id=? OR ep.branch_id=?)
+               GROUP BY ep.user_id
+               ORDER BY u.full_name""",
+            (ROLE_MANAGER, branch_id, branch_id),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
 async def list_fines(employee_user_id, limit=30):
     db = await _conn()
     try:
