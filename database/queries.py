@@ -2420,20 +2420,22 @@ async def advance_employee_tg_ids():
         await db.close()
 
 
-async def upsert_advance_request(user_id, period, full_name, card_number, status):
+async def upsert_advance_request(user_id, period, full_name, card_number, status,
+                                 amount=None):
     """Xodimning shu oydagi avans so'rovini yaratadi yoki yangilaydi."""
     db = await _conn()
     try:
         await db.execute(
             """INSERT INTO advance_requests
-                   (user_id, period, full_name, card_number, status)
-               VALUES (?,?,?,?,?)
+                   (user_id, period, full_name, card_number, amount, status)
+               VALUES (?,?,?,?,?,?)
                ON CONFLICT(user_id, period) DO UPDATE SET
                    full_name=excluded.full_name,
                    card_number=excluded.card_number,
+                   amount=excluded.amount,
                    status=excluded.status,
                    updated_at=datetime('now','+5 hours')""",
-            (user_id, period, full_name, card_number, status),
+            (user_id, period, full_name, card_number, amount, status),
         )
         await db.commit()
     finally:

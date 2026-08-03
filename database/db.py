@@ -436,6 +436,7 @@ CREATE TABLE IF NOT EXISTS advance_requests (
     period TEXT NOT NULL,            -- qaysi oy avansi: YYYY-MM
     full_name TEXT,
     card_number TEXT,
+    amount INTEGER,                 -- xodim tanlagan avans miqdori (so'm)
     status TEXT NOT NULL DEFAULT 'pending',   -- pending / confirmed / declined
     created_at TEXT DEFAULT (datetime('now','+5 hours')),
     updated_at TEXT DEFAULT (datetime('now','+5 hours')),
@@ -825,6 +826,11 @@ async def _migrate(db):
         for col, coltype in MANAGER_REQUEST_COLUMNS.items():
             if col not in existing:
                 await db.execute(f"ALTER TABLE manager_requests ADD COLUMN {col} {coltype}")
+
+    cur = await db.execute("PRAGMA table_info(advance_requests)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing and "amount" not in existing:
+        await db.execute("ALTER TABLE advance_requests ADD COLUMN amount INTEGER")
     await db.commit()
 
 

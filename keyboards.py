@@ -1783,6 +1783,26 @@ def advance_yes_no_kb(period):
     return b.as_markup()
 
 
+def _fmt_amount(value):
+    """123456 -> '123 456' (minglar probel bilan)."""
+    return f"{int(value):,}".replace(",", " ")
+
+
+def advance_amount_kb(options):
+    """Avans miqdori tugmalari — oylikning ulushiga qarab (oshmaydigan qiymatlar).
+
+    options — [(amount, percent), ...] ko'rinishida.
+    """
+    b = InlineKeyboardBuilder()
+    for amount, pct in options:
+        b.button(
+            text=f"💵 {_fmt_amount(amount)} so'm  ({pct}%)",
+            callback_data=f"avns_amt:{int(amount)}",
+        )
+    b.adjust(1)
+    return b.as_markup()
+
+
 def advance_confirm_kb():
     b = InlineKeyboardBuilder()
     b.button(text="✅ Tasdiqlash", callback_data="avns_confirm")

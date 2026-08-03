@@ -70,6 +70,52 @@ def _pretty_card(digits):
     return " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
 
 
+def _fmt_sum(value):
+    """123456 -> '123 456' (minglar probel bilan)."""
+    return f"{int(value):,}".replace(",", " ")
+
+
+def _parse_salary(text):
+    """Erkin matndagi oylikni butun songa (so'm) aylantiradi. 0 = aniqlanmadi.
+
+    «3 000 000», «3000000», «3 mln», «3,5 mln so'm» kabi ko'rinishlarni tushunadi.
+    """
+    if not text:
+        return 0
+    s = str(text).lower().replace(" ", " ")
+    if any(k in s for k in ("mln", "млн", "million", "миллион")):
+        m = re.search(r"\d+(?:[.,]\d+)?", s)
+        if m:
+            return int(float(m.group().replace(",", ".")) * 1_000_000)
+        return 0
+    digits = re.sub(r"\D", "", s)
+    return int(digits) if digits else 0
+
+
+# Avans miqdori — oylikning ulushlari (foizda). Oxirgi tugma = to'liq oylik.
+ADVANCE_TIERS = (30, 60, 80, 100)
+
+
+def _advance_options(salary):
+    """Oylikka qarab avans tugmalari: [(miqdor, foiz), ...].
+
+    Qiymatlar hech qachon oylikdan oshmaydi; 100% aniq oylikka teng, qolganlari
+    eng yaqin ming songa yaxlitlanadi. Takror qiymatlar olib tashlanadi.
+    """
+    opts = []
+    seen = set()
+    for pct in ADVANCE_TIERS:
+        if pct >= 100:
+            amt = salary
+        else:
+            amt = int(round(salary * pct / 100 / 1000)) * 1000
+        amt = min(amt, salary)
+        if amt > 0 and amt not in seen:
+            seen.add(amt)
+            opts.append((amt, pct))
+    return opts
+
+
 # ==================== XODIM TOMONI ====================
 @router.callback_query(F.data.startswith("avns_yes:"))
 async def advance_yes(call: CallbackQuery, state: FSMContext):
@@ -78,16 +124,28 @@ async def advance_yes(call: CallbackQuery, state: FSMContext):
     if not profile:
         await call.answer("Bu funksiya faqat xodimlar uchun.", show_alert=True)
         return
-    await state.set_state(AdvanceForm.card)
+    await state.set_state(AdvanceForm.amount)
     await state.update_data(avns_period=period)
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await call.message.answer(
-        "💳 Iltimos, avans o'tkaziladigan <b>karta raqamingizni</b> yuboring.\n"
-        "<i>Masalan: 8600 1234 5678 9012</i>"
-    )
+    salary = _parse_salary(profile.get("monthly_salary"))
+    options = _advance_options(salary)
+    if options:
+        await state.update_data(avns_salary=salary)
+        await call.message.answer(
+            "💵 <b>Qancha avans olmoqchisiz?</b>\n"
+            f"💰 Oyligingiz: <b>{_fmt_sum(salary)} so'm</b>\n\n"
+            "Quyidagi variantlardan birini tanlang 👇",
+            reply_markup=kb.advance_amount_kb(options),
+        )
+    else:
+        # Oylik aniqlanmagan bo'lsa — miqdorni qo'lda so'raymiz
+        await call.message.answer(
+            "💵 <b>Qancha avans olmoqchisiz?</b>\n\n"
+            "Summani so'mda yozing. <i>Masalan: 1 500 000</i>"
+        )
     await call.answer()
 
 
@@ -111,6 +169,49 @@ async def advance_no(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+async def _ask_card(message: Message, state: FSMContext):
+    await state.set_state(AdvanceForm.card)
+    await message.answer(
+        "💳 Endi avans o'tkaziladigan <b>karta raqamingizni</b> yuboring.\n"
+        "<i>Masalan: 8600 1234 5678 9012</i>"
+    )
+
+
+@router.callback_query(AdvanceForm.amount, F.data.startswith("avns_amt:"))
+async def advance_amount_pick(call: CallbackQuery, state: FSMContext):
+    try:
+        amount = int(call.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await call.answer("Miqdor noto'g'ri, qaytadan tanlang.", show_alert=True)
+        return
+    data = await state.get_data()
+    salary = int(data.get("avns_salary") or 0)
+    if salary and amount > salary:      # oylikdan oshib ketmasin
+        amount = salary
+    await state.update_data(avns_amount=amount)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"✅ Tanlangan avans: <b>{_fmt_sum(amount)} so'm</b>")
+    await _ask_card(call.message, state)
+    await call.answer()
+
+
+@router.message(AdvanceForm.amount, F.text)
+async def advance_amount_manual(message: Message, state: FSMContext):
+    """Oylik aniqlanmagan holatda — xodim miqdorni qo'lda yozadi."""
+    amount = int(re.sub(r"\D", "", message.text or "") or 0)
+    if amount <= 0:
+        await message.answer(
+            "❌ Summani so'mda raqam bilan yozing. <i>Masalan: 1 500 000</i>"
+        )
+        return
+    await state.update_data(avns_amount=amount)
+    await message.answer(f"✅ Tanlangan avans: <b>{_fmt_sum(amount)} so'm</b>")
+    await _ask_card(message, state)
+
+
 @router.message(AdvanceForm.card, F.text)
 async def advance_card(message: Message, state: FSMContext):
     card = _normalize_card(message.text)
@@ -122,12 +223,18 @@ async def advance_card(message: Message, state: FSMContext):
         )
         return
     await state.update_data(avns_card=card)
+    data = await state.get_data()
     me = await q.get_user(message.from_user.id)
     full_name = (me or {}).get("full_name") or "-"
+    amount = data.get("avns_amount")
+    amount_line = (
+        f"💵 Avans miqdori: <b>{_fmt_sum(amount)} so'm</b>\n" if amount else ""
+    )
     await message.answer(
         "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
         "━━━━━━━━━━━━\n"
         f"👤 Ism-familiya: <b>{full_name}</b>\n"
+        f"{amount_line}"
         f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
         "━━━━━━━━━━━━\n"
         "Hammasi to'g'rimi?",
@@ -140,6 +247,7 @@ async def advance_confirm(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     period = data.get("avns_period") or _period_now()
     card = data.get("avns_card")
+    amount = data.get("avns_amount")
     await state.clear()
     if not card:
         await call.answer("Karta raqami topilmadi, qaytadan urinib ko'ring.", show_alert=True)
@@ -149,17 +257,20 @@ async def advance_confirm(call: CallbackQuery, state: FSMContext):
         await call.answer("Foydalanuvchi topilmadi.", show_alert=True)
         return
     await q.upsert_advance_request(
-        me["id"], period, me.get("full_name"), card, "confirmed",
+        me["id"], period, me.get("full_name"), card, "confirmed", amount=amount,
     )
     await q.add_log(
-        call.from_user.id, me.get("full_name"), "avans_soradi", f"{period}"
+        call.from_user.id, me.get("full_name"), "avans_soradi",
+        f"{period}" + (f" — {_fmt_sum(amount)} so'm" if amount else ""),
     )
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+    amount_line = f"💵 Miqdor: <b>{_fmt_sum(amount)} so'm</b>\n" if amount else ""
     await call.message.answer(
         "✅ <b>So'rovingiz qabul qilindi!</b>\n"
+        f"{amount_line}"
         f"💳 Karta: <b>{_pretty_card(card)}</b>\n\n"
         "Avans ro'yxati HR bo'limiga yuboriladi. Rahmat!"
     )

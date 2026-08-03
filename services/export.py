@@ -113,7 +113,8 @@ def build_advance_xlsx(rows, period, pay_date=None):
     center = Alignment(horizontal="center", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
-    headers = ["№", "Ism-familiya", "Karta raqami", "Filial", "Lavozim", "Telefon"]
+    headers = ["№", "Ism-familiya", "Avans miqdori", "Karta raqami",
+               "Filial", "Lavozim", "Telefon"]
     ncols = len(headers)
     last_col = get_column_letter(ncols)
 
@@ -157,9 +158,11 @@ def build_advance_xlsx(rows, period, pay_date=None):
     # Ma'lumot qatorlari
     for idx, r in enumerate(rows, start=1):
         row_i = header_row + idx
+        amount = r.get("amount")
         values = [
             idx,
             r.get("full_name") or "-",
+            int(amount) if amount else "-",
             r.get("card_number") or "-",
             r.get("branch_name") or "-",
             r.get("position") or "-",
@@ -168,14 +171,17 @@ def build_advance_xlsx(rows, period, pay_date=None):
         for col_i, val in enumerate(values, start=1):
             cell = ws.cell(row=row_i, column=col_i, value=val)
             cell.border = border
-            cell.alignment = center if col_i in (1,) else left
+            cell.alignment = center if col_i in (1, 3) else left
             if idx % 2 == 0:
                 cell.fill = alt_fill
+        # avans miqdori — minglar ajratgichi bilan (son bo'lsa)
+        if amount:
+            ws.cell(row=row_i, column=3).number_format = "#,##0"
         # karta raqami matn sifatida (raqam formatlanmasin)
-        ws.cell(row=row_i, column=3).number_format = "@"
+        ws.cell(row=row_i, column=4).number_format = "@"
 
     # Ustun kengliklari
-    widths = [6, 28, 24, 26, 20, 18]
+    widths = [6, 28, 18, 24, 26, 20, 18]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

@@ -18,7 +18,7 @@ from database.db import (
 )
 from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
-from i18n import t, tf
+from i18n import t, tf, canon
 from utils import (
     safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
     post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE, broadcast_request,

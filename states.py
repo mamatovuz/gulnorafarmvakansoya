@@ -231,7 +231,8 @@ class ManagerMessageForm(StatesGroup):
 
 
 class AdvanceForm(StatesGroup):
-    """Xodim avans (oldindan to'lov) so'raydi — karta raqami kutilmoqda."""
+    """Xodim avans (oldindan to'lov) so'raydi — miqdor va karta raqami."""
+    amount = State()       # avans miqdorini tanlash (oylikning ulushi)
     card = State()         # karta raqamini kiritish / tahrirlash
 
 
