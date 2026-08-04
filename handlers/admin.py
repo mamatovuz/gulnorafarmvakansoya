@@ -242,32 +242,36 @@ async def admin_stats(message: Message):
     top = await q.top_hr()
 
     text = (
-        "📊 <b>Umumiy statistika</b>\n\n"
-        f"👥 Jami foydalanuvchilar: <b>{total_users}</b>\n"
-        f"👷 Xodimlar: <b>{employees}</b>\n"
-        f"💊 Farmatsevtlar: <b>{pharmacists}</b>\n"
-        f"🏢 Filial rahbarlari: <b>{managers}</b>\n"
-        f"👔 Direktorlar: <b>{directors}</b>\n"
-        f"🧑‍💼 HR xodimlari: <b>{hrs}</b>\n"
-        f"👑 Administratorlar: <b>{admins}</b>\n\n"
-        f"💼 Vakansiyalar: <b>{len(vacs)}</b> (faol: {len(active_vacs)})\n\n"
-        "📥 <b>Arizalar:</b>\n"
-        f"  • Bugun: {s['today']} | Hafta: {s['week']} | Oy: {s['month']}\n"
-        f"  • ✅ Qabul: {s['accepted']} | ❌ Rad: {s['rejected']} | 📅 Suhbat: {s['interview']}\n"
-        f"  • 📋 Jami: {s['total']}\n"
+        "📊 <b>Umumiy statistika</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>👥 Foydalanuvchilar</b>\n"
+        f"   • Jami: <b>{total_users}</b>\n"
+        f"   • 👷 Xodimlar: <b>{employees}</b>\n"
+        f"   • 💊 Farmatsevtlar: <b>{pharmacists}</b>\n"
+        f"   • 🏢 Filial rahbarlari: <b>{managers}</b>\n"
+        f"   • 👔 Direktorlar: <b>{directors}</b>\n"
+        f"   • 🧑‍💼 HR xodimlari: <b>{hrs}</b>\n"
+        f"   • 👑 Administratorlar: <b>{admins}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"💼 Vakansiyalar: <b>{len(vacs)}</b>  ·  faol: <b>{len(active_vacs)}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>📥 Arizalar</b>\n"
+        f"   • Bugun: <b>{s['today']}</b>  ·  Hafta: <b>{s['week']}</b>  ·  Oy: <b>{s['month']}</b>\n"
+        f"   • ✅ Qabul: <b>{s['accepted']}</b>  ·  ❌ Rad: <b>{s['rejected']}</b>  ·  📅 Suhbat: <b>{s['interview']}</b>\n"
+        f"   • 📋 Jami: <b>{s['total']}</b>\n"
     )
     if branches:
-        text += "\n🏢 <b>Filiallar bo'yicha:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>🏢 Filiallar bo'yicha</b>\n"
         for b in branches:
-            text += f"  • {b['name'] or 'Nomsiz'}: {b['cnt']}\n"
+            text += f"   • {b['name'] or 'Nomsiz'}: <b>{b['cnt']}</b>\n"
     if by_vac:
-        text += "\n💼 <b>Eng ko'p ariza (lavozimlar):</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>💼 Eng ko'p ariza (lavozimlar)</b>\n"
         for v in by_vac[:10]:
-            text += f"  • {v['name'] or 'Nomsiz'}: {v['cnt']}\n"
+            text += f"   • {v['name'] or 'Nomsiz'}: <b>{v['cnt']}</b>\n"
     if top:
-        text += "\n⭐ <b>Eng faol HR xodimlari:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>⭐ Eng faol HR xodimlari</b>\n"
         for t in top:
-            text += f"  • {t['name'] or 'Nomsiz'}: {t['cnt']} ta\n"
+            text += f"   • {t['name'] or 'Nomsiz'}: <b>{t['cnt']}</b> ta\n"
     await message.answer(text)
 
 

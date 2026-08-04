@@ -1226,6 +1226,109 @@ async def list_fines(employee_user_id, limit=30):
         await db.close()
 
 
+def _digits_to_int(text):
+    """«200 000 so'm» -> 200000; raqam bo'lmasa 0."""
+    d = "".join(c for c in str(text or "") if c.isdigit())
+    return int(d) if d else 0
+
+
+async def fines_total(employee_user_id, period):
+    """Shu oydagi (YYYY-MM) HR/buxgalter jarimalari yig'indisi (so'm).
+
+    `fines.amount` matn bo'lgani uchun Python tomonida yig'iladi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT amount FROM fines
+               WHERE employee_user_id=? AND substr(created_at,1,7)=?""",
+            (employee_user_id, period),
+        )
+        return sum(_digits_to_int(r["amount"]) for r in await cur.fetchall())
+    finally:
+        await db.close()
+
+
+async def advance_total(employee_user_id, period):
+    """Shu oyda tasdiqlangan avans miqdori (so'm)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COALESCE(SUM(amount),0) AS total
+               FROM advance_requests
+               WHERE user_id=? AND period=? AND status='confirmed'""",
+            (employee_user_id, period),
+        )
+        return (await cur.fetchone())["total"] or 0
+    finally:
+        await db.close()
+
+
+async def add_medicine(employee_user_id, branch_id, period, amount, reason, created_by):
+    """Dorixonadan olingan dori qiymatini yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            """INSERT INTO staff_medicines
+                   (employee_user_id, branch_id, period, amount, reason, created_by)
+               VALUES (?,?,?,?,?,?)""",
+            (employee_user_id, branch_id, period, int(amount), reason, created_by),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def medicines_total(employee_user_id, period):
+    """Shu oydagi dorilar umumiy qiymati va yozuvlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
+               FROM staff_medicines WHERE employee_user_id=? AND period=?""",
+            (employee_user_id, period),
+        )
+        row = dict(await cur.fetchone())
+        return row.get("total") or 0, row.get("cnt") or 0
+    finally:
+        await db.close()
+
+
+async def list_medicines(employee_user_id, limit=30):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT m.*, u.full_name AS created_by_name
+               FROM staff_medicines m
+               LEFT JOIN users u ON u.id=m.created_by
+               WHERE m.employee_user_id=?
+               ORDER BY m.id DESC LIMIT ?""",
+            (employee_user_id, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def attendance_month_stats(user_id, period):
+    """Shu oy (YYYY-MM) ichida kelgan kunlar va kechikkan kunlar soni.
+
+    `late` 0/1 bo'lgani uchun SUM(late) = kechikkan kunlar soni."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT COUNT(DISTINCT date) AS present_days,
+                      COALESCE(SUM(late),0)  AS late_days
+               FROM attendance
+               WHERE user_id=? AND status='present'
+                 AND substr(date,1,7)=?""",
+            (user_id, period),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else {"present_days": 0, "late_days": 0}
+    finally:
+        await db.close()
+
+
 async def get_fine(fid):
     db = await _conn()
     try:

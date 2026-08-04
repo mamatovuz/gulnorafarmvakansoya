@@ -138,11 +138,13 @@ class DayoffForm(StatesGroup):
 
 
 class AccForm(StatesGroup):
-    """Buxgalter: oylik/jarima kiritish."""
+    """Buxgalter: oylik/jarima/dori kiritish."""
     salary = State()
     raise_amount = State()
     fine_amount = State()
     fine_reason = State()
+    med_amount = State()     # dorixonadan olingan dori qiymati
+    med_reason = State()     # dori izohi
 
 
 class ChannelForm(StatesGroup):

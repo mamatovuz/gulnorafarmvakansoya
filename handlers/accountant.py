@@ -1,6 +1,7 @@
 """Buxgalter (accountant) paneli: davomat (filial kesimida), oylik belgilash/oshirish,
-oylik berildi/berilmadi, jarima yozish."""
-from datetime import datetime
+oylik berildi/berilmadi, jarima yozish, dori yozish va yakuniy oylik hisoblash."""
+from datetime import datetime, date
+from calendar import monthrange
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
@@ -501,4 +502,200 @@ async def acc_fine_view(call: CallbackQuery):
         await call.answer("Jarima topilmadi.", show_alert=True)
         return
     await call.message.answer(fine_text(fine))
+    await call.answer()
+
+
+# ---- Dori yozish (dorixonadan olingan dorilar) ----
+@router.callback_query(F.data.startswith("accmed:"))
+async def acc_med_start(call: CallbackQuery, state: FSMContext):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    await state.update_data(acc_uid=uid)
+    await state.set_state(AccForm.med_amount)
+    await call.message.answer(
+        "💊 Dorixonadan olingan <b>dori qiymatini</b> yozing (so'm).\n"
+        "Misol: <i>150 000</i>"
+    )
+    await call.answer()
+
+
+@router.message(AccForm.med_amount, F.text)
+async def acc_med_amount(message: Message, state: FSMContext):
+    amount = parse_money(message.text)
+    if not amount:
+        await message.answer("❌ Summani raqam bilan yozing. Misol: <i>150 000</i>")
+        return
+    await state.update_data(med_amount=amount)
+    await state.set_state(AccForm.med_reason)
+    await message.answer("✍️ Qanday dori? Qisqa izoh yozing (yoki «-»):")
+
+
+@router.message(AccForm.med_reason, F.text)
+async def acc_med_save(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    uid = data.get("acc_uid")
+    amount = data.get("med_amount")
+    reason = message.text.strip()
+    await state.clear()
+    profile = await q.get_employee_profile(uid)
+    me = await q.get_user(message.from_user.id)
+    await q.add_medicine(
+        uid, (profile or {}).get("branch_id"), _period_now(),
+        amount, reason, me["id"],
+    )
+    await q.add_log(
+        message.from_user.id, me["full_name"], "dori_yozdi",
+        f"user#{uid} {amount}",
+    )
+    await message.answer(
+        f"✅ Dori yozildi: <b>{fmt_money(amount)}</b>\n"
+        f"💊 Izoh: {reason}\n\n"
+        "Bu summa yakuniy oylikdan ayiriladi."
+    )
+    if profile and profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"💊 Dorixonadan olingan dori qiymati yozildi: <b>{fmt_money(amount)}</b>\n"
+            f"Izoh: {reason}\n\nBu summa oyligingizdan ayiriladi.",
+        )
+
+
+@router.callback_query(F.data.startswith("accmeds:"))
+async def acc_meds_list(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    meds = await q.list_medicines(uid)
+    if not meds:
+        await call.answer("Dori yozuvlari yo'q.", show_alert=True)
+        return
+    lines = [f"💊 <b>Dorilar</b> ({len(meds)} ta):", "━━━━━━━━━━━━"]
+    for m in meds:
+        d = (m.get("created_at") or "")[:10]
+        reason = m.get("reason") or "-"
+        lines.append(f"• {fmt_money(m.get('amount'))} · {reason} · {d}")
+    await call.message.answer("\n".join(lines))
+    await call.answer()
+
+
+# ================= YAKUNIY OYLIK HISOBLASH =================
+# Kunlik stavka = oylik ÷ 30. Kelmagan kun × kunlik, kechikkan kun × kunlik/2.
+_REST_WEEKDAY = {
+    "Dushanba": 0, "Seshanba": 1, "Chorshanba": 2, "Payshanba": 3,
+    "Juma": 4, "Shanba": 5, "Yakshanba": 6,
+}
+
+
+def _rest_weekday(rest_day):
+    """Kanonik dam olish kunini Python hafta kuniga (Dush=0..Yaksh=6) o'giradi.
+
+    «🚫 yo'q» yoki noma'lum bo'lsa None — hech qanday kun dam deb hisoblanmaydi."""
+    return _REST_WEEKDAY.get((rest_day or "").strip())
+
+
+def _month_workdays(period, rest_wd, today):
+    """Shu oyda (bugungacha) kutilgan ish kunlari soni — dam kunlaridan tashqari."""
+    year, month = map(int, period.split("-"))
+    if (year, month) > (today.year, today.month):
+        return 0                      # kelajakdagi oy
+    last_day = monthrange(year, month)[1]
+    end_day = today.day if (today.year, today.month) == (year, month) else last_day
+    count = 0
+    for d in range(1, end_day + 1):
+        if rest_wd is None or date(year, month, d).weekday() != rest_wd:
+            count += 1
+    return count
+
+
+async def _compute_final_salary(uid):
+    """Yakuniy oylikni barcha chegirmalar bilan hisoblaydi. Dict qaytaradi."""
+    profile = await q.get_employee_profile(uid)
+    period = _period_now()
+    base = parse_money((profile or {}).get("monthly_salary")) or 0
+    daily = base / 30 if base else 0
+
+    stats = await q.attendance_month_stats(uid, period)
+    present = stats.get("present_days", 0) or 0
+    late_days = stats.get("late_days", 0) or 0
+    rest_wd = _rest_weekday((profile or {}).get("rest_day"))
+    workdays = _month_workdays(period, rest_wd, now_tk())
+    absent_days = max(0, workdays - present)
+    absent_sum = round(absent_days * daily)
+    late_sum = round(late_days * daily / 2)
+    attendance_ded = absent_sum + late_sum
+
+    fines_sum = await q.fines_total(uid, period)
+    advance_sum = await q.advance_total(uid, period)
+    med_sum, med_cnt = await q.medicines_total(uid, period)
+    kpi_sum, kpi_cnt = await q.deductions_total(uid, period)
+
+    final = base - attendance_ded - fines_sum - advance_sum - med_sum - kpi_sum
+    return {
+        "profile": profile, "period": period, "base": base,
+        "present": present, "absent_days": absent_days, "late_days": late_days,
+        "absent_sum": absent_sum, "late_sum": late_sum,
+        "fines_sum": fines_sum, "advance_sum": advance_sum,
+        "med_sum": med_sum, "kpi_sum": kpi_sum, "kpi_cnt": kpi_cnt,
+        "workdays": workdays, "final": max(0, round(final)),
+    }
+
+
+@router.callback_query(F.data.startswith("accfinal:"))
+async def acc_final_salary(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    r = await _compute_final_salary(uid)
+    profile = r["profile"]
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    name = profile.get("full_name") or "-"
+    if not r["base"]:
+        await call.message.answer(
+            f"🧮 <b>Yakuniy oylik — {name}</b>\n\n"
+            "⚠️ <b>Oylik belgilanmagan.</b> Avval «💰 Oylik belgilash» "
+            "orqali oylik kiriting."
+        )
+        await call.answer()
+        return
+
+    def line(label, value):
+        return f"➖ {label}: <b>{fmt_money(value)}</b>" if value else None
+
+    parts = [
+        f"🧮 <b>Yakuniy oylik hisobi</b>",
+        f"👤 {name} · 📆 {r['period']}",
+        "━━━━━━━━━━━━",
+        f"💰 Asosiy oylik: <b>{fmt_money(r['base'])}</b>",
+        "",
+        f"📊 Davomat: kelgan <b>{r['present']}</b> / ish kuni <b>{r['workdays']}</b> · "
+        f"kelmagan <b>{r['absent_days']}</b> · kechikkan <b>{r['late_days']}</b>",
+    ]
+    ded_lines = [
+        line("Kelmagan kunlar", r["absent_sum"]),
+        line("Kechikishlar", r["late_sum"]),
+        line("Jarimalar (HR)", r["fines_sum"]),
+        line("Olingan avans", r["advance_sum"]),
+        line("Dorilar", r["med_sum"]),
+        line(f"KPI kesish ({r['kpi_cnt']} ta)", r["kpi_sum"]),
+    ]
+    ded_lines = [x for x in ded_lines if x]
+    if ded_lines:
+        parts.append("")
+        parts.append("<b>Chegirmalar:</b>")
+        parts += ded_lines
+    else:
+        parts.append("\n✅ Chegirmalar yo'q.")
+    parts += [
+        "━━━━━━━━━━━━",
+        f"✅ <b>Qo'lga tegadigan oylik: {fmt_money(r['final'])}</b>",
+        "\n<i>Kelmagan/kechikish davomatdan avtomatik hisoblangan "
+        "(kunlik = oylik ÷ 30). Kerak bo'lsa jarima orqali tuzating.</i>",
+    ]
+    await call.message.answer("\n".join(parts))
     await call.answer()

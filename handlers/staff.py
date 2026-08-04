@@ -801,17 +801,26 @@ async def director_stats(message: Message):
     vacs = await q.list_vacancies()
     active_vacs = [v for v in vacs if v["is_active"]]
     text = (
-        "📊 <b>Direktor statistikasi</b>\n\n"
-        f"📥 Bugungi arizalar: <b>{s['today']}</b>\n"
-        f"📅 Haftalik arizalar: <b>{s['week']}</b>\n"
-        f"✅ Qabul qilinganlar: <b>{s['accepted']}</b>\n"
-        f"📋 Jami arizalar: <b>{s['total']}</b>\n\n"
-        f"💼 Vakansiyalar: <b>{len(vacs)}</b> (faol: {len(active_vacs)})\n"
-        f"👕 Forma: bor {uniform.get('has_uniform') or 0}, "
-        f"yo'q {uniform.get('no_uniform') or 0}, "
-        f"noma'lum {uniform.get('unknown') or 0}\n"
-        f"📨 Rahbar so'rovlari: yangi {requests.get('new', 0)}, "
-        f"qabul {requests.get('accepted', 0)}, yopilgan {requests.get('closed', 0)}"
+        "📊 <b>Direktor statistikasi</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>📥 Arizalar</b>\n"
+        f"   • Bugun: <b>{s['today']}</b>\n"
+        f"   • Haftalik: <b>{s['week']}</b>\n"
+        f"   • Qabul qilingan: <b>{s['accepted']}</b>\n"
+        f"   • Jami: <b>{s['total']}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>💼 Vakansiyalar</b>\n"
+        f"   • Jami: <b>{len(vacs)}</b>  ·  faol: <b>{len(active_vacs)}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>👕 Forma holati</b>\n"
+        f"   • ✅ Bor: <b>{uniform.get('has_uniform') or 0}</b>\n"
+        f"   • ❌ Yo'q: <b>{uniform.get('no_uniform') or 0}</b>\n"
+        f"   • ➖ Noma'lum: <b>{uniform.get('unknown') or 0}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>📨 Rahbar so'rovlari</b>\n"
+        f"   • 🆕 Yangi: <b>{requests.get('new', 0)}</b>\n"
+        f"   • ✅ Qabul: <b>{requests.get('accepted', 0)}</b>\n"
+        f"   • 📁 Yopilgan: <b>{requests.get('closed', 0)}</b>"
     )
     await message.answer(text)
 
@@ -830,8 +839,10 @@ async def director_employee_stats(message: Message):
     profiles = await q.list_employee_profiles()
     role_stats = await q.employee_stats_by_role()
     text = (
-        "👥 <b>Xodimlar statistikasi</b>\n\n"
-        f"Jami foydalanuvchilar: <b>{total}</b>\n"
+        "👥 <b>Xodimlar statistikasi</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👤 Jami foydalanuvchilar: <b>{total}</b>\n"
+        "━━━━━━━━━━━━━\n"
         f"👔 Direktorlar: <b>{directors}</b>\n"
         f"🧑‍💼 HR: <b>{hrs}</b>\n"
         f"🏢 Filial rahbarlari: <b>{managers}</b>\n"
@@ -840,9 +851,9 @@ async def director_employee_stats(message: Message):
         f"📁 Xodim profillari: <b>{len(profiles)}</b>"
     )
     if role_stats:
-        text += "\n\n<b>Profil rollari:</b>\n"
+        text += "\n━━━━━━━━━━━━━\n<b>📋 Profil rollari</b>\n"
         for row in role_stats:
-            text += f"  • {ROLE_NAMES.get(row['role'], row['role'] or 'Noma`lum')}: {row['cnt']}\n"
+            text += f"   • {ROLE_NAMES.get(row['role'], row['role'] or 'Noma`lum')}: <b>{row['cnt']}</b>\n"
     await message.answer(text)
 
 
@@ -855,13 +866,14 @@ async def director_branch_stats(message: Message):
     if not rows:
         await message.answer("🏢 Filiallar bo'yicha xodim statistikasi hali yo'q.")
         return
-    text = "🏢 <b>Filiallar kesimi</b>\n\n"
+    text = "🏢 <b>Filiallar kesimi</b>\n━━━━━━━━━━━━━\n"
     for row in rows:
         text += (
-            f"<b>{row['name']}</b>\n"
-            f"  Jami: {row['total']} | Farmatsevt: {row['pharmacists'] or 0} | "
-            f"Rahbar: {row['managers'] or 0}\n"
-            f"  Forma bor: {row['has_uniform'] or 0} | Forma yo'q: {row['no_uniform'] or 0}\n\n"
+            f"🏢 <b>{row['name']}</b>\n"
+            f"   👥 Jami: <b>{row['total']}</b>  ·  💊 Farmatsevt: {row['pharmacists'] or 0}"
+            f"  ·  🏢 Rahbar: {row['managers'] or 0}\n"
+            f"   👕 Forma — ✅ {row['has_uniform'] or 0}  ·  ❌ {row['no_uniform'] or 0}\n"
+            "─────────────\n"
         )
     await message.answer(text)
 
@@ -875,21 +887,23 @@ async def director_application_stats(message: Message):
     branches = await q.stats_by_branch()
     vacancies = await q.stats_by_vacancy()
     text = (
-        "📥 <b>Arizalar kesimi</b>\n\n"
-        f"🆕 Yangi: <b>{counts.get('new', 0)}</b>\n"
-        f"📅 Suhbat: <b>{counts.get('interview', 0)}</b>\n"
-        f"✅ Qabul: <b>{counts.get('accepted', 0)}</b>\n"
-        f"❌ Rad: <b>{counts.get('rejected', 0)}</b>\n"
+        "📥 <b>Arizalar kesimi</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>Status bo'yicha</b>\n"
+        f"   • 🆕 Yangi: <b>{counts.get('new', 0)}</b>\n"
+        f"   • 📅 Suhbat: <b>{counts.get('interview', 0)}</b>\n"
+        f"   • ✅ Qabul: <b>{counts.get('accepted', 0)}</b>\n"
+        f"   • ❌ Rad: <b>{counts.get('rejected', 0)}</b>\n"
     )
     if branches:
-        text += "\n<b>Filiallar bo'yicha:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>🏢 Filiallar bo'yicha</b>\n"
         for row in branches[:10]:
-            text += f"  • {row['name'] or 'Nomsiz'}: {row['cnt']}\n"
+            text += f"   • {row['name'] or 'Nomsiz'}: <b>{row['cnt']}</b>\n"
     if vacancies:
-        text += "\n<b>Lavozimlar bo'yicha:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>💼 Lavozimlar bo'yicha</b>\n"
         for row in vacancies[:10]:
-            text += f"  • {row['name'] or 'Nomsiz'}: {row['cnt']}\n"
-    text += "\nStatus bo'yicha arizalarni ko'rish uchun tanlang:"
+            text += f"   • {row['name'] or 'Nomsiz'}: <b>{row['cnt']}</b>\n"
+    text += "\n👇 Status bo'yicha arizalarni ko'rish uchun tanlang:"
     await message.answer(text, reply_markup=kb.director_application_status_kb())
 
 

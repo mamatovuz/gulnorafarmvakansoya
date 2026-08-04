@@ -320,6 +320,21 @@ CREATE TABLE IF NOT EXISTS fines (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+-- Dorixonadan olingan dorilar (yakuniy oylikdan ayiriladi)
+CREATE TABLE IF NOT EXISTS staff_medicines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_user_id INTEGER NOT NULL,   -- kimdan (users.id)
+    branch_id INTEGER,
+    period TEXT NOT NULL,                -- qaysi oy: YYYY-MM
+    amount INTEGER NOT NULL,             -- dori qiymati (so'm)
+    reason TEXT,                         -- izoh (qanday dori)
+    created_by INTEGER,                  -- kim yozdi (users.id)
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_staff_medicines_period
+    ON staff_medicines(employee_user_id, period);
+
 -- Xodim maosh oshirish so'rovi (xodim ⇄ HR kelishuvi)
 CREATE TABLE IF NOT EXISTS salary_raise_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

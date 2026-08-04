@@ -484,6 +484,7 @@ def hr_menu():
     b.button(text="🧾 Xodim so'rovlari")
     b.button(text="❌ Rad etilgan murojaatlar")
     b.button(text="👥 Xodimlar")
+    b.button(text="🚫 Ishdan bo'shatish")
     b.button(text="📍 Davomat")
     b.button(text="🛌 Kunlik dam olish")
     b.button(text="⚙️ Davomat sozlamalari")
@@ -497,7 +498,7 @@ def hr_menu():
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1063,6 +1064,46 @@ def termination_actions_kb(rid):
     b.button(text="✅ Tasdiqlash", callback_data=f"tacc:{rid}")
     b.button(text="❌ Rad etish", callback_data=f"trej:{rid}")
     b.adjust(2)
+    return b.as_markup()
+
+
+# ---- HR tashabbusli ishdan bo'shatish (filial -> xodim -> tasdiq) ----
+def hr_fire_branch_kb(branches):
+    """HR «Ishdan bo'shatish» — filiallar ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"hrfbr:{br['id']}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def hr_fire_employees_kb(profiles):
+    """Tanlangan filial xodimlari — bittasini bosib ishdan bo'shatish."""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        role = p.get("role") or "xodim"
+        b.button(
+            text=f"👤 {p.get('full_name') or p.get('tg_id')} · {role}",
+            callback_data=f"hrfemp:{p['user_id']}",
+        )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def hr_fire_start_kb(user_id):
+    """Xodim profili tagida «Ishdan bo'shatish» tugmasi (HR)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🚫 Ishdan bo'shatish", callback_data=f"hrfask:{user_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def hr_fire_confirm_kb(user_id):
+    """«Ishdan bo'shatmoqchimisiz?» — tasdiqlash / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, ishdan bo'shatish", callback_data=f"hrfyes:{user_id}")
+    b.button(text="❌ Yo'q, bekor qilish", callback_data=f"hrfno:{user_id}")
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -1732,8 +1773,11 @@ def accountant_employee_kb(user_id):
     b.button(text="❌ Oylik berilmadi", callback_data=f"accpaid:{user_id}:unpaid")
     b.button(text="💸 Jarima yozish", callback_data=f"accfine:{user_id}")
     b.button(text="📋 Jarimalar", callback_data=f"accfines:{user_id}")
+    b.button(text="💊 Dori yozish", callback_data=f"accmed:{user_id}")
+    b.button(text="📋 Dorilar", callback_data=f"accmeds:{user_id}")
+    b.button(text="🧮 Yakuniy oylik", callback_data=f"accfinal:{user_id}")
     b.button(text="🧾 To'lovlar tarixi", callback_data=f"accpayhist:{user_id}")
-    b.adjust(2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 1, 1)
     return b.as_markup()
 
 

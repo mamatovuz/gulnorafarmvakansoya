@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE, ROLE_IT,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING, STATUS_LABELS,
 )
 from states import (
@@ -162,27 +162,31 @@ async def hr_dashboard(message: Message):
     branches = await q.stats_by_branch()
     vacs = await q.stats_by_vacancy()
     text = (
-        "📊 <b>HR Dashboard</b>\n\n"
-        f"📥 Bugungi arizalar: <b>{s['today']}</b>\n"
-        f"📅 Haftalik: <b>{s['week']}</b>\n"
-        f"🗓 Oylik: <b>{s['month']}</b>\n\n"
-        f"🆕 Yangi: <b>{s['new']}</b>\n"
-        f"📅 Suhbatga chaqirilgan: <b>{s['interview']}</b>\n"
-        f"✅ Ishga qabul qilingan: <b>{s['accepted']}</b>\n"
-        f"❌ Rad etilgan: <b>{s['rejected']}</b>\n"
-        f"📋 Jami: <b>{s['total']}</b>\n"
-        f"\n👕 <b>Forma:</b> bor {uniform.get('has_uniform') or 0} ta | "
-        f"yo'q {uniform.get('no_uniform') or 0} ta | "
-        f"noma'lum {uniform.get('unknown') or 0} ta\n"
+        "📊 <b>HR Dashboard</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>📥 Arizalar oqimi</b>\n"
+        f"   • Bugun: <b>{s['today']}</b>  ·  Hafta: <b>{s['week']}</b>  ·  Oy: <b>{s['month']}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>📂 Status bo'yicha</b>\n"
+        f"   • 🆕 Yangi: <b>{s['new']}</b>\n"
+        f"   • 📅 Suhbatga chaqirilgan: <b>{s['interview']}</b>\n"
+        f"   • ✅ Ishga qabul qilingan: <b>{s['accepted']}</b>\n"
+        f"   • ❌ Rad etilgan: <b>{s['rejected']}</b>\n"
+        f"   • 📋 Jami: <b>{s['total']}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "<b>👕 Forma holati</b>\n"
+        f"   • ✅ Bor: <b>{uniform.get('has_uniform') or 0}</b>  ·  "
+        f"❌ Yo'q: <b>{uniform.get('no_uniform') or 0}</b>  ·  "
+        f"➖ Noma'lum: <b>{uniform.get('unknown') or 0}</b>\n"
     )
     if branches:
-        text += "\n🏢 <b>Filiallar bo'yicha:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>🏢 Filiallar bo'yicha</b>\n"
         for b in branches:
-            text += f"  • {b['name'] or 'Nomsiz'}: {b['cnt']}\n"
+            text += f"   • {b['name'] or 'Nomsiz'}: <b>{b['cnt']}</b>\n"
     if vacs:
-        text += "\n💼 <b>Vakansiyalar bo'yicha:</b>\n"
+        text += "━━━━━━━━━━━━━\n<b>💼 Vakansiyalar bo'yicha</b>\n"
         for v in vacs[:10]:
-            text += f"  • {v['name'] or 'Nomsiz'}: {v['cnt']}\n"
+            text += f"   • {v['name'] or 'Nomsiz'}: <b>{v['cnt']}</b>\n"
     await message.answer(text)
 
 
@@ -1039,6 +1043,194 @@ async def employee_profile_view(call: CallbackQuery):
         reply_markup=kb.uniform_employee_kb(uid, profile.get("uniform_status")),
     )
     await call.answer()
+
+
+# ---------------- HR TASHABBUSLI ISHDAN BO'SHATISH ----------------
+# HR paneldan: «🚫 Ishdan bo'shatish» -> filial -> xodim -> profil -> tasdiq.
+# Rahbar so'roviga (staff.py -> tacc/trej) o'xshaydi, lekin bu yerda tashabbus
+# HR da: xodim to'g'ridan-to'g'ri bo'shatiladi, xabar filial rahbari va IT ga boradi.
+
+async def _notify_it_users(bot: Bot, text: str):
+    """Barcha IT xodim va adminlarga xabar (takrorsiz)."""
+    ids = set(await q.all_user_tg_ids(role=ROLE_IT))
+    ids |= set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    for tid in ids:
+        await safe_send(bot, tid, text)
+
+
+@router.message(F.text == "🚫 Ishdan bo'shatish")
+async def hr_fire_branches(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await message.answer("🏢 Hali filiallar yo'q.")
+        return
+    await message.answer(
+        "🚫 <b>Ishdan bo'shatish</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "Avval <b>filialni</b> tanlang — so'ng o'sha filial xodimlari ro'yxati "
+        "chiqadi:",
+        reply_markup=kb.hr_fire_branch_kb(branches),
+    )
+
+
+@router.callback_query(F.data.startswith("hrfbr:"))
+async def hr_fire_by_branch(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    branch_name = branch["name"] if branch else "—"
+    employees = await q.list_employee_profiles(branch_id=bid)
+    if not employees:
+        await call.message.answer(
+            f"🏢 <b>{branch_name}</b> filialida ishdan bo'shatiladigan "
+            "xodim profili yo'q."
+        )
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{branch_name}</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👥 Xodimlar: <b>{len(employees)}</b> ta\n\n"
+        "Ishdan bo'shatmoqchi bo'lgan xodimni tanlang:",
+        reply_markup=kb.hr_fire_employees_kb(employees[:30]),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("hrfemp:"))
+async def hr_fire_employee_view(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await send_employee_profile(
+        call.message, profile,
+        prefix="🚫 <b>Ishdan bo'shatish</b> — xodim ma'lumotlari:",
+        reply_markup=kb.hr_fire_start_kb(uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("hrfask:"))
+async def hr_fire_ask(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "⚠️ <b>Ishdan bo'shatishni tasdiqlaysizmi?</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{profile.get('full_name') or '-'}</b>\n"
+        f"💼 Lavozim: {profile.get('position') or '-'}\n"
+        f"🏢 Filial: {profile.get('branch_name') or '—'}\n\n"
+        "Tasdiqlasangiz — xodim <b>darhol ishdan bo'shatiladi</b> va bu haqda "
+        "filial rahbari hamda IT bo'limiga xabar yuboriladi.",
+        reply_markup=kb.hr_fire_confirm_kb(uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("hrfno:"))
+async def hr_fire_cancel(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("❌ Bekor qilindi. Xodim ishdan bo'shatilmadi.")
+    await call.answer("Bekor qilindi")
+
+
+@router.callback_query(F.data.startswith("hrfyes:"))
+async def hr_fire_confirm(call: CallbackQuery, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi (allaqachon bo'shatilgan bo'lishi mumkin).",
+                          show_alert=True)
+        return
+    me = await actor(call.from_user.id)
+    emp_name = profile.get("full_name") or "Xodim"
+    emp_tg = profile.get("tg_id")
+    branch_id = profile.get("branch_id")
+    branch_name = profile.get("branch_name") or "—"
+    position = profile.get("position") or "-"
+
+    # Kadrlar harakati (IT hisoboti) — profil o'chishidan OLDIN yozamiz
+    await q.add_hr_event(
+        "left", user_id=uid, full_name=emp_name, branch_id=branch_id,
+        details="HR tomonidan ishdan bo'shatildi", created_by=me["id"] if me else None,
+    )
+    # Xodimni ishdan bo'shatamiz (profil o'chadi, rol nomzodga qaytadi)
+    await q.fire_employee(uid)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "hr_ishdan_boshatdi", f"{emp_name} · {branch_name}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "✅ <b>Ishdan bo'shatildi</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{emp_name}</b>\n"
+        f"🏢 Filial: {branch_name}\n\n"
+        "📨 Filial rahbari va IT bo'limi xabardor qilindi."
+    )
+    await call.answer("Ishdan bo'shatildi ✅")
+
+    # Xodimning o'ziga xabar
+    if emp_tg:
+        await safe_send(
+            bot, emp_tg,
+            f"😔 Hurmatli <b>{emp_name}</b>!\n\n"
+            "Afsuski, siz HR bo'limi tomonidan ishdan bo'shatildingiz.\n"
+            "Ko'rsatgan mehnatingiz uchun rahmat! 🙏",
+            reply_markup=kb.main_menu(ROLE_CANDIDATE),
+        )
+    # Filial rahbariga xabar
+    mgr_ids = await q.branch_manager_tg_ids(branch_id) if branch_id else []
+    for tid in mgr_ids:
+        await safe_send(
+            bot, tid,
+            "🚫 <b>Xodim ishdan bo'shatildi</b>\n"
+            "━━━━━━━━━━━━━\n"
+            f"Sizning <b>{branch_name}</b> filialingizdan <b>{emp_name}</b> "
+            "(👤 " + position + ") xodim <b>HR bo'limi tomonidan</b> ishdan "
+            "bo'shatildi.",
+        )
+    # IT bo'limiga xabar
+    await _notify_it_users(
+        bot,
+        "🚫 <b>Xodim ishdan bo'shatildi (HR)</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{emp_name}</b>\n"
+        f"💼 Lavozim: {position}\n"
+        f"🏢 Filial: {branch_name}\n"
+        f"🧑‍💼 Bo'shatdi: {me['full_name'] if me else '-'} (HR)",
+    )
 
 
 @router.callback_query(F.data.startswith("ufset:"))

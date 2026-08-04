@@ -470,7 +470,7 @@ async def _render_report(target, user, scope, period):
         "",
     ]
     if present:
-        lines.append("<b>Kelganlar (kunlar soni):</b>")
+        lines.append("<b>✅ Kelganlar (kunlar soni)</b>")
         for p in present[:40]:
             flags = ""
             if p.get("lates"):
@@ -490,7 +490,8 @@ async def _render_report(target, user, scope, period):
         detail = await q.attendance_detail(period="day", branch_id=branch_id)
         if detail:
             lines.append("")
-            lines.append("<b>🕐 Bugungi kelgan/ketgan vaqt:</b>")
+            lines.append("━━━━━━━━━━━━")
+            lines.append("<b>🕐 Bugungi kelgan/ketgan vaqt</b>")
             for d in detail[:40]:
                 out = d.get("out_time") or "…"
                 marks = ""
@@ -503,6 +504,7 @@ async def _render_report(target, user, scope, period):
                 )
         absent = await q.attendance_absent_today(branch_id=branch_id)
         lines.append("")
+        lines.append("━━━━━━━━━━━━")
         lines.append(f"<b>❌ Bugun kelmaganlar:</b> {len(absent)} ta")
         for a in absent[:40]:
             lines.append(
