@@ -806,6 +806,28 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
         await db.close()
 
 
+EMP_EDITABLE_FIELDS = {
+    "position", "monthly_salary", "birth_date", "address", "work_hours",
+    "rest_day", "photo_file_id", "education", "since", "extra_info",
+}
+
+
+async def update_employee_field(user_id, field, value):
+    """employee_profiles jadvalidagi bitta maydonni yangilaydi (oq ro'yxat)."""
+    if field not in EMP_EDITABLE_FIELDS:
+        raise ValueError(f"Ruxsat etilmagan maydon: {field}")
+    db = await _conn()
+    try:
+        await db.execute(
+            f"UPDATE employee_profiles SET {field}=?, "
+            "updated_at=datetime('now','+5 hours') WHERE user_id=?",
+            (value, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def set_employee_status(user_id, status):
     """Xodimning bandlik maqomini o'zgartiradi (regular / trial / learner)."""
     db = await _conn()

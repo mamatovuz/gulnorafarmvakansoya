@@ -94,6 +94,11 @@ class EmpManageForm(StatesGroup):
     query = State()
 
 
+class EmpEditForm(StatesGroup):
+    """Xodimning bitta maydonini (ism/telefon/rasm/...) tahrirlash."""
+    value = State()
+
+
 class ApplicationFilterForm(StatesGroup):
     """HR arizalarni kengaytirilgan filter bilan izlaydi."""
     query = State()

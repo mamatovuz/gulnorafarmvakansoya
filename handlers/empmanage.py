@@ -17,9 +17,9 @@ from database.db import (
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
     EMP_STATUS_LABELS, ES_REGULAR,
 )
-from states import EmpManageForm
+from states import EmpManageForm, EmpEditForm
 import keyboards as kb
-from utils import send_employee_profile, safe_send
+from utils import send_employee_profile, safe_send, PROFILE_UPDATE_NOTICE
 
 router = Router()
 
@@ -174,13 +174,143 @@ async def _show_card(target, uid, prefix=""):
 
 
 @router.callback_query(F.data.startswith("emmemp:"))
-async def emp_manage_view(call: CallbackQuery):
+async def emp_manage_view(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    uid = int(call.data.split(":")[1])
+    await _show_card(call.message, uid)
+    await call.answer()
+
+
+# ---------------- MAYDONMA-MAYDON TAHRIRLASH ----------------
+@router.callback_query(F.data.startswith("emmedit:"))
+async def emp_manage_edit_menu(call: CallbackQuery):
     if not await _is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
     uid = int(call.data.split(":")[1])
-    await _show_card(call.message, uid)
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"✏️ <b>{profile.get('full_name') or '-'}</b> — nimani tahrirlaymiz?\n"
+        "Kerakli maydonni bosing, so'ng yangi qiymatni yuboring:",
+        reply_markup=kb.emp_manage_field_kb(uid),
+    )
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmf:"))
+async def emp_manage_field_ask(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, field = call.data.split(":")
+    uid = int(uid_s)
+    prompt = kb.EMP_EDIT_PROMPTS.get(field)
+    if not prompt:
+        await call.answer("Noma'lum maydon.", show_alert=True)
+        return
+    await state.set_state(EmpEditForm.value)
+    await state.update_data(edit_uid=uid, edit_field=field)
+    await call.message.answer(prompt)
+    await call.answer()
+
+
+@router.message(EmpEditForm.value, F.photo)
+async def emp_manage_field_photo(message: Message, state: FSMContext):
+    if not await _is_staff(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    uid, field = data.get("edit_uid"), data.get("edit_field")
+    if field != "photo":
+        await message.answer("❗️ Bu maydon uchun rasm emas, matn yuboring.")
+        return
+    file_id = message.photo[-1].file_id
+    await q.update_employee_field(uid, "photo_file_id", file_id)
+    await state.clear()
+    await _log_edit(message, uid, "rasm")
+    await _show_card(message, uid, prefix="✅ Rasm yangilandi")
+
+
+@router.message(EmpEditForm.value, F.text)
+async def emp_manage_field_value(message: Message, state: FSMContext, bot: Bot):
+    if not await _is_staff(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    uid, field = data.get("edit_uid"), data.get("edit_field")
+    value = message.text.strip()
+    if field == "photo":
+        await message.answer("❗️ Iltimos, matn emas, rasm yuboring.")
+        return
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await state.clear()
+        await message.answer("❗️ Xodim topilmadi.")
+        return
+
+    label = dict((k, l) for k, l, _p in kb.EMP_EDIT_FIELDS).get(field, field)
+    if field == "name":
+        await q.set_real_name(user_id=uid, full_name=value)
+    elif field == "phone":
+        tg_id = profile.get("tg_id")
+        if tg_id:
+            await q.update_phone(tg_id, value)
+    else:
+        await q.update_employee_field(uid, field, value)
+    await state.clear()
+    await _log_edit(message, uid, label)
+    await _show_card(message, uid, prefix=f"✅ {label} yangilandi")
+
+
+async def _log_edit(message, uid, label):
+    me = await q.get_user(message.from_user.id)
+    profile = await q.get_employee_profile(uid)
+    await q.add_log(
+        message.from_user.id, me["full_name"] if me else "?",
+        "xodim_malumot_tahrir",
+        f"{profile.get('full_name') if profile else uid}: {label}",
+    )
+
+
+# ---------------- XODIMDAN O'ZI YANGILASHNI SO'RASH ----------------
+@router.callback_query(F.data.startswith("emmreqfresh:"))
+async def emp_manage_request_fresh(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    total, tg_ids = await q.request_profile_update_all(user_id=uid)
+    sent = 0
+    for tid in tg_ids:
+        if await safe_send(bot, tid, PROFILE_UPDATE_NOTICE,
+                           reply_markup=kb.profile_update_start_kb()):
+            sent += 1
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "malumot_yangilash_sorovi",
+        f"👤 {profile.get('full_name')} — {sent}/{total}",
+    )
+    if not total:
+        await call.answer("Bu xodimdan so'rab bo'lmaydi.", show_alert=True)
+        return
+    await call.answer("So'rov yuborildi ✅")
+    await call.message.answer(
+        f"🔄 <b>{profile.get('full_name') or '-'}</b> ga ma'lumotini yangilash "
+        f"so'rovi yuborildi.\n"
+        "U ma'lumotlarini yangilamaguncha botning boshqa bo'limlaridan "
+        "foydalana olmaydi."
+    )
 
 
 # ---------------- ROL ALMASHTIRISH ----------------

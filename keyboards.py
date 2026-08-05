@@ -1467,10 +1467,42 @@ def emp_manage_list_kb(profiles, prefix="emmemp"):
 def emp_manage_edit_kb(uid):
     """Bitta xodim kartochkasi ostidagi tahrirlash tugmalari."""
     b = InlineKeyboardBuilder()
+    b.button(text="✏️ Ma'lumotni tahrirlash", callback_data=f"emmedit:{uid}")
     b.button(text="🎭 Rolni almashtirish", callback_data=f"emmrole:{uid}")
     b.button(text="🏢 Filialni almashtirish", callback_data=f"emmbranch:{uid}")
     b.button(text="🏷 Maqomni belgilash", callback_data=f"emmstatus:{uid}")
+    b.button(text="🔄 Yangilashni so'rash (xodim o'zi)", callback_data=f"emmreqfresh:{uid}")
     b.adjust(1)
+    return b.as_markup()
+
+
+# Tahrirlanadigan maydonlar: (kalit, tugma matni, so'rov matni)
+# kalit «name» / «phone» — users jadvali; «photo» — rasm; qolganlari employee_profiles.
+EMP_EDIT_FIELDS = [
+    ("photo", "🖼 Rasm", "🖼 Xodimning yangi rasmini yuboring:"),
+    ("name", "👤 Ism familiya", "👤 Yangi ism familiyani yozing:"),
+    ("phone", "📱 Telefon", "📱 Yangi telefon raqamni yozing (masalan +998901234567):"),
+    ("position", "💼 Lavozim", "💼 Yangi lavozimni yozing:"),
+    ("birth_date", "📅 Tug'ilgan sana", "📅 Tug'ilgan sanani yozing (kun.oy.yil):"),
+    ("address", "📍 Manzil", "📍 Yangi manzilni yozing:"),
+    ("work_hours", "🕒 Ish vaqti", "🕒 Ish vaqtini yozing (masalan 08:00 - 17:00):"),
+    ("rest_day", "🛌 Dam olish kuni", "🛌 Dam olish kunini yozing (masalan Yakshanba):"),
+    ("monthly_salary", "💰 Oylik", "💰 Oylik miqdorini yozing:"),
+    ("education", "🎓 Ma'lumoti", "🎓 Ma'lumoti / diplomini yozing:"),
+    ("since", "⏳ Gulnora Farmda", "⏳ Necha yildan beri ishlashini yozing:"),
+    ("extra_info", "🧩 Qo'shimcha", "🧩 Qo'shimcha ma'lumotni yozing:"),
+]
+
+EMP_EDIT_PROMPTS = {k: prompt for k, _label, prompt in EMP_EDIT_FIELDS}
+
+
+def emp_manage_field_kb(uid):
+    """«✏️ Tahrirlash» — har bir maydon uchun alohida tugma."""
+    b = InlineKeyboardBuilder()
+    for key, label, _prompt in EMP_EDIT_FIELDS:
+        b.button(text=label, callback_data=f"emmf:{uid}:{key}")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmemp:{uid}")
+    b.adjust(2)
     return b.as_markup()
 
 
