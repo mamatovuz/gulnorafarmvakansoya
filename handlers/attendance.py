@@ -459,29 +459,33 @@ async def _render_report(target, user, scope, period):
 
     present = await q.attendance_present_by_employee(period=period, branch_id=branch_id)
     total_emp = await q.count_active_employees(branch_id=branch_id)
+    show_branch = scope != "mgr"
 
     title = PERIOD_TITLES.get(period, period)
+    absent_cnt = max(total_emp - len(present), 0)
     lines = [
-        f"📍 <b>Davomat hisoboti</b> — {title}",
+        f"📍 <b>DAVOMAT HISOBOTI</b> · {title}",
         f"🏢 {branch_label}",
-        "━━━━━━━━━━━━",
-        f"👥 Jami xodimlar: <b>{total_emp}</b>",
-        f"✅ Davrda kelganlar: <b>{len(present)}</b>",
+        "━━━━━━━━━━━━━━━━━━",
+        f"👥 Jami xodim: <b>{total_emp}</b>",
+        f"✅ Kelgan: <b>{len(present)}</b>   ❌ Kelmagan: <b>{absent_cnt}</b>",
         "",
     ]
     if present:
-        lines.append("<b>✅ Kelganlar (kunlar soni)</b>")
-        for p in present[:40]:
-            flags = ""
+        lines.append(f"✅ <b>KELGANLAR</b> — {len(present)} ta")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        for i, p in enumerate(present[:60], 1):
+            name = p.get("full_name") or p.get("tg_id")
+            meta = []
+            if show_branch and p.get("branch_name"):
+                meta.append(f"🏢 {p['branch_name']}")
+            meta.append(f"📆 {p['days']} kun")
             if p.get("lates"):
-                flags += f" · ⏰ kech {p['lates']}"
+                meta.append(f"⏰ kech {p['lates']}")
             if p.get("earlies"):
-                flags += f" · 🏃 erta {p['earlies']}"
-            lines.append(
-                f"  • {p.get('full_name') or p.get('tg_id')}"
-                + (f" · {p['branch_name']}" if scope != 'mgr' and p.get('branch_name') else "")
-                + f" — {p['days']} kun{flags}"
-            )
+                meta.append(f"🏃 erta {p['earlies']}")
+            lines.append(f"<b>{i}.</b> {name}")
+            lines.append(f"     {' · '.join(meta)}")
     else:
         lines.append("Bu davrda hech kim kelmagan.")
 
@@ -490,9 +494,9 @@ async def _render_report(target, user, scope, period):
         detail = await q.attendance_detail(period="day", branch_id=branch_id)
         if detail:
             lines.append("")
-            lines.append("━━━━━━━━━━━━")
-            lines.append("<b>🕐 Bugungi kelgan/ketgan vaqt</b>")
-            for d in detail[:40]:
+            lines.append("🕐 <b>BUGUNGI KIRISH / CHIQISH</b>")
+            lines.append("━━━━━━━━━━━━━━━━━━")
+            for i, d in enumerate(detail[:60], 1):
                 out = d.get("out_time") or "…"
                 marks = ""
                 if d.get("late"):
@@ -500,17 +504,21 @@ async def _render_report(target, user, scope, period):
                 if d.get("early"):
                     marks += " 🏃"
                 lines.append(
-                    f"  • {d.get('full_name')}: {d.get('time') or '-'} → {out}{marks}"
+                    f"<b>{i}.</b> {d.get('full_name')}\n"
+                    f"     🟢 {d.get('time') or '-'} → 🔴 {out}{marks}"
                 )
         absent = await q.attendance_absent_today(branch_id=branch_id)
         lines.append("")
-        lines.append("━━━━━━━━━━━━")
-        lines.append(f"<b>❌ Bugun kelmaganlar:</b> {len(absent)} ta")
-        for a in absent[:40]:
-            lines.append(
-                f"  • {a.get('full_name') or a.get('tg_id')}"
-                + (f" · {a['branch_name']}" if scope != 'mgr' and a.get('branch_name') else "")
-            )
+        lines.append(f"❌ <b>BUGUN KELMAGANLAR</b> — {len(absent)} ta")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        if absent:
+            for i, a in enumerate(absent[:60], 1):
+                name = a.get("full_name") or a.get("tg_id")
+                br = (f" · 🏢 {a['branch_name']}"
+                      if show_branch and a.get("branch_name") else "")
+                lines.append(f"<b>{i}.</b> {name}{br}")
+        else:
+            lines.append("🎉 Hamma kelgan!")
 
     text = "\n".join(lines)
     for chunk in _split(text):
@@ -608,21 +616,32 @@ async def late_early_report(call: CallbackQuery):
         branch_id = user.get("branch_id") or (profile.get("branch_id") if profile else None)
     rows = await q.attendance_late_early(period=period, branch_id=branch_id)
     title = PERIOD_TITLES.get(period, period)
-    lines = [f"⏰ <b>Kech/erta hisobot</b> — {title}", "━━━━━━━━━━━━"]
+    lines = [
+        f"⏰ <b>KECH / ERTA HISOBOT</b> · {title}",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
     if rows:
-        for r in rows:
+        late_cnt = sum(1 for r in rows if r.get("late"))
+        early_cnt = sum(1 for r in rows if r.get("early"))
+        lines.append(
+            f"⏰ Kech kelgan: <b>{late_cnt}</b>   🏃 Erta ketgan: <b>{early_cnt}</b>"
+        )
+        lines.append("")
+        for i, r in enumerate(rows, 1):
             tag = []
             if r.get("late"):
                 tag.append("⏰ kech kelgan")
             if r.get("early"):
                 tag.append("🏃 erta ketgan")
+            br = f" · 🏢 {r['branch_name']}" if r.get("branch_name") else ""
+            lines.append(f"<b>{i}.</b> {r.get('full_name')}{br}")
             lines.append(
-                f"• {r.get('date')} · {r.get('full_name')}"
-                + (f" · {r['branch_name']}" if r.get('branch_name') else "")
-                + f" · {r.get('time') or '-'}→{r.get('out_time') or '…'} · {', '.join(tag)}"
+                f"     📅 {r.get('date')} · "
+                f"🟢 {r.get('time') or '-'} → 🔴 {r.get('out_time') or '…'}"
             )
+            lines.append(f"     {' · '.join(tag)}")
     else:
-        lines.append("Bu davrda kech/erta holatlar yo'q. 👍")
+        lines.append("✅ Bu davrda kech/erta holatlar yo'q. 👍")
     for chunk in _split("\n".join(lines)):
         await call.message.answer(chunk)
     await call.answer()

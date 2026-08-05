@@ -89,6 +89,11 @@ class EmployeeSearchForm(StatesGroup):
     query = State()
 
 
+class EmpManageForm(StatesGroup):
+    """«Ma'lumotlarni o'zgartirish» — xodimni ism/username bo'yicha topish."""
+    query = State()
+
+
 class ApplicationFilterForm(StatesGroup):
     """HR arizalarni kengaytirilgan filter bilan izlaydi."""
     query = State()

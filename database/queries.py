@@ -734,7 +734,8 @@ async def get_employee_profile(user_id):
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT ep.*, u.tg_id, u.full_name, u.phone, b.name AS branch_name
+            """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
+                      b.name AS branch_name
                FROM employee_profiles ep
                JOIN users u ON u.id=ep.user_id
                LEFT JOIN branches b ON b.id=ep.branch_id
@@ -792,9 +793,58 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
         if branch_id:
             sql += " AND ep.branch_id=?"
             params.append(branch_id)
-        sql += f" ORDER BY u.full_name LIMIT {int(limit)}"
+        # Filial rahbari (manager) va direktor doim ro'yxat boshida chiqadi,
+        # so'ng qolganlari ism bo'yicha.
+        sql += (
+            " ORDER BY CASE ep.role WHEN 'manager' THEN 0 "
+            "WHEN 'director' THEN 1 ELSE 2 END, u.full_name "
+            f"LIMIT {int(limit)}"
+        )
         cur = await db.execute(sql, params)
         return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def set_employee_status(user_id, status):
+    """Xodimning bandlik maqomini o'zgartiradi (regular / trial / learner)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE employee_profiles SET emp_status=?, "
+            "updated_at=datetime('now','+5 hours') WHERE user_id=?",
+            (status, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_employee_role(user_id, role, position=None):
+    """Xodim rolini users + employee_profiles jadvallarida yangilaydi.
+    Eski rolni qaytaradi (hr_event / log uchun)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT role FROM employee_profiles WHERE user_id=?", (user_id,)
+        )
+        row = await cur.fetchone()
+        old_role = row["role"] if row else None
+        await db.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        if position is not None:
+            await db.execute(
+                "UPDATE employee_profiles SET role=?, position=?, "
+                "updated_at=datetime('now','+5 hours') WHERE user_id=?",
+                (role, position, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE employee_profiles SET role=?, "
+                "updated_at=datetime('now','+5 hours') WHERE user_id=?",
+                (role, user_id),
+            )
+        await db.commit()
+        return old_role
     finally:
         await db.close()
 

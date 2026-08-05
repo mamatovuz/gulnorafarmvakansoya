@@ -39,6 +39,18 @@ ACCEPT_KIND_LABELS = {
     AK_LEARNER: "🎓 O'rganuvchi",
 }
 
+# Xodimning bandlik maqomi (employee_profiles.emp_status) — rol o'zgartirmasdan
+# xodimni «sinovda» yoki «o'rganuvchi» deb belgilash uchun.
+ES_REGULAR = "regular"    # doimiy xodim (default)
+ES_TRIAL = "trial"        # sinov muddatida
+ES_LEARNER = "learner"    # o'rganuvchi
+
+EMP_STATUS_LABELS = {
+    ES_REGULAR: "🟢 Doimiy xodim",
+    ES_TRIAL: "🧪 Sinovda",
+    ES_LEARNER: "🎓 O'rganuvchi",
+}
+
 
 def application_status_label(a):
     """Ariza statusi yorlig'i.
@@ -198,6 +210,7 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     photo_file_id TEXT,
     extra_info TEXT,
     since TEXT,
+    emp_status TEXT NOT NULL DEFAULT 'regular',  -- regular / trial / learner
     education TEXT,               -- ma'lumoti / diplomi (staff_regs dan ko'chiriladi)
     update_required INTEGER NOT NULL DEFAULT 0,  -- admin «ma'lumotlarni yangilash» so'ragan
     update_requested_at TEXT,
@@ -611,6 +624,7 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "photo_file_id": "TEXT",
     "extra_info": "TEXT",
     "since": "TEXT",
+    "emp_status": "TEXT NOT NULL DEFAULT 'regular'",
     "education": "TEXT",
     "update_required": "INTEGER NOT NULL DEFAULT 0",
     "update_requested_at": "TEXT",

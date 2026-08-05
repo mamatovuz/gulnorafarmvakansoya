@@ -32,6 +32,10 @@ HR_REQUEST_BTN = "📩 HR ga murojaat"
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
 
+# Admin/HR panelidagi «Ma'lumotlarni o'zgartirish» — xodim rol/filialini
+# to'g'ridan-to'g'ri tahrirlash oqimi (empmanage.py)
+EMP_MANAGE_BTN = "🛠 Ma'lumotlarni o'zgartirish"
+
 # Asosiy menyu tugmalari — bosilganda yarim qolgan FSM oqimi bekor qilinadi
 # (aks holda tugma matni ochiq anketa savoliga javob sifatida ketib qoladi).
 MENU_ESCAPE_BUTTONS = {
@@ -42,6 +46,7 @@ MENU_ESCAPE_BUTTONS = {
     "👨‍💼 HR panel", "👑 Admin panel", "📈 Direktor panel", "🧮 Moliya bo'limi",
     "❌ Rad etilgan murojaatlar", "👥 Xodimlar",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
+    EMP_MANAGE_BTN,
 }
 
 
@@ -484,6 +489,7 @@ def hr_menu():
     b.button(text="🧾 Xodim so'rovlari")
     b.button(text="❌ Rad etilgan murojaatlar")
     b.button(text="👥 Xodimlar")
+    b.button(text=EMP_MANAGE_BTN)
     b.button(text="🚫 Ishdan bo'shatish")
     b.button(text="📍 Davomat")
     b.button(text="🛌 Kunlik dam olish")
@@ -1273,8 +1279,9 @@ def admin_menu():
     b.button(text="💵 Avans sozlamalari")
     b.button(text="🧾 Audit log")
     b.button(text=PROFILE_UPDATE_BTN)
+    b.button(text=EMP_MANAGE_BTN)
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1404,6 +1411,106 @@ def channels_manage_kb(channels):
             callback_data=f"ch_tog:{ch['id']}",
         )
         b.button(text="🗑", callback_data=f"ch_del:{ch['id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branches_root_kb():
+    """Admin «🏢 Filiallar» — ikki yo'nalish: tahrirlash / xodimlar kesimi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Filial tahrirlash", callback_data="brroot:edit")
+    b.button(text="👥 Filial xodimlari bo'yicha ko'rish", callback_data="brroot:staff")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ================= XODIM MA'LUMOTLARINI O'ZGARTIRISH (admin/HR) =================
+# Oqim: qidiruv usuli -> filial/ism -> xodim -> profil -> rol/filial/maqom o'zgartirish
+def emp_manage_entry_kb():
+    """«🛠 Ma'lumotlarni o'zgartirish» — qidiruv usuli."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🏢 Filial bo'yicha", callback_data="emm:branch")
+    b.button(text="🔤 Ism / username / telefon", callback_data="emm:text")
+    b.button(text="👥 Barcha xodimlar", callback_data="emm:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_branch_kb(branches):
+    """Filial tanlash (xodim tahrirlash oqimi uchun)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"emmbr:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="emm:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_list_kb(profiles, prefix="emmemp"):
+    """Xodimlar ro'yxati — filial rahbari (👑) ro'yxat boshida ajratiladi."""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        role = p.get("role")
+        if role == ROLE_MANAGER:
+            mark = "👑"
+        elif role == ROLE_DIRECTOR:
+            mark = "👔"
+        else:
+            mark = "👤"
+        name = p.get("full_name") or p.get("tg_id")
+        b.button(text=f"{mark} {name}", callback_data=f"{prefix}:{p['user_id']}")
+    b.button(text="⬅️ Orqaga", callback_data="emm:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_edit_kb(uid):
+    """Bitta xodim kartochkasi ostidagi tahrirlash tugmalari."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🎭 Rolni almashtirish", callback_data=f"emmrole:{uid}")
+    b.button(text="🏢 Filialni almashtirish", callback_data=f"emmbranch:{uid}")
+    b.button(text="🏷 Maqomni belgilash", callback_data=f"emmstatus:{uid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# Rol tanlash — o'rganuvchi/sinov maqom sifatida (rolni o'zgartirmaydi)
+EMP_MANAGE_ROLES = [
+    (ROLE_PHARMACIST, "💊 Farmatsevt"),
+    (ROLE_MANAGER, "🏢 Filial rahbari"),
+    (ROLE_DIRECTOR, "👔 Direktor"),
+    (ROLE_ACCOUNTANT, "🧮 Moliya bo'limi"),
+    (ROLE_IT, "🖥 IT xodim"),
+    (ROLE_HR, "🧑‍💼 HR"),
+    (ROLE_EMPLOYEE, "👷 Oddiy xodim"),
+]
+
+
+def emp_manage_role_kb(uid):
+    b = InlineKeyboardBuilder()
+    for role, label in EMP_MANAGE_ROLES:
+        b.button(text=label, callback_data=f"emmsetrole:{uid}:{role}")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmemp:{uid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_status_kb(uid):
+    """Xodim maqomi: doimiy / sinovda / o'rganuvchi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🟢 Doimiy xodim", callback_data=f"emmsetstatus:{uid}:regular")
+    b.button(text="🧪 Sinovda", callback_data=f"emmsetstatus:{uid}:trial")
+    b.button(text="🎓 O'rganuvchi", callback_data=f"emmsetstatus:{uid}:learner")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmemp:{uid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_branch_pick_kb(uid, branches):
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"emmsetbr:{uid}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmemp:{uid}")
     b.adjust(1)
     return b.as_markup()
 

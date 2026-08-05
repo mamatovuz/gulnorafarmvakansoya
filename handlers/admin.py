@@ -280,9 +280,14 @@ async def admin_stats(message: Message):
 async def admin_branches(message: Message):
     if not await is_admin(message.from_user.id):
         return
-    branches = await q.list_branches()
     await message.answer(
-        "🏢 <b>Filiallar</b>", reply_markup=kb.branches_manage_kb(branches)
+        "🏢 <b>Filiallar</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Nima qilamiz?\n\n"
+        "✏️ <b>Filial tahrirlash</b> — filial qo'shish, nomi/manzili, koordinata\n"
+        "👥 <b>Filial xodimlari bo'yicha ko'rish</b> — filialni tanlab, "
+        "rahbari va xodimlarini ko'rish hamda rol/filial/maqomini o'zgartirish",
+        reply_markup=kb.branches_root_kb(),
     )
 
 

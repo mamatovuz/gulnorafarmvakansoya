@@ -334,6 +334,7 @@ def application_summary(d):
 
 
 def employee_profile_text(profile):
+    from database.db import EMP_STATUS_LABELS, ES_REGULAR
     parts = [
         f"👤 <b>{_v(profile, 'full_name')}</b>",
         "━━━━━━━━━━━━",
@@ -341,6 +342,12 @@ def employee_profile_text(profile):
         f"🏢 Filial: {_v(profile, 'branch_name')}",
         f"📱 Telefon: {_v(profile, 'phone')}",
     ]
+    username = profile.get("username")
+    if username:
+        parts.append(f"🔗 Username: @{username}")
+    status = profile.get("emp_status") or ES_REGULAR
+    if status and status != ES_REGULAR:
+        parts.append(f"🏷 Maqom: {EMP_STATUS_LABELS.get(status, status)}")
     if profile.get("birth_date"):
         parts.append(f"📅 Tug'ilgan sana: {profile['birth_date']}")
     if profile.get("address"):

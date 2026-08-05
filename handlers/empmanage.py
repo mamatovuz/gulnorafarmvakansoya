@@ -1,0 +1,369 @@
+"""Xodim ma'lumotlarini o'zgartirish (admin/HR).
+
+Bitta umumiy oqim ikki joydan ochiladi:
+  • Admin/HR panel → «🛠 Ma'lumotlarni o'zgartirish»
+  • Admin panel → «🏢 Filiallar» → «👥 Filial xodimlari bo'yicha ko'rish»
+
+Oqim: qidiruv usuli → (filial/ism) → xodim → profil kartochkasi →
+rolni / filialni / maqomni (o'rganuvchi·sinov) almashtirish.
+"""
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
+
+from database import queries as q
+from database.db import (
+    ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
+    EMP_STATUS_LABELS, ES_REGULAR,
+)
+from states import EmpManageForm
+import keyboards as kb
+from utils import send_employee_profile, safe_send
+
+router = Router()
+
+ROLE_NAMES = {
+    ROLE_ADMIN: "👑 Administrator",
+    ROLE_HR: "🧑‍💼 HR",
+    ROLE_DIRECTOR: "👔 Direktor",
+    ROLE_ACCOUNTANT: "🧮 Moliya bo'limi",
+    ROLE_IT: "🖥 IT xodim",
+    ROLE_MANAGER: "🏢 Filial rahbari",
+    ROLE_PHARMACIST: "💊 Farmatsevt",
+    ROLE_EMPLOYEE: "👷 Oddiy xodim",
+    ROLE_CANDIDATE: "🧑 Nomzod",
+}
+
+
+async def _is_staff(tg_id):
+    u = await q.get_user(tg_id)
+    return u and u["role"] in (ROLE_HR, ROLE_ADMIN)
+
+
+async def _is_admin(tg_id):
+    u = await q.get_user(tg_id)
+    return u and u["role"] == ROLE_ADMIN
+
+
+# ---------------- KIRISH ----------------
+@router.message(F.text == kb.EMP_MANAGE_BTN)
+async def emp_manage_home(message: Message, state: FSMContext):
+    if not await _is_staff(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        "🛠 <b>Ma'lumotlarni o'zgartirish</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Xodimni qanday topamiz? Tanlangach uning kartochkasidan "
+        "<b>rol</b>, <b>filial</b> yoki <b>maqomini</b> o'zgartirasiz.",
+        reply_markup=kb.emp_manage_entry_kb(),
+    )
+
+
+@router.callback_query(F.data == "emm:home")
+async def emp_manage_back_home(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await call.message.answer(
+        "🛠 <b>Ma'lumotlarni o'zgartirish</b>\nXodimni qanday topamiz?",
+        reply_markup=kb.emp_manage_entry_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "emm:branch")
+async def emp_manage_by_branch(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        "🏢 Qaysi filial xodimlarini ko'rmoqchisiz?",
+        reply_markup=kb.emp_manage_branch_kb(branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "emm:text")
+async def emp_manage_by_text(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(EmpManageForm.query)
+    await call.message.answer(
+        "🔤 Xodimning <b>ismi</b>, <b>@username</b> yoki <b>telefonini</b> yozing.\n"
+        "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "emm:all")
+async def emp_manage_all(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    profiles = await q.search_employees()
+    await _send_list(call.message, profiles, "👥 <b>Barcha xodimlar</b>")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmbr:"))
+async def emp_manage_branch_pick(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    profiles = await q.search_employees(branch_id=bid)
+    title = f"🏢 <b>{branch['name'] if branch else 'Filial'}</b> xodimlari"
+    await _send_list(call.message, profiles, title)
+    await call.answer()
+
+
+@router.message(EmpManageForm.query, F.text)
+async def emp_manage_text_run(message: Message, state: FSMContext):
+    if not await _is_staff(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text)
+    await _send_list(message, profiles, f"🔍 <b>Qidiruv:</b> {text}")
+
+
+async def _send_list(target, profiles, title):
+    if not profiles:
+        await target.answer(
+            f"{title}\n\n😔 Hech kim topilmadi.",
+            reply_markup=kb.emp_manage_entry_kb(),
+        )
+        return
+    await target.answer(
+        f"{title}\n\n👥 Topildi: <b>{len(profiles)}</b> ta\n"
+        "👑 — filial rahbari · 👔 — direktor · 👤 — xodim\n"
+        "Tahrirlash uchun xodimni tanlang:",
+        reply_markup=kb.emp_manage_list_kb(profiles[:40]),
+    )
+
+
+# ---------------- BITTA XODIM KARTOCHKASI ----------------
+async def _show_card(target, uid, prefix=""):
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await target.answer("❗️ Xodim topilmadi yoki profili yo'q.")
+        return
+    role = profile.get("role")
+    status = profile.get("emp_status") or ES_REGULAR
+    suffix = (
+        f"\n\n🎭 Rol: <b>{ROLE_NAMES.get(role, role or '-')}</b>"
+        f"\n🏷 Maqom: <b>{EMP_STATUS_LABELS.get(status, status)}</b>"
+    )
+    await send_employee_profile(
+        target, profile,
+        reply_markup=kb.emp_manage_edit_kb(uid),
+        prefix=prefix, suffix=suffix,
+    )
+
+
+@router.callback_query(F.data.startswith("emmemp:"))
+async def emp_manage_view(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    await _show_card(call.message, uid)
+    await call.answer()
+
+
+# ---------------- ROL ALMASHTIRISH ----------------
+@router.callback_query(F.data.startswith("emmrole:"))
+async def emp_manage_role_menu(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    cur = ROLE_NAMES.get(profile.get("role"), profile.get("role") or "-")
+    await call.message.answer(
+        f"🎭 <b>{profile.get('full_name') or '-'}</b>\n"
+        f"Hozirgi rol: <b>{cur}</b>\n\nYangi rolni tanlang:",
+        reply_markup=kb.emp_manage_role_kb(uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmsetrole:"))
+async def emp_manage_set_role(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, role = call.data.split(":")
+    uid = int(uid_s)
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    position = ROLE_NAMES.get(role, role).split(" ", 1)[-1]
+    old_role = await q.set_employee_role(uid, role, position=position)
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "xodim_rol_ozgartirildi",
+        f"{profile.get('full_name')}: {old_role} -> {role}",
+    )
+    tg_id = profile.get("tg_id")
+    if tg_id:
+        await safe_send(
+            bot, tg_id,
+            f"ℹ️ Sizga yangi rol berildi: <b>{ROLE_NAMES.get(role, role)}</b>.\n"
+            "O'zgarish kuchga kirishi uchun /start bosing.",
+        )
+    await call.answer("Rol o'zgartirildi ✅")
+    await _show_card(
+        call.message, uid,
+        prefix=f"✅ Rol o'zgartirildi: <b>{ROLE_NAMES.get(role, role)}</b>",
+    )
+
+
+# ---------------- MAQOM (o'rganuvchi / sinov) ----------------
+@router.callback_query(F.data.startswith("emmstatus:"))
+async def emp_manage_status_menu(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    cur = profile.get("emp_status") or ES_REGULAR
+    await call.message.answer(
+        f"🏷 <b>{profile.get('full_name') or '-'}</b>\n"
+        f"Hozirgi maqom: <b>{EMP_STATUS_LABELS.get(cur, cur)}</b>\n\n"
+        "Yangi maqomni tanlang:",
+        reply_markup=kb.emp_manage_status_kb(uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmsetstatus:"))
+async def emp_manage_set_status(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, status = call.data.split(":")
+    uid = int(uid_s)
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await q.set_employee_status(uid, status)
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "xodim_maqom_ozgartirildi",
+        f"{profile.get('full_name')}: -> {status}",
+    )
+    label = EMP_STATUS_LABELS.get(status, status)
+    tg_id = profile.get("tg_id")
+    if tg_id and status != ES_REGULAR:
+        await safe_send(
+            bot, tg_id, f"ℹ️ Sizning maqomingiz yangilandi: <b>{label}</b>."
+        )
+    await call.answer("Maqom yangilandi ✅")
+    await _show_card(call.message, uid, prefix=f"✅ Maqom yangilandi: <b>{label}</b>")
+
+
+# ---------------- FILIAL ALMASHTIRISH ----------------
+@router.callback_query(F.data.startswith("emmbranch:"))
+async def emp_manage_branch_menu(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        f"🏢 <b>{profile.get('full_name') or '-'}</b>\n"
+        f"Hozirgi filial: <b>{profile.get('branch_name') or '—'}</b>\n\n"
+        "Yangi filialni tanlang:",
+        reply_markup=kb.emp_manage_branch_pick_kb(uid, branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmsetbr:"))
+async def emp_manage_set_branch(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, bid_s = call.data.split(":")
+    uid, bid = int(uid_s), int(bid_s)
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    old_branch = await q.set_employee_branch(uid, bid)
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "xodim_filial_ozgartirildi",
+        f"{profile.get('full_name')}: {old_branch} -> {bid}",
+    )
+    tg_id = profile.get("tg_id")
+    if tg_id:
+        await safe_send(
+            bot, tg_id,
+            f"ℹ️ Siz endi <b>{bname}</b> filialiga biriktirildingiz.",
+        )
+    await call.answer("Filial o'zgartirildi ✅")
+    await _show_card(call.message, uid, prefix=f"✅ Yangi filial: <b>{bname}</b>")
+
+
+# ================= ADMIN «🏢 FILIALLAR» IKKI YO'NALISHI =================
+@router.callback_query(F.data == "brroot:edit")
+async def branches_root_edit(call: CallbackQuery):
+    if not await _is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    branches = await q.list_branches()
+    await call.message.answer(
+        "✏️ <b>Filiallarni tahrirlash</b>", reply_markup=kb.branches_manage_kb(branches)
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "brroot:staff")
+async def branches_root_staff(call: CallbackQuery, state: FSMContext):
+    if not await _is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        "👥 <b>Filial xodimlari</b>\nQaysi filialni ochamiz?",
+        reply_markup=kb.emp_manage_branch_kb(branches),
+    )
+    await call.answer()
