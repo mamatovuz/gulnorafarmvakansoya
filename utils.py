@@ -580,6 +580,35 @@ async def broadcast(bot: Bot, tg_ids, message):
     return ok, fail
 
 
+async def broadcast_trust(bot: Bot, recipients, message, notice_id):
+    """«Ishonch xabari» ni yuboradi: har bir qabul qiluvchiga xabar nusxasi
+    «✅ Ko'rib chiqdim» tugmasi bilan boradi va yozib qo'yiladi.
+
+    recipients — [(tg_id, full_name), ...]. Yuborilgan (yetkazilgan) soni qaytadi."""
+    from keyboards import trust_ack_kb  # aylanma importdan qochish uchun ichkarida
+    markup = trust_ack_kb(notice_id)
+    ok = 0
+    for tid, name in recipients:
+        try:
+            sent = await message.copy_to(chat_id=tid, reply_markup=markup)
+        except Exception:
+            continue  # bloklagan / botni ishga tushirmagan
+        ok += 1
+        try:
+            await q.add_trust_notice_read(notice_id, tid, sent.message_id, name)
+        except Exception:
+            pass
+    return ok
+
+
+async def effective_reject_template(lang):
+    """Rad etish tayyor javobi: HR tahrirlagan matn bo'lsa o'shani, aks holda
+    standart matnni qaytaradi. (label, text) qaytadi."""
+    label, default_text = REJECT_TEMPLATES.get(lang, REJECT_TEMPLATES["lat"])
+    text = await q.get_reject_template(lang)
+    return label, (text if text else default_text)
+
+
 # ---------------- MAXFIY KANAL ----------------
 def normalize_chat_id(val):
     """Kanal ID sini to'g'ri turga keltiradi: @username -> str, raqam -> int."""

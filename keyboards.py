@@ -45,6 +45,7 @@ MENU_ESCAPE_BUTTONS = {
     "💼 Vakansiyalar", "📄 Mening arizalarim", "🏠 Asosiy menyu",
     "👨‍💼 HR panel", "👑 Admin panel", "📈 Direktor panel", "🧮 Moliya bo'limi",
     "❌ Rad etilgan murojaatlar", "👥 Xodimlar",
+    "🔐 Ishonch xabari", "📊 Bildirishnoma statistika",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
     EMP_MANAGE_BTN,
 }
@@ -383,7 +384,28 @@ def reject_reason_kb(aid):
     b.button(text="🔤 Lotincha (tayyor javob)", callback_data=f"apprejt:{aid}:lat")
     b.button(text="🔡 Кириллча (тайёр жавоб)", callback_data=f"apprejt:{aid}:cyr")
     b.button(text="✍️ O'zim yozaman", callback_data=f"apprejw:{aid}")
+    b.button(text="✏️ Tayyor javobni tahrirlash", callback_data="rejtpl:menu")
     b.adjust(1)
+    return b.as_markup()
+
+
+def reject_template_menu_kb():
+    """Tayyor javob matnini tahrirlash — qaysi tildagi matn tahrirlanadi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Lotincha matnni tahrirlash", callback_data="rejtpl:edit:lat")
+    b.button(text="🔡 Кириллча matnni tahrirlash", callback_data="rejtpl:edit:cyr")
+    b.button(text="♻️ Standart matnni tiklash", callback_data="rejtpl:reset")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def reject_template_reset_kb():
+    """Standart matnni tiklashda til tanlash."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Lotincha", callback_data="rejtpl:resetdo:lat")
+    b.button(text="🔡 Кириллча", callback_data="rejtpl:resetdo:cyr")
+    b.button(text="⬅️ Orqaga", callback_data="rejtpl:menu")
+    b.adjust(2, 1)
     return b.as_markup()
 
 
@@ -501,10 +523,12 @@ def hr_menu():
     b.button(text="🕒 Ish vaqti so'rovlari")
     b.button(text="🏢 Filial o'zgartirish so'rovlari")
     b.button(text="📢 Xabarnoma")
+    b.button(text="🔐 Ishonch xabari")
+    b.button(text="📊 Bildirishnoma statistika")
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -876,6 +900,37 @@ def vacancy_edit_fields_kb(vid):
         b.button(text=f"✏️ {label}", callback_data=f"vef:{vid}:{f}")
     b.button(text="⬅️ Orqaga", callback_data=f"vman:{vid}")
     b.adjust(2)
+    return b.as_markup()
+
+
+def trust_ack_kb(notice_id):
+    """«Ishonch xabari» ostidagi «Ko'rib chiqdim» tugmasi (qabul qiluvchi bosadi)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ko'rib chiqdim", callback_data=f"trustack:{notice_id}")
+    return b.as_markup()
+
+
+def trust_ack_done_kb():
+    """Tugma bosilgach ko'rsatiladigan tasdiq (qayta bosib bo'lmaydi)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ko'rib chiqildi", callback_data="trustnoop")
+    return b.as_markup()
+
+
+def trust_notices_list_kb(notices):
+    """Bildirishnoma statistikasi — ishonch xabarlari ro'yxati (inline)."""
+    b = InlineKeyboardBuilder()
+    for n in notices:
+        title = (n.get("title") or "Xabar").strip()
+        if len(title) > 30:
+            title = title[:30] + "…"
+        seen = n.get("seen_count", 0)
+        total = n.get("delivered", 0)
+        b.button(
+            text=f"📨 {title} · {seen}/{total} ✅",
+            callback_data=f"trustst:{n['id']}",
+        )
+    b.adjust(1)
     return b.as_markup()
 
 

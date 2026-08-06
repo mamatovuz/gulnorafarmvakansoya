@@ -13,6 +13,7 @@ from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
     ProbationForm, TerminationRejectForm, SalaryNegoForm, EmployeeSearchForm,
+    RejectTemplateForm,
 )
 import keyboards as kb
 from utils import (
@@ -23,6 +24,7 @@ from utils import (
     iso_to_display, probation_text, update_application_channel, send_application_card,
     close_request_notices, post_interview_to_channel, update_interview_channel,
     interview_confirm_label, interview_attendance_label, REJECT_TEMPLATES,
+    effective_reject_template, broadcast_trust,
     staff_reg_text,
 )
 from services import export
@@ -871,7 +873,7 @@ async def app_reject_template(call: CallbackQuery, bot: Bot):
         return
     _, aid, lang = call.data.split(":")
     aid = int(aid)
-    label, text = REJECT_TEMPLATES.get(lang, REJECT_TEMPLATES["lat"])
+    label, text = await effective_reject_template(lang)
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
@@ -923,6 +925,99 @@ async def app_reject_finish(message: Message, state: FSMContext, bot: Bot):
         bot, message, me, aid, notice,
         comment=reason if reason and reason != "-" else None,
     )
+
+
+# ------- Tayyor javob matnini tahrirlash -------
+LANG_TITLES = {"lat": "Lotincha", "cyr": "Кириллча"}
+
+
+@router.callback_query(F.data == "rejtpl:menu")
+async def reject_template_menu(call: CallbackQuery, state: FSMContext):
+    """Tayyor rad javobi matnini boshqarish menyusi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    lat_label, lat_text = await effective_reject_template("lat")
+    cyr_label, cyr_text = await effective_reject_template("cyr")
+    lat_custom = "✍️ tahrirlangan" if await q.get_reject_template("lat") else "📄 standart"
+    cyr_custom = "✍️ tahrirlangan" if await q.get_reject_template("cyr") else "📄 standart"
+    await call.message.answer(
+        "✏️ <b>Rad etish — tayyor javob matni</b>\n\n"
+        "Nomzod arizasi rad etilganda unga yuboriladigan matn. "
+        "Uni istalgan vaqt o'zgartirishingiz yoki to'ldirishingiz mumkin.\n\n"
+        f"🔤 <b>Lotincha</b> ({lat_custom}):\n<i>{_short(lat_text)}</i>\n\n"
+        f"🔡 <b>Кириллча</b> ({cyr_custom}):\n<i>{_short(cyr_text)}</i>",
+        reply_markup=kb.reject_template_menu_kb(),
+    )
+    await call.answer()
+
+
+def _short(text, n=220):
+    text = text or ""
+    return text if len(text) <= n else text[:n] + "…"
+
+
+@router.callback_query(F.data.startswith("rejtpl:edit:"))
+async def reject_template_edit(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    lang = call.data.split(":")[2]
+    label, text = await effective_reject_template(lang)
+    await state.update_data(rejtpl_lang=lang)
+    await state.set_state(RejectTemplateForm.text)
+    await call.message.answer(
+        f"✍️ <b>{LANG_TITLES.get(lang, lang)} tayyor javob</b>\n\n"
+        "Hozirgi matn:\n"
+        f"<code>{text}</code>\n\n"
+        "Yangi matnni to'liq yuboring — u eski matn o'rniga saqlanadi.\n"
+        "Bekor qilish uchun «❌ Bekor qilish» deb yozing."
+    )
+    await call.answer()
+
+
+@router.message(RejectTemplateForm.text, F.text)
+async def reject_template_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("rejtpl_lang", "lat")
+    await state.clear()
+    text = message.text.strip()
+    if text in ("❌ Bekor qilish", "❌ Отмена", "/cancel"):
+        await message.answer("↩️ Bekor qilindi. Matn o'zgarmadi.")
+        return
+    await q.set_reject_template(lang, text)
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "rad_javobi_tahrir", LANG_TITLES.get(lang, lang))
+    await message.answer(
+        f"✅ <b>{LANG_TITLES.get(lang, lang)}</b> tayyor javob yangilandi.\n\n"
+        "Bundan keyin arizani rad etganingizda shu matn yuboriladi."
+    )
+
+
+@router.callback_query(F.data == "rejtpl:reset")
+async def reject_template_reset_menu(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await call.message.answer(
+        "♻️ Qaysi tildagi matnni standart holatga qaytaramiz?",
+        reply_markup=kb.reject_template_reset_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("rejtpl:resetdo:"))
+async def reject_template_reset_do(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    lang = call.data.split(":")[2]
+    await q.set_reject_template(lang, "")  # bo'sh -> standart matn ishlatiladi
+    await call.message.answer(
+        f"♻️ <b>{LANG_TITLES.get(lang, lang)}</b> matn standart holatga qaytarildi."
+    )
+    await call.answer("Tiklandi")
 
 
 # ------- Izoh qoldirish -------
@@ -1975,8 +2070,28 @@ async def vac_new_active(call: CallbackQuery, state: FSMContext):
 async def broadcast_start(message: Message, state: FSMContext):
     if not await is_staff(message.from_user.id):
         return
+    await state.clear()
+    await state.update_data(bc_trust=False)
     await message.answer(
         "📢 <b>Xabarnoma</b>\nKimga yubormoqchisiz?",
+        reply_markup=kb.broadcast_target_kb(),
+    )
+
+
+@router.message(F.text == "🔐 Ishonch xabari")
+async def trust_broadcast_start(message: Message, state: FSMContext):
+    """«Ishonch xabari» — oddiy xabarnoma kabi, lekin har bir qabul qiluvchida
+    xabar ostida «✅ Ko'rib chiqdim» tugmasi bo'ladi va kim ko'rgani qayd etiladi."""
+    if not await is_staff(message.from_user.id):
+        return
+    await state.clear()
+    await state.update_data(bc_trust=True)
+    await message.answer(
+        "🔐 <b>Ishonch xabari</b>\n\n"
+        "Yuborilgan xabar (matn, rasm, ovozli xabar, video, PDF — hammasi) "
+        "ostida «✅ Ko'rib chiqdim» tugmasi bo'ladi. Kim ko'rib chiqqanini "
+        "«📊 Bildirishnoma statistika» bo'limidan kuzatasiz.\n\n"
+        "Kimga yubormoqchisiz?",
         reply_markup=kb.broadcast_target_kb(),
     )
 
@@ -1994,9 +2109,13 @@ async def broadcast_target(call: CallbackQuery, state: FSMContext):
     target = call.data.split(":")[1]
 
     if target == "back":
+        data = await state.get_data()
+        trust = data.get("bc_trust", False)
         await state.clear()
+        await state.update_data(bc_trust=trust)
         await call.message.answer(
-            "📢 <b>Xabarnoma</b>\nKimga yubormoqchisiz?",
+            ("🔐 <b>Ishonch xabari</b>\nKimga yubormoqchisiz?" if trust
+             else "📢 <b>Xabarnoma</b>\nKimga yubormoqchisiz?"),
             reply_markup=kb.broadcast_target_kb(),
         )
         await call.answer()
@@ -2091,23 +2210,29 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
     target = data.get("bc_target")
     branch = data.get("bc_branch")
     bc_user = data.get("bc_user")
+    trust = data.get("bc_trust", False)
     await state.clear()
 
+    names = {}  # tg_id -> ism (ishonch statistikasi uchun)
     if target == "one":
         # Bitta xodim — profil orqali tg_id ni olamiz
         profile = await q.get_employee_profile(bc_user) if bc_user else None
         ids = [profile["tg_id"]] if profile and profile.get("tg_id") else []
+        if profile and profile.get("tg_id"):
+            names[profile["tg_id"]] = profile.get("full_name")
         label = f"bitta xodim ({profile.get('full_name') if profile else '-'})"
     elif target == "branch":
         # Filial XODIMLARI (nomzodlar emas) — profil jadvalidan olinadi
         profiles = await q.search_employees(branch_id=branch)
         ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
+        names = {p["tg_id"]: p.get("full_name") for p in profiles if p.get("tg_id")}
         br = await q.get_branch(branch) if branch else None
         label = f"filial: {br['name'] if br else branch}"
     elif target == "staff":
         # Barcha xodimlar — profili bor hamma
         profiles = await q.search_employees()
         ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
+        names = {p["tg_id"]: p.get("full_name") for p in profiles if p.get("tg_id")}
         label = "barcha xodimlar"
     elif target == "all":
         ids = await q.all_user_tg_ids()
@@ -2120,9 +2245,34 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
     if not ids:
         await message.answer("❗️ Bu guruhda foydalanuvchi topilmadi.")
         return
+
+    me = await actor(message.from_user.id)
+
+    if trust:
+        # «Ishonch xabari» — har bir qabul qiluvchida «Ko'rib chiqdim» tugmasi
+        title = (message.text or message.caption or "📎 Media xabar").strip()
+        notice_id = await q.create_trust_notice(
+            title[:120], label, me["id"], me["full_name"]
+        )
+        await message.answer(f"📤 Yuborilmoqda... ({len(ids)} ta)")
+        recipients = [(tid, names.get(tid)) for tid in ids]
+        ok = await broadcast_trust(bot, recipients, message, notice_id)
+        await q.set_trust_notice_total(notice_id, ok)
+        await q.add_log(
+            message.from_user.id, me["full_name"], "ishonch_xabari", f"{label}: {ok} ta"
+        )
+        await message.answer(
+            f"✅ <b>Ishonch xabari yuborildi</b>\n\n"
+            f"🎯 Qabul qiluvchilar: <b>{label}</b>\n"
+            f"📨 Yuborildi: <b>{ok}</b> ta\n"
+            f"❌ Yuborilmadi: <b>{len(ids) - ok}</b> ta\n\n"
+            "Kim «✅ Ko'rib chiqdim» bosganini «📊 Bildirishnoma statistika» "
+            "bo'limidan kuzatib borishingiz mumkin."
+        )
+        return
+
     await message.answer(f"📤 Yuborilmoqda... ({len(ids)} ta)")
     ok, fail = await broadcast(bot, ids, message)
-    me = await actor(message.from_user.id)
     await q.add_log(message.from_user.id, me["full_name"], "xabarnoma", f"{label}: {ok} ta")
     await message.answer(
         f"✅ <b>Xabarnoma yakunlandi</b>\n\n"
@@ -2130,6 +2280,90 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
         f"✅ Yuborildi: <b>{ok}</b> ta\n"
         f"❌ Yuborilmadi: <b>{fail}</b> ta"
     )
+
+
+# ---------------- ISHONCH XABARI: KO'RIB CHIQDIM + STATISTIKA ----------------
+@router.callback_query(F.data.startswith("trustack:"))
+async def trust_ack(call: CallbackQuery):
+    """Qabul qiluvchi «✅ Ko'rib chiqdim» ni bosdi."""
+    notice_id = int(call.data.split(":")[1])
+    first = await q.mark_trust_notice_seen(notice_id, call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=kb.trust_ack_done_kb())
+    except Exception:
+        pass
+    if first:
+        await call.answer("Rahmat! Ko'rib chiqilgani belgilandi ✅", show_alert=False)
+    else:
+        await call.answer("Allaqachon belgilangan ✅")
+
+
+@router.callback_query(F.data == "trustnoop")
+async def trust_noop(call: CallbackQuery):
+    await call.answer("Allaqachon ko'rib chiqilgan ✅")
+
+
+@router.message(F.text == "📊 Bildirishnoma statistika")
+async def trust_stats_list(message: Message):
+    """HR: yuborilgan ishonch xabarlari ro'yxati (statistika uchun)."""
+    if not await is_staff(message.from_user.id):
+        return
+    notices = await q.list_trust_notices(limit=30)
+    if not notices:
+        await message.answer(
+            "📊 <b>Bildirishnoma statistika</b>\n\n"
+            "Hozircha «🔐 Ishonch xabari» yuborilmagan."
+        )
+        return
+    await message.answer(
+        "📊 <b>Bildirishnoma statistika</b>\n\n"
+        "Ishonch xabarlari ro'yxati. Batafsil ko'rish uchun birini tanlang 👇\n"
+        "<i>(✅ — ko'rib chiqdi / yuborilgan)</i>",
+        reply_markup=kb.trust_notices_list_kb(notices),
+    )
+
+
+@router.callback_query(F.data.startswith("trustst:"))
+async def trust_stats_detail(call: CallbackQuery):
+    """Bitta ishonch xabarining batafsil statistikasi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    notice_id = int(call.data.split(":")[1])
+    notice = await q.get_trust_notice(notice_id)
+    if not notice:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    readers = await q.get_trust_notice_readers(notice_id)
+    total = len(readers)
+    seen = [r for r in readers if r.get("seen")]
+    unseen = [r for r in readers if not r.get("seen")]
+    pct = round(len(seen) * 100 / total) if total else 0
+
+    lines = [
+        "📊 <b>Ishonch xabari statistikasi</b>\n",
+        f"📝 <b>Xabar:</b> {notice.get('title') or '-'}",
+        f"🎯 <b>Qabul qiluvchilar:</b> {notice.get('target_label') or '-'}",
+        f"👤 <b>Yuborgan:</b> {notice.get('sender_name') or '-'}",
+        f"🕒 {notice.get('created_at') or '-'}",
+        "━━━━━━━━━━━━",
+        f"📨 <b>Yetkazildi:</b> {total} ta",
+        f"✅ <b>Ko'rib chiqdi:</b> {len(seen)} ta ({pct}%)",
+        f"⌛ <b>Hali ko'rmagan:</b> {len(unseen)} ta",
+    ]
+    if seen:
+        lines.append("\n✅ <b>Ko'rib chiqqanlar:</b>")
+        for r in seen[:30]:
+            nm = r.get("full_name") or f"ID {r.get('chat_id')}"
+            at = (r.get("seen_at") or "")[11:16]
+            lines.append(f"   • {nm}" + (f" ({at})" if at else ""))
+    if unseen:
+        lines.append("\n⌛ <b>Hali ko'rmaganlar:</b>")
+        for r in unseen[:30]:
+            nm = r.get("full_name") or f"ID {r.get('chat_id')}"
+            lines.append(f"   • {nm}")
+    await call.message.answer("\n".join(lines))
+    await call.answer()
 
 
 # ---------------- QIDIRUV ----------------

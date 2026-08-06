@@ -517,6 +517,33 @@ CREATE TABLE IF NOT EXISTS request_notices (
 
 CREATE INDEX IF NOT EXISTS idx_request_notices_ref
     ON request_notices(kind, ref_id);
+
+-- «Ishonch xabari» — HR yuborgan, «✅ Ko'rib chiqdim» tugmasi bilan
+-- kuzatiladigan xabarnoma. Har bir yuborilgan xabar `trust_notice_reads`
+-- da qayd etiladi; qabul qiluvchi tugmani bosgach «seen» belgilanadi.
+CREATE TABLE IF NOT EXISTS trust_notices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,                 -- xabar matnining boshlanishi (ro'yxatda ko'rsatish uchun)
+    target_label TEXT,          -- kimga yuborilgani (matnli tavsif)
+    sender_id INTEGER,          -- yuborgan HR (users.id)
+    sender_name TEXT,
+    total INTEGER NOT NULL DEFAULT 0,   -- muvaffaqiyatli yuborilgan (yetkazilgan) soni
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS trust_notice_reads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notice_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,   -- qabul qiluvchi tg_id
+    message_id INTEGER,         -- yuborilgan xabar id si (tugmani yangilash uchun)
+    full_name TEXT,             -- qabul qiluvchi ismi (statistikada ko'rsatish uchun)
+    seen INTEGER NOT NULL DEFAULT 0,   -- «Ko'rib chiqdim» bosilganmi
+    seen_at TEXT,
+    UNIQUE(notice_id, chat_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trust_reads_notice
+    ON trust_notice_reads(notice_id);
 """
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)

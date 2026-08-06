@@ -70,6 +70,11 @@ class RejectForm(StatesGroup):
     reason = State()
 
 
+class RejectTemplateForm(StatesGroup):
+    """HR rad etishdagi tayyor javob matnini tahrirlaydi."""
+    text = State()
+
+
 class RescheduleForm(StatesGroup):
     text = State()
 

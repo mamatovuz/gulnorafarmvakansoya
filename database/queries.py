@@ -64,6 +64,121 @@ async def pop_request_notices(kind, ref_id):
         await db.close()
 
 
+# ---------------- ISHONCH XABARLARI (ko'rib chiqdim bilan) ----------------
+async def create_trust_notice(title, target_label, sender_id, sender_name):
+    """Yangi «ishonch xabari» yozuvini yaratadi va uning id sini qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "INSERT INTO trust_notices (title, target_label, sender_id, sender_name) "
+            "VALUES (?,?,?,?)",
+            (title, target_label, sender_id, sender_name),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def add_trust_notice_read(notice_id, chat_id, message_id, full_name=None):
+    """Xabar qabul qiluvchiga yuborilganini qayd etadi (hali ko'rilmagan)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO trust_notice_reads "
+            "(notice_id, chat_id, message_id, full_name) VALUES (?,?,?,?)",
+            (int(notice_id), int(chat_id), int(message_id) if message_id else None, full_name),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_trust_notice_total(notice_id, total):
+    """Yuborilgan (yetkazilgan) umumiy sonni yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE trust_notices SET total=? WHERE id=?", (int(total), int(notice_id))
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def mark_trust_notice_seen(notice_id, chat_id):
+    """Qabul qiluvchi «Ko'rib chiqdim» ni bosdi — belgilaydi.
+
+    True qaytarsa — birinchi marta belgilandi; False — allaqachon ko'rilgan yoki
+    qabul qiluvchi ro'yxatda yo'q."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE trust_notice_reads SET seen=1, seen_at=datetime('now','+5 hours') "
+            "WHERE notice_id=? AND chat_id=? AND seen=0",
+            (int(notice_id), int(chat_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_trust_notice(notice_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM trust_notices WHERE id=?", (int(notice_id),)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_trust_notices(limit=30):
+    """Oxirgi ishonch xabarlari — har biriga yetkazilgan/ko'rgan soni bilan."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT tn.*,
+                      (SELECT COUNT(*) FROM trust_notice_reads r
+                        WHERE r.notice_id=tn.id) AS delivered,
+                      (SELECT COUNT(*) FROM trust_notice_reads r
+                        WHERE r.notice_id=tn.id AND r.seen=1) AS seen_count
+                 FROM trust_notices tn
+                ORDER BY tn.id DESC LIMIT ?""",
+            (int(limit),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_trust_notice_readers(notice_id):
+    """Xabar qabul qiluvchilar ro'yxati (ko'rgan/ko'rmagan ajratish uchun)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT chat_id, full_name, seen, seen_at FROM trust_notice_reads "
+            "WHERE notice_id=? ORDER BY seen DESC, id ASC",
+            (int(notice_id),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+# ---------------- RAD ETISH: TAHRIRLANADIGAN TAYYOR JAVOBLAR ----------------
+async def get_reject_template(lang, default=None):
+    """Rad etishdagi tayyor javob matni (settings dan). Yo'q bo'lsa `default`."""
+    return await get_setting(f"reject_template_{lang}", default)
+
+
+async def set_reject_template(lang, text):
+    await set_setting(f"reject_template_{lang}", text)
+
+
 async def accept_application_once(aid, handled_by=None, kind=None):
     """Arizani ATOMIK qabul qiladi — faqat hali qabul qilinmagan bo'lsa. Bir ariza
     ikki HR tomonidan ikki marta qabul qilinishining oldini oladi.
