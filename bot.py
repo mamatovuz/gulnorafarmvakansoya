@@ -26,7 +26,7 @@ from utils import PROFILE_UPDATE_NOTICE
 from services.reminders import (
     interview_reminder_loop, probation_reminder_loop, location_check_loop,
     advance_prompt_loop, it_report_loop, dayoff_prompt_loop, dayoff_report_loop,
-    director_report_loop,
+    director_report_loop, attendance_reminder_loop,
 )
 
 
@@ -175,12 +175,13 @@ async def main():
     dayoff_prompt_task = asyncio.create_task(dayoff_prompt_loop(bot))
     dayoff_report_task = asyncio.create_task(dayoff_report_loop(bot))
     director_report_task = asyncio.create_task(director_report_loop(bot))
+    attendance_reminder_task = asyncio.create_task(attendance_reminder_loop(bot))
     try:
         await dp.start_polling(bot)
     finally:
         for task in (reminder_task, probation_task, location_task, advance_task,
                      it_report_task, dayoff_prompt_task, dayoff_report_task,
-                     director_report_task):
+                     director_report_task, attendance_reminder_task):
             task.cancel()
             try:
                 await task

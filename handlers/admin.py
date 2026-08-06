@@ -677,6 +677,17 @@ async def role_set(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.answer("Sessiya tugagan. Qayta boshlang.", show_alert=True)
         await state.clear()
         return
+    # Xodim-tipidagi rol (rahbar/farmatsevt/xodim/direktor/moliya) — avval filial
+    if role in EMPLOYEE_ROLES:
+        branches = await q.list_branches()
+        if branches:
+            await call.message.answer(
+                f"🏢 <b>{ROLE_NAMES.get(role, role)}</b> roli beriladi.\n"
+                "Xodim qaysi filialga biriktirilsin?",
+                reply_markup=kb.role_branch_pick_kb(role, branches),
+            )
+            await call.answer()
+            return
     await _apply_role(call.message, state, bot, tg_id, role, call=call)
 
 
@@ -685,9 +696,28 @@ EMPLOYEE_ROLES = (
 )
 
 
-async def _apply_role(message, state, bot, tg_id, role, call=None):
+@router.callback_query(F.data.startswith("rolebr:"))
+async def role_branch_set(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Rol berishda filial tanlandi — rolni shu filial bilan biriktiramiz."""
+    _, role, bid = call.data.split(":")
+    bid = int(bid)
+    data = await state.get_data()
+    tg_id = data.get("target_tg")
+    if not tg_id:
+        await call.answer("Sessiya tugagan. Qayta boshlang.", show_alert=True)
+        await state.clear()
+        return
+    await _apply_role(
+        call.message, state, bot, tg_id, role, call=call,
+        branch_id=(bid or None), branch_explicit=bool(bid),
+    )
+
+
+async def _apply_role(message, state, bot, tg_id, role, call=None,
+                      branch_id=None, branch_explicit=False):
     target = await q.get_user(tg_id)
-    branch_id = target.get("branch_id") if target else None
+    if not branch_explicit:
+        branch_id = target.get("branch_id") if target else None
     prev_role = target.get("role") if target else None
     await q.set_role(tg_id, role, branch_id)
     if role in EMPLOYEE_ROLES:
@@ -710,14 +740,17 @@ async def _apply_role(message, state, bot, tg_id, role, call=None):
     actor_name = me["full_name"] if me else "?"
     actor_tg = me["tg_id"] if me else 0
     await q.add_log(actor_tg, actor_name, "rol_berildi", f"{tg_id} -> {role}")
+    branch = await q.get_branch(branch_id) if branch_id else None
+    branch_line = f"\n🏢 Filial: <b>{branch['name']}</b>" if branch else ""
     await message.answer(
         f"✅ <b>{target['full_name'] or tg_id}</b> ga "
-        f"«{ROLE_NAMES.get(role, role)}» roli berildi."
+        f"«{ROLE_NAMES.get(role, role)}» roli berildi.{branch_line}"
     )
     await safe_send(
         bot, tg_id,
-        f"ℹ️ Sizga yangi rol berildi: <b>{ROLE_NAMES.get(role, role)}</b>.\n"
-        f"O'zgarishlar kuchga kirishi uchun /start bosing.",
+        f"ℹ️ Sizga yangi rol berildi: <b>{ROLE_NAMES.get(role, role)}</b>."
+        + (f"\n🏢 Filial: <b>{branch['name']}</b>" if branch else "")
+        + "\nO'zgarishlar kuchga kirishi uchun /start bosing.",
     )
     if call:
         await call.answer("Rol berildi ✅")

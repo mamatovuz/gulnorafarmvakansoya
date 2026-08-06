@@ -97,6 +97,7 @@ def main_menu(role, has_applied=False, lang=None):
         b.button(text="📈 Direktor panel")
         b.button(text="🧮 Moliya bo'limi")
         b.button(text="🖥 IT xodim panel")
+        b.button(text="🏢 Filial rahbari panel")
     b.adjust(2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
@@ -1008,11 +1009,19 @@ def vacancies_manage_list_kb(vacancies, prefix="vman"):
     return b.as_markup()
 
 
-def employee_profiles_list_kb(profiles, prefix="empview", with_search=True):
-    """Xodimlar ro'yxati. `with_search` — tepasida «🔍 Qidiruv» tugmasi."""
+def employee_profiles_list_kb(profiles, prefix="empview", with_search=True,
+                              search_cb=None):
+    """Xodimlar ro'yxati. `with_search` — tepasida «🔍 Xodim qidirish» tugmasi.
+
+    `search_cb` — qidiruv tugmasining callback'i. Berilmasa, panelga mos
+    umumiy qidiruv (`empfind:<prefix>`) ishlatiladi — natija tugmalari shu
+    panelning (prefix) kartochkasini ochadi."""
     b = InlineKeyboardBuilder()
     if with_search:
-        b.button(text="🔍 Xodim qidirish", callback_data="empsrch")
+        b.button(
+            text="🔍 Xodim qidirish (ism)",
+            callback_data=search_cb or f"empfind:{prefix}",
+        )
     for p in profiles:
         role = p.get("role") or "xodim"
         branch = f" · {p['branch_name']}" if p.get("branch_name") else ""
@@ -1653,6 +1662,16 @@ def roles_pick_kb():
     return b.as_markup()
 
 
+def role_branch_pick_kb(role, branches):
+    """Xodim-tipidagi rol (rahbar/farmatsevt/xodim...) berilganda filial tanlash."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"rolebr:{role}:{br['id']}")
+    b.button(text="➖ Filialsiz (o'zgarmasin)", callback_data=f"rolebr:{role}:0")
+    b.adjust(1)
+    return b.as_markup()
+
+
 # ================= GULNORA FARM HODIMI (SELF-REGISTRATSIYA) =================
 # Yo'nalish (rol) tugmalari — matn -> (role, position)
 STAFF_ROLES = [
@@ -1834,6 +1853,17 @@ def attendance_location_kb():
     b.button(text=CANCEL_BTN)
     b.adjust(1)
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+def attendance_reminder_kb(kind, lang=None):
+    """Ish vaqti eslatmasi ostidagi tugma: «📍 Ishga keldim» (kind='in') yoki
+    «🏁 Ishdan ketdim» (kind='out'). Tugma bosilsa — odatdagi davomat oqimi
+    ishga tushadi. «🏠 Asosiy menyu» esa to'liq menyuni tiklaydi."""
+    b = ReplyKeyboardBuilder()
+    b.button(text=t("btn.checkin", lang) if kind == "in" else t("btn.checkout", lang))
+    b.button(text=t("btn.main_menu", lang))
+    b.adjust(1)
+    return b.as_markup(resize_keyboard=True)
 
 
 def attendance_report_kb(scope="hr"):

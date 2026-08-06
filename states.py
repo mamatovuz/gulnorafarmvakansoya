@@ -94,6 +94,13 @@ class EmployeeSearchForm(StatesGroup):
     query = State()
 
 
+class GenericEmpSearch(StatesGroup):
+    """Har qanday panel (moliya/IT/rahbar/direktor) xodimni ism bo'yicha izlaydi.
+
+    Natija tugmalari qaysi panel chaqirganiga qarab (prefix) ochiladi."""
+    query = State()
+
+
 class EmpManageForm(StatesGroup):
     """«Ma'lumotlarni o'zgartirish» — xodimni ism/username bo'yicha topish."""
     query = State()

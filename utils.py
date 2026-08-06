@@ -185,6 +185,17 @@ def uniform_label(status):
     }.get(status, status or "➖ Noma'lum")
 
 
+def is_pharmacist_like(data):
+    """Forma (uniform) faqat farmatsevtlarga tegishli. Xodim/ariza/registratsiya
+    ma'lumotidan farmatsevtligini aniqlaydi (rol yoki lavozim nomi bo'yicha)."""
+    from database.db import ROLE_PHARMACIST
+    role = (data.get("role") or "").strip().lower()
+    if role == ROLE_PHARMACIST:
+        return True
+    pos = (data.get("position") or "").lower()
+    return "farm" in pos
+
+
 def computer_level_label(a):
     """Kompyuter savodxonligi. Eski arizalarda Word/Excel alohida yozilgan —
     ular ham ko'rinsin (yangi ustun bo'sh bo'lsa)."""
@@ -356,7 +367,9 @@ def employee_profile_text(profile):
         parts.append(f"🕒 Ish vaqti: {profile['work_hours']}")
     if profile.get("rest_day"):
         parts.append(f"🛌 Dam olish kuni: {profile['rest_day']}")
-    parts.append(f"👕 Forma: {uniform_label(profile.get('uniform_status'))}")
+    # Forma faqat farmatsevtlar uchun ko'rsatiladi
+    if is_pharmacist_like(profile):
+        parts.append(f"👕 Forma: {uniform_label(profile.get('uniform_status'))}")
     if profile.get("education"):
         parts.append(f"🎓 Ma'lumoti: {profile['education']}")
     parts.append(f"💰 Oylik: {_v(profile, 'monthly_salary')}")
@@ -409,9 +422,11 @@ def staff_reg_text(reg):
         f"🕒 Ish vaqti: {_v(reg, 'work_hours')}",
         f"💰 Oylik: {_v(reg, 'salary')}",
         f"🛌 Dam olish kuni: {_v(reg, 'rest_day')}",
-        f"👕 Forma: {uniform_label(reg.get('uniform_status'))}",
-        f"🎓 Ma'lumoti: {_v(reg, 'education')}",
     ]
+    # Forma faqat farmatsevtlar uchun
+    if is_pharmacist_like(reg):
+        parts.append(f"👕 Forma: {uniform_label(reg.get('uniform_status'))}")
+    parts.append(f"🎓 Ma'lumoti: {_v(reg, 'education')}")
     if reg.get("since"):
         parts.append(f"⏳ Gulnora Farmda: {reg['since']}")
     if reg.get("extra_info"):

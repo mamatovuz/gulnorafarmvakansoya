@@ -5,13 +5,67 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from database import queries as q
-from database.db import ROLE_CANDIDATE
-from states import Reg
+from database.db import (
+    ROLE_CANDIDATE, ROLE_HR, ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_DIRECTOR,
+    ROLE_MANAGER, ROLE_IT, ROLE_PHARMACIST,
+)
+from states import Reg, GenericEmpSearch
 import keyboards as kb
 from i18n import t, tf, norm_lang
 from utils import check_subscription, get_welcome_text
 
 router = Router()
+
+# Xodim qidiruvidan foydalana oladigan panel rollari
+PANEL_ROLES = {
+    ROLE_HR, ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_DIRECTOR, ROLE_MANAGER,
+    ROLE_IT, ROLE_PHARMACIST,
+}
+
+
+# ---------------- UMUMIY XODIM QIDIRUVI (ism bo'yicha, panelga mos) ----------------
+@router.callback_query(F.data.startswith("empfind:"))
+async def emp_find_start(call: CallbackQuery, state: FSMContext):
+    """«🔍 Xodim qidirish» — moliya/IT/rahbar/direktor panellari uchun.
+
+    Natija tugmalari qaysi panel chaqirganiga qarab (prefix) ochiladi."""
+    user = await q.get_user(call.from_user.id)
+    if not user or user.get("role") not in PANEL_ROLES:
+        await call.answer("⛔", show_alert=True)
+        return
+    prefix = call.data.split(":")[1]
+    await state.set_state(GenericEmpSearch.query)
+    await state.update_data(emp_find_prefix=prefix)
+    await call.message.answer(
+        "🔤 Xodimning <b>ismini</b> yozing.\n"
+        "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
+    )
+    await call.answer()
+
+
+@router.message(GenericEmpSearch.query, F.text)
+async def emp_find_run(message: Message, state: FSMContext):
+    data = await state.get_data()
+    prefix = data.get("emp_find_prefix", "empview")
+    await state.clear()
+    user = await q.get_user(message.from_user.id)
+    if not user or user.get("role") not in PANEL_ROLES:
+        return
+    # Filial rahbari faqat o'z filiali xodimlarini qidiradi
+    branch_id = user.get("branch_id") if user.get("role") == ROLE_MANAGER else None
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text, branch_id=branch_id)
+    if not profiles:
+        await message.answer(
+            f"😔 «{text}» bo'yicha xodim topilmadi. Boshqa so'z bilan urinib ko'ring."
+        )
+        return
+    await message.answer(
+        f"🔍 <b>Qidiruv:</b> {text} — <b>{len(profiles)}</b> ta topildi\nTanlang:",
+        reply_markup=kb.employee_profiles_list_kb(
+            profiles[:30], prefix=prefix, with_search=False
+        ),
+    )
 
 
 async def show_subscription(message: Message):

@@ -422,3 +422,107 @@ async def director_report_loop(bot: Bot, interval_seconds=60):
         except Exception:
             logger.exception("Direktor kunlik hisobotida xatolik")
         await asyncio.sleep(interval_seconds)
+
+
+# ---------------- DAVOMAT ESLATMALARI (ish boshi / ish oxiri) ----------------
+def _parse_work_hours(work_hours):
+    """«09:00 - 18:00» dan (start, end) HH:MM. Aniqlanmasa (None, None)."""
+    if not work_hours:
+        return None, None
+    import re
+    times = re.findall(r"(\d{1,2}):(\d{2})", work_hours)
+    if len(times) < 2:
+        return None, None
+    return f"{int(times[0][0]):02d}:{times[0][1]}", f"{int(times[1][0]):02d}:{times[1][1]}"
+
+
+def _within_window(now_hm, target_hm, window_min=30):
+    """now target dan keyin, lekin window_min ichida bo'lsa True.
+
+    Eslatma bir marta yuboriladi (flag orqali); oyna esa bot qayta ishga
+    tushsa ham eslatma o'tkazib yuborilmasligi uchun."""
+    from datetime import datetime
+    try:
+        n = datetime.strptime(now_hm, "%H:%M")
+        t = datetime.strptime(target_hm, "%H:%M")
+    except ValueError:
+        return False
+    diff = (n - t).total_seconds() / 60
+    return 0 <= diff <= window_min
+
+
+_ATT_IN_TEXT = (
+    "⏰ <b>Ish vaqtingiz boshlandi!</b>\n\n"
+    "Ishga <b>kelgan</b> bo'lsangiz, pastdagi «📍 Ishga keldim» tugmasini bosing "
+    "va joylashuvingizni yuboring 👇"
+)
+_ATT_OUT_TEXT = (
+    "🌇 <b>Ish vaqtingiz tugadi!</b>\n\n"
+    "Ishdan <b>ketayotgan</b> bo'lsangiz, pastdagi «🏁 Ishdan ketdim» tugmasini "
+    "bosib, joylashuvingizni yuboring 👇"
+)
+
+
+async def _run_attendance_reminders(bot: Bot):
+    if str(await q.get_setting("att_reminder_enabled", "1")) != "1":
+        return
+    now = now_tk()
+    now_hm = now.strftime("%H:%M")
+    date_iso = now.strftime("%Y-%m-%d")
+    from handlers.dayoff_plan import weekday_uz
+    today = weekday_uz(now)
+
+    profiles = await q.list_employee_profiles()
+    branch_wh = {}  # branch_id -> work_hours (kesh)
+    for p in profiles:
+        tg = p.get("tg_id")
+        if not tg:
+            continue
+        # Dam olish kuni bo'lsa — eslatma yubormaymiz
+        if (p.get("rest_day") or "").strip() == today:
+            continue
+        wh = p.get("work_hours")
+        if not wh:
+            bid = p.get("branch_id")
+            if bid not in branch_wh:
+                br = await q.get_branch(bid) if bid else None
+                branch_wh[bid] = (br or {}).get("work_hours")
+            wh = branch_wh[bid]
+        start, end = _parse_work_hours(wh)
+
+        # --- Ish boshi: «Ishga keldim» eslatmasi ---
+        if start and _within_window(now_hm, start):
+            flag = f"att_in_rem:{date_iso}:{tg}"
+            if str(await q.get_setting(flag, "0")) != "1":
+                today_att = await q.get_attendance_today(tg)
+                already_in = today_att and today_att.get("time")
+                if not already_in:
+                    await safe_send(
+                        bot, tg, _ATT_IN_TEXT,
+                        reply_markup=kb.attendance_reminder_kb("in"),
+                    )
+                await q.set_setting(flag, "1")
+
+        # --- Ish oxiri: «Ishdan ketdim» eslatmasi ---
+        if end and _within_window(now_hm, end):
+            flag = f"att_out_rem:{date_iso}:{tg}"
+            if str(await q.get_setting(flag, "0")) != "1":
+                open_shift = await q.get_open_attendance(tg)
+                # Faqat ishga kelib, hali ketmaganlarga eslatma
+                if open_shift:
+                    await safe_send(
+                        bot, tg, _ATT_OUT_TEXT,
+                        reply_markup=kb.attendance_reminder_kb("out"),
+                    )
+                await q.set_setting(flag, "1")
+
+
+async def attendance_reminder_loop(bot: Bot, interval_seconds=60):
+    while True:
+        try:
+            await _run_attendance_reminders(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Davomat eslatmalarida xatolik")
+        await asyncio.sleep(interval_seconds)

@@ -198,9 +198,22 @@ async def accept_application_once(aid, handled_by=None, kind=None):
         await db.close()
 
 
+def _py_lower(s):
+    """Unicode-ni to'g'ri kichik harfga o'tkazadi (SQLite ning LOWER() faqat
+    ASCII ni qamraydi; o'zbek/kirill ismlarni qidirishda kerak)."""
+    return s.lower() if isinstance(s, str) else s
+
+
 async def _conn():
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
+    # Qidiruvni registrga bog'liq bo'lmagan holga keltirish uchun (o'zbekcha,
+    # kirillcha harflar ham) Python ning str.lower() ini SQL da ishlatamiz.
+    try:
+        await db.create_function("pylower", 1, _py_lower, deterministic=True)
+    except TypeError:
+        # Eski Python — deterministic parametri yo'q
+        await db.create_function("pylower", 1, _py_lower)
     return db
 
 
@@ -897,10 +910,10 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
         params = []
         if text:
             like = f"%{text.strip().lstrip('@').lower()}%"
-            sql += """ AND (LOWER(COALESCE(u.full_name,'')) LIKE ?
-                        OR LOWER(COALESCE(u.username,'')) LIKE ?
-                        OR LOWER(COALESCE(u.phone,'')) LIKE ?
-                        OR LOWER(COALESCE(ep.position,'')) LIKE ?)"""
+            sql += """ AND (pylower(COALESCE(u.full_name,'')) LIKE ?
+                        OR pylower(COALESCE(u.username,'')) LIKE ?
+                        OR pylower(COALESCE(u.phone,'')) LIKE ?
+                        OR pylower(COALESCE(ep.position,'')) LIKE ?)"""
             params += [like, like, like, like]
         if role:
             sql += " AND ep.role=?"
@@ -1704,15 +1717,15 @@ async def search_applications(field, value):
                   LEFT JOIN vacancies v ON v.id=a.vacancy_id
                   LEFT JOIN branches b ON b.id=COALESCE(a.branch_id, v.branch_id)
                   WHERE """
-        like = f"%{value}%"
+        like = f"%{(value or '').strip().lower()}%"
         if field == "full_name":
-            q = base + "a.full_name LIKE ?"
+            q = base + "pylower(COALESCE(a.full_name,'')) LIKE ?"
         elif field == "phone":
-            q = base + "a.phone LIKE ?"
+            q = base + "pylower(COALESCE(a.phone,'')) LIKE ?"
         elif field == "branch":
-            q = base + "b.name LIKE ?"
+            q = base + "pylower(COALESCE(b.name,'')) LIKE ?"
         elif field == "vacancy":
-            q = base + "COALESCE(v.title, a.position) LIKE ?"
+            q = base + "pylower(COALESCE(v.title, a.position, '')) LIKE ?"
         else:
             return []
         q += " ORDER BY a.id DESC LIMIT 30"
@@ -1998,8 +2011,11 @@ async def list_users(search=None, blocked=None, limit=50):
                  WHERE 1=1"""
         params = []
         if search:
-            sql += " AND (u.full_name LIKE ? OR u.username LIKE ? OR CAST(u.tg_id AS TEXT) LIKE ? OR u.phone LIKE ?)"
-            like = f"%{search}%"
+            sql += (" AND (pylower(COALESCE(u.full_name,'')) LIKE ? "
+                    "OR pylower(COALESCE(u.username,'')) LIKE ? "
+                    "OR CAST(u.tg_id AS TEXT) LIKE ? "
+                    "OR pylower(COALESCE(u.phone,'')) LIKE ?)")
+            like = f"%{search.strip().lstrip('@').lower()}%"
             params += [like, like, like, like]
         if blocked is not None:
             sql += " AND COALESCE(u.blocked,0)=?"

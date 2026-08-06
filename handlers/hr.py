@@ -1066,7 +1066,7 @@ async def hr_uniform(message: Message):
     await message.answer(
         "Forma kerak yoki noma'lum bo'lgan xodimlar:\n"
         "Batafsil ko'rish uchun xodimni tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(profiles[:30], prefix="empview"),
+        reply_markup=kb.employee_profiles_list_kb(profiles[:30], prefix="empview", search_cb="empsrch"),
     )
 
 
@@ -1119,7 +1119,7 @@ async def education_stats_report(message: Message):
     await message.answer(
         f"❌ <b>Diplomi yo'q xodimlar</b> — {len(without)} ta\n"
         "Batafsil ko'rish uchun tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(without[:30], prefix="empview"),
+        reply_markup=kb.employee_profiles_list_kb(without[:30], prefix="empview", search_cb="empsrch"),
     )
 
 
@@ -1133,10 +1133,13 @@ async def employee_profile_view(call: CallbackQuery):
     if not profile:
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    await send_employee_profile(
-        call.message, profile,
-        reply_markup=kb.uniform_employee_kb(uid, profile.get("uniform_status")),
+    # «Forma bor/yo'q» tugmasi faqat farmatsevtlar uchun mantiqiy
+    from utils import is_pharmacist_like
+    markup = (
+        kb.uniform_employee_kb(uid, profile.get("uniform_status"))
+        if is_pharmacist_like(profile) else None
     )
+    await send_employee_profile(call.message, profile, reply_markup=markup)
     await call.answer()
 
 
@@ -1361,7 +1364,7 @@ async def hr_pharmacists(message: Message):
     await message.answer(
         f"💊 <b>Farmatsevtlar</b>\n\nJami: <b>{len(profiles)}</b> ta\n"
         "Boshqarish uchun farmatsevtni tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(profiles, prefix="phview"),
+        reply_markup=kb.employee_profiles_list_kb(profiles, prefix="phview", search_cb="empsrch"),
     )
 
 
@@ -2426,7 +2429,7 @@ async def hr_employees(message: Message):
         f"👥 <b>Xodimlar</b> — jami <b>{len(profiles)}</b> ta\n\n"
         "Kerakli xodimni topish uchun «🔍 Xodim qidirish» tugmasidan "
         "foydalaning yoki ro'yxatdan tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(profiles[:30]),
+        reply_markup=kb.employee_profiles_list_kb(profiles[:30], search_cb="empsrch"),
     )
 
 
@@ -2453,7 +2456,7 @@ async def _send_employee_results(target, profiles, title):
     await target.answer(
         f"{title}\n\n👥 Topildi: <b>{len(profiles)}</b> ta\n"
         "Batafsil ko'rish uchun xodimni tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(profiles[:30]),
+        reply_markup=kb.employee_profiles_list_kb(profiles[:30], search_cb="empsrch"),
     )
 
 
