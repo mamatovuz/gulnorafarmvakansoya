@@ -232,6 +232,11 @@ class SettingsForm(StatesGroup):
     avans_pay_day = State()     # avans to'lov sanasi
 
 
+class BranchChangeForm(StatesGroup):
+    """Admin/HR «🔀 Filial almashtirish» — xodimni ism/username/ID bo'yicha qidirish."""
+    query = State()
+
+
 class ProbationForm(StatesGroup):
     """HR ariza qabul qilganda sinov/o'rganuvchi muddatini belgilaydi."""
     branch = State()       # qaysi filialga chiqadi

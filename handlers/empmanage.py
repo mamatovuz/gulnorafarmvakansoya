@@ -17,9 +17,11 @@ from database.db import (
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
     EMP_STATUS_LABELS, ES_REGULAR,
 )
-from states import EmpManageForm, EmpEditForm
+from states import EmpManageForm, EmpEditForm, BranchChangeForm
 import keyboards as kb
-from utils import send_employee_profile, safe_send, PROFILE_UPDATE_NOTICE
+from utils import (
+    send_employee_profile, safe_send, PROFILE_UPDATE_NOTICE, employee_profile_text,
+)
 
 router = Router()
 
@@ -530,3 +532,255 @@ async def branches_root_staff(call: CallbackQuery, state: FSMContext):
         reply_markup=kb.emp_manage_branch_kb(branches),
     )
     await call.answer()
+
+
+# ================= 🔀 FILIAL ALMASHTIRISH (admin/HR) =================
+# Xodimni boshqa filialga o'tkazish: filial/ism bo'yicha topiladi → kartochka →
+# yangi filial → «Ha/Yo'q» tasdiq → o'zgaradi va ikkala filial rahbariga xabar.
+
+@router.message(F.text == "🔀 Filial almashtirish")
+async def branch_change_home(message: Message, state: FSMContext):
+    if not await _is_staff(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        "🔀 <b>Filial almashtirish</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Xodimni boshqa filialga o'tkazish uchun avval uni toping:",
+        reply_markup=kb.branch_change_entry_kb(),
+    )
+
+
+@router.callback_query(F.data == "bch:home")
+async def branch_change_back_home(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await call.message.answer(
+        "🔀 <b>Filial almashtirish</b>\nXodimni qanday topamiz?",
+        reply_markup=kb.branch_change_entry_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "bch:find")
+async def branch_change_find(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(BranchChangeForm.query)
+    await call.message.answer(
+        "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+        "<b>ID</b> sini yozing:"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "bch:branch")
+async def branch_change_by_branch(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        "🏢 Qaysi filial xodimini o'tkazamiz? Filialni tanlang:",
+        reply_markup=kb.branch_change_branches_kb(branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchbr:"))
+async def branch_change_branch_pick(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    profiles = await q.search_employees(branch_id=bid)
+    bname = branch["name"] if branch else "Filial"
+    if not profiles:
+        await call.message.answer(f"🏢 <b>{bname}</b> filialida xodim yo'q.")
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{bname}</b> — <b>{len(profiles)}</b> ta xodim.\n"
+        "O'tkaziladigan xodimni tanlang:",
+        reply_markup=kb.branch_change_people_kb(profiles[:40]),
+    )
+    await call.answer()
+
+
+@router.message(BranchChangeForm.query, F.text)
+async def branch_change_search_run(message: Message, state: FSMContext):
+    if not await _is_staff(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text)
+    if not profiles:
+        await message.answer(
+            f"😔 «{text}» bo'yicha xodim topilmadi. Boshqa so'z bilan urinib ko'ring.",
+            reply_markup=kb.branch_change_entry_kb(),
+        )
+        return
+    await message.answer(
+        f"🔍 <b>Qidiruv:</b> {text} — <b>{len(profiles)}</b> ta topildi\nTanlang:",
+        reply_markup=kb.branch_change_people_kb(profiles[:40]),
+    )
+
+
+async def _branch_change_card(target, uid):
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await target.answer("❗️ Xodim topilmadi yoki profili yo'q.")
+        return
+    suffix = (
+        f"\n\n🏢 Joriy filial: <b>{profile.get('branch_name') or '—'}</b>\n"
+        "Boshqa filialga o'tkazish uchun quyidagi tugmani bosing 👇"
+    )
+    await send_employee_profile(
+        target, profile,
+        reply_markup=kb.branch_change_card_kb(uid), suffix=suffix,
+    )
+
+
+@router.callback_query(F.data.startswith("bchemp:"))
+async def branch_change_emp(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    uid = int(call.data.split(":")[1])
+    await _branch_change_card(call.message, uid)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchmove:"))
+async def branch_change_pick_target(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        f"🔀 <b>{profile.get('full_name') or '-'}</b> ni qaysi filialga "
+        "o'tkazamiz? Yangi filialni tanlang:",
+        reply_markup=kb.branch_change_target_kb(uid, branches, profile.get("branch_id")),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchto:"))
+async def branch_change_confirm(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, bid_s = call.data.split(":")
+    uid, bid = int(uid_s), int(bid_s)
+    profile = await q.get_employee_profile(uid)
+    branch = await q.get_branch(bid)
+    if not profile or not branch:
+        await call.answer("Ma'lumot topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"❓ <b>{profile.get('full_name') or '-'}</b> ni "
+        f"<b>{profile.get('branch_name') or '—'}</b> filialidan "
+        f"<b>{branch['name']}</b> filialiga o'tkazmoqchimisiz?",
+        reply_markup=kb.branch_change_confirm_kb(uid, bid),
+    )
+    await call.answer()
+
+
+async def _notify_manager(bot, tid, text, profile):
+    """Filial rahbariga xabar — rasm bo'lsa caption bilan, aks holda oddiy matn."""
+    photo = profile.get("photo_file_id")
+    if photo:
+        try:
+            await bot.send_photo(tid, photo, caption=text[:1024])
+            return
+        except Exception:
+            pass
+    await safe_send(bot, tid, text)
+
+
+@router.callback_query(F.data.startswith("bchgo:"))
+async def branch_change_apply(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, bid_s = call.data.split(":")
+    uid, bid = int(uid_s), int(bid_s)
+    profile = await q.get_employee_profile(uid)
+    new_branch = await q.get_branch(bid)
+    if not profile or not new_branch:
+        await call.answer("Ma'lumot topilmadi.", show_alert=True)
+        return
+    if profile.get("branch_id") == bid:
+        await call.answer("Xodim allaqachon shu filialda.", show_alert=True)
+        return
+
+    old_branch_id = await q.set_employee_branch(uid, bid)
+    old_branch = await q.get_branch(old_branch_id) if old_branch_id else None
+    old_bname = old_branch["name"] if old_branch else "—"
+    new_bname = new_branch["name"]
+    name = profile.get("full_name") or "-"
+
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "xodim_filial_almashtirildi", f"{name}: {old_branch_id} -> {bid}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>{name}</b> <b>{old_bname}</b> → <b>{new_bname}</b> filialiga o'tkazildi."
+    )
+    await call.answer("O'tkazildi ✅")
+
+    # Xodimning o'ziga xabar
+    if profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"ℹ️ Siz endi <b>{new_bname}</b> filialiga biriktirildingiz "
+            f"(oldingi filial: {old_bname}).",
+        )
+
+    info = employee_profile_text({**profile, "branch_name": new_bname})
+
+    # Eski filial rahbari(lari)ga xabar
+    if old_branch_id:
+        old_text = (
+            "🔀 <b>Xodim boshqa filialga ko'chirildi</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"👤 <b>{name}</b>\n"
+            f"➡️ Sizning <b>{old_bname}</b> filialingizdan <b>{new_bname}</b> "
+            "filialiga o'tkazildi.\n\n" + info
+        )
+        for tid in set(await q.branch_manager_tg_ids(old_branch_id)):
+            await _notify_manager(bot, tid, old_text, profile)
+
+    # Yangi filial rahbari(lari)ga xabar (rasm bilan)
+    new_text = (
+        "🔀 <b>Filialingizga yangi xodim o'tdi</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 <b>{name}</b>\n"
+        f"⬅️ <b>{old_bname}</b> filialidan sizning <b>{new_bname}</b> "
+        "filialingizga o'tkazildi.\n\n" + info
+    )
+    for tid in set(await q.branch_manager_tg_ids(bid)):
+        await _notify_manager(bot, tid, new_text, profile)

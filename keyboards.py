@@ -47,7 +47,7 @@ MENU_ESCAPE_BUTTONS = {
     "❌ Rad etilgan murojaatlar", "👥 Xodimlar",
     "🔐 Ishonch xabari", "📊 Bildirishnoma statistika",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
-    EMP_MANAGE_BTN,
+    EMP_MANAGE_BTN, "🔀 Filial almashtirish",
 }
 
 
@@ -546,6 +546,7 @@ def hr_menu():
     b.button(text="❌ Rad etilgan murojaatlar")
     b.button(text="👥 Xodimlar")
     b.button(text=EMP_MANAGE_BTN)
+    b.button(text="🔀 Filial almashtirish")
     b.button(text="🚫 Ishdan bo'shatish")
     b.button(text="📍 Davomat")
     b.button(text="🛌 Kunlik dam olish")
@@ -562,7 +563,7 @@ def hr_menu():
     b.button(text="🔍 Qidiruv")
     b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1377,8 +1378,9 @@ def admin_menu():
     b.button(text="🧾 Audit log")
     b.button(text=PROFILE_UPDATE_BTN)
     b.button(text=EMP_MANAGE_BTN)
+    b.button(text="🔀 Filial almashtirish")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -2060,6 +2062,66 @@ def accountant_employee_kb(user_id):
     b.button(text="📨 Hisobotni yuborish", callback_data=f"accsendreport:{user_id}")
     b.button(text="🧾 To'lovlar tarixi", callback_data=f"accpayhist:{user_id}")
     b.adjust(2, 2, 2, 2, 2, 1)
+    return b.as_markup()
+
+
+# ================= FILIAL ALMASHTIRISH (admin/HR) =================
+def branch_change_entry_kb():
+    """«🔀 Filial almashtirish» — xodimni qanday topamiz?"""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔍 Qidirish", callback_data="bch:find")
+    b.button(text="🏢 Filial bo'yicha", callback_data="bch:branch")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branch_change_branches_kb(branches, prefix="bchbr"):
+    """Filiallar ro'yxati (xodim tanlash uchun)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"{prefix}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="bch:home")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def branch_change_people_kb(profiles, prefix="bchemp"):
+    """Filial/qidiruv natijasidagi xodimlar — tanlab kartochkasi ochiladi."""
+    b = InlineKeyboardBuilder()
+    for p in profiles:
+        name = p.get("full_name") or str(p.get("tg_id"))
+        br = f" · 🏢 {p['branch_name']}" if p.get("branch_name") else ""
+        b.button(text=f"👤 {name}{br}", callback_data=f"{prefix}:{p['user_id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branch_change_card_kb(user_id):
+    """Xodim kartochkasi tagidagi «Filialni almashtirish» tugmasi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔀 Filialni almashtirish", callback_data=f"bchmove:{user_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branch_change_target_kb(user_id, branches, current_branch_id=None):
+    """Yangi filialni tanlash (joriy filial ro'yxatda ko'rsatilmaydi)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        if current_branch_id and br["id"] == current_branch_id:
+            continue
+        b.button(text=f"🏢 {br['name']}", callback_data=f"bchto:{user_id}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data=f"bchemp:{user_id}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def branch_change_confirm_kb(user_id, branch_id):
+    """«Shu hodimni shu filialga o'tkazmoqchimisiz?» — Ha / Yo'q."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, o'tkazilsin", callback_data=f"bchgo:{user_id}:{branch_id}")
+    b.button(text="❌ Yo'q", callback_data=f"bchemp:{user_id}")
+    b.adjust(1)
     return b.as_markup()
 
 
