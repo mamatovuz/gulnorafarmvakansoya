@@ -810,7 +810,7 @@ async def upsert_employee_profile(
     user_id, application_id, role, position, branch_id=None, uniform_status=None,
     monthly_salary=None, birth_date=None, address=None, work_hours=None,
     rest_day=None, photo_file_id=None, extra_info=None, since=None,
-    education=None,
+    education=None, shift=None,
 ):
     """Xodim profilini yaratadi yoki yangilaydi.
     None berilgan qo'shimcha maydonlar mavjud qiymatni o'zgartirmaydi (COALESCE)."""
@@ -836,22 +836,23 @@ async def upsert_employee_profile(
                        extra_info=COALESCE(?, extra_info),
                        since=COALESCE(?, since),
                        education=COALESCE(?, education),
+                       shift=COALESCE(?, shift),
                        updated_at=datetime('now','+5 hours')
                    WHERE user_id=?""",
                 (application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education, user_id),
+                 photo_file_id, extra_info, since, education, shift, user_id),
             )
         else:
             await db.execute(
                 """INSERT INTO employee_profiles
                    (user_id, application_id, role, position, branch_id, uniform_status,
                     monthly_salary, birth_date, address, work_hours, rest_day,
-                    photo_file_id, extra_info, since, education)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    photo_file_id, extra_info, since, education, shift)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (user_id, application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education),
+                 photo_file_id, extra_info, since, education, shift),
             )
         await db.commit()
     finally:
@@ -909,12 +910,18 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
                  WHERE 1=1"""
         params = []
         if text:
-            like = f"%{text.strip().lstrip('@').lower()}%"
+            t = text.strip().lstrip("@")
+            like = f"%{t.lower()}%"
             sql += """ AND (pylower(COALESCE(u.full_name,'')) LIKE ?
                         OR pylower(COALESCE(u.username,'')) LIKE ?
                         OR pylower(COALESCE(u.phone,'')) LIKE ?
-                        OR pylower(COALESCE(ep.position,'')) LIKE ?)"""
+                        OR pylower(COALESCE(ep.position,'')) LIKE ?"""
             params += [like, like, like, like]
+            if t.isdigit():
+                # ID bo'yicha ham qidiramiz (ichki ID yoki Telegram ID)
+                sql += " OR u.id=? OR u.tg_id=?"
+                params += [int(t), int(t)]
+            sql += ")"
         if role:
             sql += " AND ep.role=?"
             params.append(role)
@@ -936,7 +943,7 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
 
 EMP_EDITABLE_FIELDS = {
     "position", "monthly_salary", "birth_date", "address", "work_hours",
-    "rest_day", "photo_file_id", "education", "since", "extra_info",
+    "rest_day", "photo_file_id", "education", "since", "extra_info", "shift",
 }
 
 
@@ -1312,16 +1319,92 @@ async def update_monthly_salary(user_id, salary):
         await db.close()
 
 
-async def add_fine(employee_user_id, amount, reason, created_by):
+async def add_fine(employee_user_id, amount, reason, created_by,
+                   branch_id=None, source="finance", period=None):
+    """Jarima yozadi. source: finance (moliya) / hr (kadrlar).
+
+    HR yozgan jarima ham aynan moliyadagidek ishlaydi va yakuniy oylikdan
+    ayiriladi; farqi faqat `source` (kim yozgani)."""
+    period = period or _period_now_str()
     db = await _conn()
     try:
         cur = await db.execute(
-            """INSERT INTO fines (employee_user_id, amount, reason, created_by)
-               VALUES (?,?,?,?)""",
-            (employee_user_id, amount, reason, created_by),
+            """INSERT INTO fines
+                   (employee_user_id, branch_id, period, amount, reason,
+                    source, created_by)
+               VALUES (?,?,?,?,?,?,?)""",
+            (employee_user_id, branch_id, period, amount, reason, source, created_by),
         )
         await db.commit()
         return cur.lastrowid
+    finally:
+        await db.close()
+
+
+def _period_now_str():
+    """Joriy oy (YYYY-MM), Toshkent vaqti bilan."""
+    from datetime import datetime, timedelta
+    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m")
+
+
+async def cancel_fine(fid, cancelled_by):
+    """Jarimani bekor qiladi (cancelled=1). Bekor qilingan jarima yakuniy
+    oylikdan ayirilmaydi — ya'ni oylikdan kesilgani avtomatik qaytariladi.
+
+    True qaytadi — agar shu chaqiruvda haqiqatan bekor qilingan bo'lsa
+    (allaqachon bekor qilingan bo'lsa False — takroriy qaytarishning oldini oladi)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """UPDATE fines
+               SET cancelled=1, cancelled_by=?,
+                   cancelled_at=datetime('now','+5 hours')
+               WHERE id=? AND cancelled=0""",
+            (cancelled_by, fid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def employees_with_fines(branch_id=None, text=None, period=None, limit=60):
+    """Bekor qilinmagan jarimasi bor xodimlar ro'yxati (jarima soni/summasi bilan).
+
+    branch_id / text (ism·username·telefon·ID) bo'yicha filtrlanadi."""
+    db = await _conn()
+    try:
+        sql = """SELECT f.employee_user_id AS user_id,
+                        u.tg_id, u.full_name, u.username, u.phone,
+                        ep.position, ep.branch_id, ep.photo_file_id,
+                        b.name AS branch_name,
+                        COUNT(*) AS fine_cnt
+                 FROM fines f
+                 JOIN users u ON u.id=f.employee_user_id
+                 LEFT JOIN employee_profiles ep ON ep.user_id=f.employee_user_id
+                 LEFT JOIN branches b ON b.id=COALESCE(f.branch_id, ep.branch_id)
+                 WHERE f.cancelled=0"""
+        params = []
+        if period:
+            sql += " AND f.period=?"
+            params.append(period)
+        if branch_id:
+            sql += " AND COALESCE(f.branch_id, ep.branch_id)=?"
+            params.append(branch_id)
+        if text:
+            t = text.strip().lstrip("@")
+            like = f"%{t.lower()}%"
+            sql += """ AND (pylower(COALESCE(u.full_name,'')) LIKE ?
+                        OR pylower(COALESCE(u.username,'')) LIKE ?
+                        OR pylower(COALESCE(u.phone,'')) LIKE ?"""
+            params += [like, like, like]
+            if t.isdigit():
+                sql += " OR u.id=? OR u.tg_id=?"
+                params += [int(t), int(t)]
+            sql += ")"
+        sql += f" GROUP BY f.employee_user_id ORDER BY u.full_name LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
 
@@ -1410,17 +1493,17 @@ async def branch_managers(branch_id):
         await db.close()
 
 
-async def list_fines(employee_user_id, limit=30):
+async def list_fines(employee_user_id, limit=30, include_cancelled=False):
     db = await _conn()
     try:
-        cur = await db.execute(
-            """SELECT f.*, u.full_name AS created_by_name
-               FROM fines f
-               LEFT JOIN users u ON u.id=f.created_by
-               WHERE f.employee_user_id=?
-               ORDER BY f.id DESC LIMIT ?""",
-            (employee_user_id, limit),
-        )
+        sql = """SELECT f.*, u.full_name AS created_by_name
+                 FROM fines f
+                 LEFT JOIN users u ON u.id=f.created_by
+                 WHERE f.employee_user_id=?"""
+        if not include_cancelled:
+            sql += " AND f.cancelled=0"
+        sql += " ORDER BY f.id DESC LIMIT ?"
+        cur = await db.execute(sql, (employee_user_id, limit))
         return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
@@ -1440,7 +1523,8 @@ async def fines_total(employee_user_id, period):
     try:
         cur = await db.execute(
             """SELECT amount FROM fines
-               WHERE employee_user_id=? AND substr(created_at,1,7)=?""",
+               WHERE employee_user_id=? AND substr(created_at,1,7)=?
+                 AND cancelled=0""",
             (employee_user_id, period),
         )
         return sum(_digits_to_int(r["amount"]) for r in await cur.fetchall())
@@ -1516,15 +1600,18 @@ async def attendance_month_stats(user_id, period):
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT COUNT(DISTINCT date) AS present_days,
-                      COALESCE(SUM(late),0)  AS late_days
+            """SELECT COUNT(DISTINCT date)        AS present_days,
+                      COALESCE(SUM(late),0)         AS late_days,
+                      COALESCE(SUM(late_seconds),0) AS late_seconds
                FROM attendance
                WHERE user_id=? AND status='present'
                  AND substr(date,1,7)=?""",
             (user_id, period),
         )
         row = await cur.fetchone()
-        return dict(row) if row else {"present_days": 0, "late_days": 0}
+        return dict(row) if row else {
+            "present_days": 0, "late_days": 0, "late_seconds": 0,
+        }
     finally:
         await db.close()
 
@@ -2287,16 +2374,17 @@ async def get_open_attendance(tg_id):
 
 
 async def add_attendance(user_id, branch_id, latitude, longitude, distance,
-                         status="present", late=0):
+                         status="present", late=0, late_seconds=0):
     db = await _conn()
     try:
         cur = await db.execute(
             """INSERT INTO attendance
                (user_id, branch_id, date, time, latitude, longitude, distance, status,
-                late, last_prompt_at)
-               VALUES (?,?,date('now','+5 hours'),time('now','+5 hours'),?,?,?,?,?,
+                late, late_seconds, last_prompt_at)
+               VALUES (?,?,date('now','+5 hours'),time('now','+5 hours'),?,?,?,?,?,?,
                        datetime('now','+5 hours'))""",
-            (user_id, branch_id, latitude, longitude, distance, status, 1 if late else 0),
+            (user_id, branch_id, latitude, longitude, distance, status,
+             1 if late else 0, int(late_seconds or 0)),
         )
         await db.commit()
         return cur.lastrowid
@@ -2304,15 +2392,17 @@ async def add_attendance(user_id, branch_id, latitude, longitude, distance,
         await db.close()
 
 
-async def set_attendance_checkout(att_id, latitude, longitude, distance, early=0):
+async def set_attendance_checkout(att_id, latitude, longitude, distance,
+                                  early=0, early_seconds=0):
     db = await _conn()
     try:
         await db.execute(
             """UPDATE attendance
                SET out_time=time('now','+5 hours'), out_latitude=?, out_longitude=?,
-                   out_distance=?, early=?
+                   out_distance=?, early=?, early_seconds=?
                WHERE id=?""",
-            (latitude, longitude, distance, 1 if early else 0, att_id),
+            (latitude, longitude, distance, 1 if early else 0,
+             int(early_seconds or 0), att_id),
         )
         await db.commit()
     finally:

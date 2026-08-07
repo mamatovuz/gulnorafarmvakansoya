@@ -464,14 +464,21 @@ async def acc_fine_save(message: Message, state: FSMContext, bot: Bot):
     reason = message.text.strip()
     await state.clear()
     me = await q.get_user(message.from_user.id)
-    await q.add_fine(uid, amount, reason, me["id"])
-    await q.add_log(message.from_user.id, me["full_name"], "jarima_yozdi", f"user#{uid} {amount}")
-    await message.answer(f"✅ Jarima yozildi: <b>{amount}</b>\nSabab: {reason}")
     profile = await q.get_employee_profile(uid)
+    await q.add_fine(
+        uid, amount, reason, me["id"],
+        branch_id=(profile or {}).get("branch_id"), source="finance",
+    )
+    await q.add_log(message.from_user.id, me["full_name"], "jarima_yozdi", f"user#{uid} {amount}")
+    await message.answer(
+        f"✅ Jarima yozildi: <b>{amount}</b>\nSabab: {reason}\n\n"
+        "<i>Bu summa yakuniy oylikdan ayiriladi.</i>"
+    )
     if profile and profile.get("tg_id"):
         await safe_send(
             bot, profile["tg_id"],
-            f"💸 Sizga jarima yozildi: <b>{amount}</b>\nSabab: {reason}",
+            f"💸 Sizga jarima yozildi: <b>{amount}</b>\nSabab: {reason}\n\n"
+            "Bu summa oyligingizdan ayiriladi.",
         )
 
 
@@ -596,13 +603,20 @@ def _rest_weekday(rest_day):
     return _REST_WEEKDAY.get((rest_day or "").strip())
 
 
-def _month_workdays(period, rest_wd, today):
-    """Shu oyda (bugungacha) kutilgan ish kunlari soni — dam kunlaridan tashqari."""
+def _month_workdays(period, rest_wd, today, upto_today=True):
+    """Oydagi ish kunlari soni — dam olish kunlaridan tashqari.
+
+    upto_today=True  => faqat bugungacha (kutilgan davomat uchun).
+    upto_today=False => butun oy bo'yicha (kunlik stavka mahraji uchun).
+    """
     year, month = map(int, period.split("-"))
-    if (year, month) > (today.year, today.month):
-        return 0                      # kelajakdagi oy
     last_day = monthrange(year, month)[1]
-    end_day = today.day if (today.year, today.month) == (year, month) else last_day
+    if upto_today:
+        if (year, month) > (today.year, today.month):
+            return 0                  # kelajakdagi oy
+        end_day = today.day if (today.year, today.month) == (year, month) else last_day
+    else:
+        end_day = last_day
     count = 0
     for d in range(1, end_day + 1):
         if rest_wd is None or date(year, month, d).weekday() != rest_wd:
@@ -610,21 +624,64 @@ def _month_workdays(period, rest_wd, today):
     return count
 
 
+def _workday_seconds(work_hours):
+    """Ish kuni davomiyligi (sekund). «09:00-18:00» => 32400. Aniqlanmasa 8 soat."""
+    import re
+    times = re.findall(r"(\d{1,2}):(\d{2})", work_hours or "")
+    if len(times) < 2:
+        return 8 * 3600
+    start = int(times[0][0]) * 3600 + int(times[0][1]) * 60
+    end = int(times[1][0]) * 3600 + int(times[1][1]) * 60
+    diff = end - start
+    if diff <= 0:
+        diff += 24 * 3600
+    return diff or 8 * 3600
+
+
+def _fmt_hms(seconds):
+    """Sekundni «1 soat 5 daqiqa» ko'rinishida yozadi."""
+    seconds = int(seconds or 0)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h} soat")
+    if m:
+        parts.append(f"{m} daqiqa")
+    if s or not parts:
+        parts.append(f"{s} soniya")
+    return " ".join(parts)
+
+
 async def _compute_final_salary(uid):
-    """Yakuniy oylikni barcha chegirmalar bilan hisoblaydi. Dict qaytaradi."""
+    """Yakuniy oylikni barcha chegirmalar bilan hisoblaydi. Dict qaytaradi.
+
+    Kunlik stavka = oylik ÷ oydagi ish kunlari (dam kunlari chiqarib tashlangan).
+    Kelmagan kun = kunlik × kunlar. Kechikish = jami kechikkan sekund × (kunlik
+    ÷ kunlik ish sekundi) — ya'ni ishlamagan vaqt uchun ayiriladi."""
     profile = await q.get_employee_profile(uid)
     period = _period_now()
     base = parse_money((profile or {}).get("monthly_salary")) or 0
-    daily = base / 30 if base else 0
+    rest_wd = _rest_weekday((profile or {}).get("rest_day"))
+    today = now_tk()
+
+    # Kunlik stavka — butun oydagi ish kunlariga bo'linadi
+    full_workdays = _month_workdays(period, rest_wd, today, upto_today=False)
+    workdays_so_far = _month_workdays(period, rest_wd, today, upto_today=True)
+    daily = base / full_workdays if (base and full_workdays) else 0
 
     stats = await q.attendance_month_stats(uid, period)
     present = stats.get("present_days", 0) or 0
     late_days = stats.get("late_days", 0) or 0
-    rest_wd = _rest_weekday((profile or {}).get("rest_day"))
-    workdays = _month_workdays(period, rest_wd, now_tk())
-    absent_days = max(0, workdays - present)
+    late_seconds = stats.get("late_seconds", 0) or 0
+
+    absent_days = max(0, workdays_so_far - present)
     absent_sum = round(absent_days * daily)
-    late_sum = round(late_days * daily / 2)
+
+    # Kechikish: har sekund narxi = kunlik ÷ kunlik ish sekundi
+    day_secs = _workday_seconds((profile or {}).get("work_hours"))
+    per_second = daily / day_secs if (daily and day_secs) else 0
+    late_sum = round(late_seconds * per_second)
     attendance_ded = absent_sum + late_sum
 
     fines_sum = await q.fines_total(uid, period)
@@ -636,10 +693,13 @@ async def _compute_final_salary(uid):
     return {
         "profile": profile, "period": period, "base": base,
         "present": present, "absent_days": absent_days, "late_days": late_days,
+        "late_seconds": late_seconds,
         "absent_sum": absent_sum, "late_sum": late_sum,
         "fines_sum": fines_sum, "advance_sum": advance_sum,
-        "med_sum": med_sum, "kpi_sum": kpi_sum, "kpi_cnt": kpi_cnt,
-        "workdays": workdays, "final": max(0, round(final)),
+        "med_sum": med_sum, "med_cnt": med_cnt,
+        "kpi_sum": kpi_sum, "kpi_cnt": kpi_cnt,
+        "daily": round(daily), "full_workdays": full_workdays,
+        "workdays": workdays_so_far, "final": max(0, round(final)),
     }
 
 
@@ -664,22 +724,37 @@ async def acc_final_salary(call: CallbackQuery):
         await call.answer()
         return
 
+    await call.message.answer(_final_salary_text(r, name))
+    await call.answer()
+
+
+def _final_salary_text(r, name, for_employee=False):
+    """Yakuniy oylik hisobini chiroyli matn qilib qaytaradi.
+
+    for_employee=True bo'lsa — xodimning o'ziga yuboriladigan variant."""
     def line(label, value):
         return f"➖ {label}: <b>{fmt_money(value)}</b>" if value else None
 
+    late_note = ""
+    if r.get("late_seconds"):
+        late_note = f" (jami {_fmt_hms(r['late_seconds'])})"
+
+    head = "🧮 <b>Oylik hisobi</b>" if not for_employee else "🧾 <b>Oylik hisobotingiz</b>"
     parts = [
-        f"🧮 <b>Yakuniy oylik hisobi</b>",
+        head,
         f"👤 {name} · 📆 {r['period']}",
         "━━━━━━━━━━━━",
         f"💰 Asosiy oylik: <b>{fmt_money(r['base'])}</b>",
+        f"📈 Kunlik stavka: <b>{fmt_money(r['daily'])}</b> "
+        f"(oylik ÷ {r['full_workdays']} ish kuni)",
         "",
         f"📊 Davomat: kelgan <b>{r['present']}</b> / ish kuni <b>{r['workdays']}</b> · "
-        f"kelmagan <b>{r['absent_days']}</b> · kechikkan <b>{r['late_days']}</b>",
+        f"kelmagan <b>{r['absent_days']}</b> · kechikkan <b>{r['late_days']}</b>{late_note}",
     ]
     ded_lines = [
         line("Kelmagan kunlar", r["absent_sum"]),
         line("Kechikishlar", r["late_sum"]),
-        line("Jarimalar (HR)", r["fines_sum"]),
+        line("Jarimalar", r["fines_sum"]),
         line("Olingan avans", r["advance_sum"]),
         line("Dorilar", r["med_sum"]),
         line(f"KPI kesish ({r['kpi_cnt']} ta)", r["kpi_sum"]),
@@ -694,8 +769,184 @@ async def acc_final_salary(call: CallbackQuery):
     parts += [
         "━━━━━━━━━━━━",
         f"✅ <b>Qo'lga tegadigan oylik: {fmt_money(r['final'])}</b>",
-        "\n<i>Kelmagan/kechikish davomatdan avtomatik hisoblangan "
-        "(kunlik = oylik ÷ 30). Kerak bo'lsa jarima orqali tuzating.</i>",
     ]
-    await call.message.answer("\n".join(parts))
+    if not for_employee:
+        parts.append(
+            "\n<i>Kelmagan/kechikish davomatdan avtomatik hisoblangan "
+            "(kunlik = oylik ÷ ish kunlari; dam kunlari hisobga olinmaydi).</i>"
+        )
+    else:
+        parts.append(
+            "\n<i>Kechikish sekundlab, kelmagan kunlar esa kunlik stavka bo'yicha "
+            "hisoblandi. Savollar bo'lsa moliya bo'limiga murojaat qiling.</i>"
+        )
+    return "\n".join(parts)
+
+
+# ---- Xodimga oylik hisobotini yuborish (oy oxirida yoki qo'lda) ----
+@router.callback_query(F.data.startswith("accsendreport:"))
+async def acc_send_report(call: CallbackQuery, bot: Bot):
+    """Yakuniy oylik hisobotini xodimning o'ziga yuboradi."""
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    r = await _compute_final_salary(uid)
+    profile = r["profile"]
+    if not profile or not r["base"]:
+        await call.answer("Oylik belgilanmagan — hisobot yuborilmadi.", show_alert=True)
+        return
+    if not profile.get("tg_id"):
+        await call.answer("Xodimning Telegram akkaunti ulanmagan.", show_alert=True)
+        return
+    text = _final_salary_text(r, profile.get("full_name") or "-", for_employee=True)
+    ok = await safe_send(bot, profile["tg_id"], text)
+    await call.answer("📨 Hisobot yuborildi ✅" if ok else "Yuborilmadi ❌",
+                      show_alert=not ok)
+
+
+# ================= JARIMANI BEKOR QILISH =================
+# Moliya bo'limi jarimani bekor qiladi — oylikdan kesilgani avtomatik
+# qaytariladi (yakuniy oylik cancelled=0 jarimalarnigina hisoblaydi) va
+# xodimga xabar boradi.
+async def _show_fine_cancel_list(target, rows, header=None):
+    if not rows:
+        await target.answer(
+            "✅ Hozircha bekor qilinadigan (faol) jarimasi bor xodim yo'q."
+        )
+        return
+    await target.answer(
+        header or (
+            f"🚫 <b>Jarimani bekor qilish</b>\n\n"
+            f"Faol jarimasi bor xodimlar: <b>{len(rows)}</b> ta.\n"
+            "Yuqoridagi 🔍 tugma orqali filial/ism/username/ID bo'yicha qidirishingiz "
+            "mumkin. Xodimni tanlang:"
+        ),
+        reply_markup=kb.fine_cancel_people_kb(rows),
+    )
+
+
+@router.message(F.text == "🚫 Jarimani bekor qilish")
+async def fine_cancel_start(message: Message, state: FSMContext):
+    if not await _is_accountant(message.from_user.id):
+        await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
+        return
+    await state.clear()
+    rows = await q.employees_with_fines(limit=60)
+    await _show_fine_cancel_list(message, rows)
+
+
+@router.callback_query(F.data == "fcfind")
+async def fine_cancel_find(call: CallbackQuery, state: FSMContext):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(AccForm.fine_cancel_search)
+    await call.message.answer(
+        "🔤 <b>Filial nomi</b>, <b>ism</b>, <b>username</b> yoki <b>ID</b> yozing:"
+    )
     await call.answer()
+
+
+@router.message(AccForm.fine_cancel_search, F.text)
+async def fine_cancel_search_run(message: Message, state: FSMContext):
+    if not await _is_accountant(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    text = message.text.strip()
+    # Avval filial nomiga mos kelsa — o'sha filialning jarimalilarini olamiz
+    branch_id = None
+    branches = await q.list_branches()
+    for br in branches:
+        if text.lower() in (br["name"] or "").lower():
+            branch_id = br["id"]
+            break
+    if branch_id:
+        rows = await q.employees_with_fines(branch_id=branch_id, limit=60)
+    else:
+        rows = await q.employees_with_fines(text=text, limit=60)
+    if not rows:
+        await message.answer(
+            f"😔 «{text}» bo'yicha faol jarimasi bor xodim topilmadi."
+        )
+        return
+    await _show_fine_cancel_list(
+        message, rows,
+        header=f"🔍 <b>Qidiruv:</b> {text} — <b>{len(rows)}</b> ta topildi\nTanlang:",
+    )
+
+
+@router.callback_query(F.data.startswith("fcperson:"))
+async def fine_cancel_person(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    fines = await q.list_fines(uid)
+    if not fines:
+        await call.answer("Bu xodimda faol jarima yo'q.", show_alert=True)
+        return
+    total = sum(q._digits_to_int(f.get("amount")) for f in fines)
+    extra = (
+        f"\n\n💸 <b>Faol jarimalar:</b> {len(fines)} ta · "
+        f"jami <b>{fmt_money(total)}</b>\n"
+        "Bekor qilish uchun kerakli jarimani tanlang 👇"
+    )
+    if profile:
+        await send_employee_profile(
+            call.message, profile,
+            reply_markup=kb.fine_cancel_list_kb(fines, uid), suffix=extra,
+        )
+    else:
+        await call.message.answer(
+            "Xodim profili topilmadi." + extra,
+            reply_markup=kb.fine_cancel_list_kb(fines, uid),
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("fcancel:"))
+async def fine_cancel_apply(call: CallbackQuery, bot: Bot):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    fid = int(call.data.split(":")[1])
+    fine = await q.get_fine(fid)
+    if not fine:
+        await call.answer("Jarima topilmadi.", show_alert=True)
+        return
+    if fine.get("cancelled"):
+        await call.answer("Bu jarima allaqachon bekor qilingan.", show_alert=True)
+        return
+    me = await q.get_user(call.from_user.id)
+    ok = await q.cancel_fine(fid, me["id"] if me else None)
+    if not ok:
+        await call.answer("Bu jarima allaqachon bekor qilingan.", show_alert=True)
+        return
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?", "jarima_bekor",
+        f"fine#{fid} user#{fine.get('employee_user_id')} {fine.get('amount')}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>Jarima bekor qilindi</b>\n"
+        f"👤 {fine.get('employee_name') or '-'}\n"
+        f"💸 Summa: <b>{fine.get('amount')}</b>\n"
+        f"✍️ Sabab (asl): {fine.get('reason') or '-'}\n\n"
+        "Bu summa yakuniy oylikdan endi ayirilmaydi (oylikka qaytarildi)."
+    )
+    await call.answer("Bekor qilindi ✅")
+    if fine.get("employee_tg"):
+        await safe_send(
+            bot, fine["employee_tg"],
+            f"♻️ <b>Jarimangiz bekor qilindi</b>\n\n"
+            f"💸 Summa: <b>{fine.get('amount')}</b>\n"
+            f"✍️ Sabab (asl): {fine.get('reason') or '-'}\n\n"
+            "Jarimangiz <b>moliya bo'limi</b> tomonidan bekor qilindi va "
+            "oyligingizdan kesilgan summa qaytarildi.",
+        )

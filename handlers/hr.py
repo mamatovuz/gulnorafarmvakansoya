@@ -484,22 +484,48 @@ async def app_accept_start_date(message: Message, state: FSMContext, bot: Bot):
         )
         return
     start_iso, start_disp = parsed
+    # Sanadan keyin — xodim qaysi smenada ishlashini so'raymiz (barcha turlar uchun)
+    await state.update_data(prob_start_iso=start_iso)
+    await state.set_state(ProbationForm.shift)
+    await message.answer(
+        f"📅 Ishga chiqish sanasi: <b>{start_disp}</b>\n\n"
+        "🕒 Xodim <b>qaysi smenada</b> ishlaydi? Tanlang:",
+        reply_markup=kb.probation_shift_kb(),
+    )
+
+
+@router.callback_query(ProbationForm.shift, F.data.startswith("probshift:"))
+async def app_accept_shift(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    idx = int(call.data.split(":")[1])
+    shift = kb.PROBATION_SHIFTS[idx] if 0 <= idx < len(kb.PROBATION_SHIFTS) else None
     data = await state.get_data()
     kind = data.get("accept_kind", "trial")
+    await state.update_data(prob_shift=shift)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"🕒 Smena: <b>{shift}</b>")
     if kind == "learner":
         # O'rganuvchi uchun — HR kun sonini kiritadi
-        await state.update_data(prob_start_iso=start_iso)
         await state.set_state(ProbationForm.days)
-        await message.answer(
+        await call.message.answer(
             "🎓 O'rganuvchi <b>necha kun</b> o'rganadi? Faqat son yuboring "
             "(masalan: <b>10</b>):"
         )
+        await call.answer()
         return
     aid = data.get("prob_aid")
     branch_id = data.get("prob_branch_id")
+    start_iso = data.get("prob_start_iso")
     await state.clear()
-    me = await actor(message.from_user.id)
-    await _finalize_accept(bot, message, me, aid, branch_id, start_iso, kind)
+    me = await actor(call.from_user.id)
+    await _finalize_accept(bot, call.message, me, aid, branch_id, start_iso, kind,
+                           shift=shift)
+    await call.answer()
 
 
 @router.message(ProbationForm.days, F.text)
@@ -516,13 +542,15 @@ async def app_accept_learner_days(message: Message, state: FSMContext, bot: Bot)
     aid = data.get("prob_aid")
     branch_id = data.get("prob_branch_id")
     start_iso = data.get("prob_start_iso")
+    shift = data.get("prob_shift")
     await state.clear()
     me = await actor(message.from_user.id)
-    await _finalize_accept(bot, message, me, aid, branch_id, start_iso, "learner", days=days)
+    await _finalize_accept(bot, message, me, aid, branch_id, start_iso, "learner",
+                           days=days, shift=shift)
 
 
 async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
-                           start_iso, kind, days=None):
+                           start_iso, kind, days=None, shift=None):
     """Arizani qabul qiladi. kind: hire (doimiy) / trial (sinov) / learner (o'rganuvchi)."""
     meta = ACCEPT_KINDS.get(kind, ACCEPT_KINDS["trial"])
     # ATOMIK — bir ariza faqat bir marta qabul qilinadi
@@ -552,6 +580,7 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
         branch_id=branch_id,
         uniform_status=a.get("uniform_status") or "unknown",
         monthly_salary=agreed_salary,
+        shift=shift or a.get("shift"),
     )
 
     # Sinov / o'rganuvchi bo'lsa — muddat yozuvini yaratamiz
@@ -844,6 +873,63 @@ async def app_reject_start(call: CallbackQuery):
     await call.answer()
 
 
+@router.callback_query(F.data.startswith("apprejlist:"))
+async def app_reject_list(call: CallbackQuery):
+    """Tayyor rad javoblari ro'yxatini ko'rsatadi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    aid = int(call.data.split(":")[1])
+    try:
+        await call.message.edit_reply_markup(reply_markup=kb.reject_templates_kb(aid))
+    except Exception:
+        await call.message.answer(
+            "📋 Tayyor javoblardan birini tanlang:",
+            reply_markup=kb.reject_templates_kb(aid),
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("apprejback:"))
+async def app_reject_back(call: CallbackQuery):
+    """Tayyor javoblar ro'yxatidan asosiy rad menyusiga qaytish."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    aid = int(call.data.split(":")[1])
+    try:
+        await call.message.edit_reply_markup(reply_markup=kb.reject_reason_kb(aid))
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("apprejpick:"))
+async def app_reject_pick(call: CallbackQuery, bot: Bot):
+    """Tanlangan tayyor javob bilan arizani rad etadi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    from utils import REJECT_REASON_TEMPLATES
+    _, aid, key = call.data.split(":")
+    aid = int(aid)
+    tpl = REJECT_REASON_TEMPLATES.get(key)
+    if not tpl:
+        await call.answer("Javob topilmadi.", show_alert=True)
+        return
+    label, text = tpl
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    me = await actor(call.from_user.id)
+    await _do_reject(
+        bot, call.message, me, aid, text,
+        comment=f"Tayyor rad javobi: {label}",
+    )
+    await call.answer("Rad etildi")
+
+
 async def _do_reject(bot: Bot, target, me, aid, notice, comment=None):
     """Arizani rad etadi va nomzodga `notice` matnini yuboradi.
 
@@ -1133,13 +1219,10 @@ async def employee_profile_view(call: CallbackQuery):
     if not profile:
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
-    # «Forma bor/yo'q» tugmasi faqat farmatsevtlar uchun mantiqiy
-    from utils import is_pharmacist_like
-    markup = (
-        kb.uniform_employee_kb(uid, profile.get("uniform_status"))
-        if is_pharmacist_like(profile) else None
+    # Jarima yozish (moliyaga boradi) + farmatsevt bo'lsa «Forma bor/yo'q»
+    await send_employee_profile(
+        call.message, profile, reply_markup=kb.hr_employee_kb(uid, profile)
     )
-    await send_employee_profile(call.message, profile, reply_markup=markup)
     await call.answer()
 
 
@@ -1440,14 +1523,38 @@ async def fine_save(message: Message, state: FSMContext, bot: Bot):
     reason = message.text.strip()
     await state.clear()
     me = await actor(message.from_user.id)
-    fid = await q.add_fine(uid, amount, reason, me["id"])
     profile = await q.get_employee_profile(uid)
+    branch_id = (profile or {}).get("branch_id")
+    # HR yozgan jarima — moliyaga tegishli (source='hr'), yakuniy oylikdan ayiriladi
+    fid = await q.add_fine(uid, amount, reason, me["id"],
+                           branch_id=branch_id, source="hr")
     await q.add_log(message.from_user.id, me["full_name"], "jarima_yozildi", f"{uid}: {amount}")
-    await message.answer(f"✅ Jarima saqlandi (#{fid}).")
-    await safe_send(
-        bot, profile["tg_id"],
-        f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
+    await message.answer(
+        f"✅ Jarima saqlandi (#{fid}).\n\n"
+        "<i>Jarima moliya bo'limiga yuborildi va yakuniy oylikdan ayiriladi.</i>"
     )
+    if profile and profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
+            "\n\nBu summa oyligingizdan ayiriladi."
+        )
+    # Moliya bo'limiga xabar — «HR bo'limi shu filialdagi shu xodimga jarima yozdi»
+    branch = await q.get_branch(branch_id) if branch_id else None
+    fin_text = (
+        "💸 <b>HR bo'limidan yangi jarima</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{(profile or {}).get('full_name') or uid}</b>\n"
+        f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
+        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
+        f"💰 Summa: <b>{amount}</b>\n"
+        f"✍️ Sabab: {reason}\n"
+        f"👔 Yozdi: {me['full_name']} (HR)\n\n"
+        "Bu jarima yakuniy oylikdan avtomatik ayiriladi. Bekor qilish uchun "
+        "moliya panelidagi «🚫 Jarimani bekor qilish» dan foydalaning."
+    )
+    for tid in set(await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)):
+        await safe_send(bot, tid, fin_text)
 
 
 @router.callback_query(F.data.startswith("phfines:"))

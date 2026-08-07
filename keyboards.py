@@ -255,6 +255,27 @@ def apply_shift_kb(lang=None):
     return _group_kb("shift", row=1, lang=lang)
 
 
+# Sinov/ishga qabulda smena tanlash (inline)
+PROBATION_SHIFTS = ["🌞 Ertalabgi smena", "🌙 Kechki smena", "🔄 Farqi yo'q"]
+
+
+def tech_issue_confirm_kb():
+    """Texnik nosozlikni HR ga yuborishdan oldin tasdiqlash."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, HR ga yuborilsin", callback_data="techissue:send")
+    b.button(text="❌ Yo'q, bekor qilish", callback_data="techissue:cancel")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def probation_shift_kb():
+    b = InlineKeyboardBuilder()
+    for i, s in enumerate(PROBATION_SHIFTS):
+        b.button(text=s, callback_data=f"probshift:{i}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def apply_gender_kb(lang=None):
     return _group_kb("gender", row=2, lang=lang)
 
@@ -380,12 +401,24 @@ def apply_edit_fields_kb():
 
 
 def reject_reason_kb(aid):
-    """Arizani rad etishda: tayyor javob (lotin/kirill) yoki o'z matni."""
+    """Arizani rad etishda: tayyor javoblar ro'yxati yoki o'z matni."""
     b = InlineKeyboardBuilder()
-    b.button(text="🔤 Lotincha (tayyor javob)", callback_data=f"apprejt:{aid}:lat")
-    b.button(text="🔡 Кириллча (тайёр жавоб)", callback_data=f"apprejt:{aid}:cyr")
+    b.button(text="📋 Tayyor javoblar", callback_data=f"apprejlist:{aid}")
+    b.button(text="🔤 Umumiy (lotincha)", callback_data=f"apprejt:{aid}:lat")
+    b.button(text="🔡 Умумий (кириллча)", callback_data=f"apprejt:{aid}:cyr")
     b.button(text="✍️ O'zim yozaman", callback_data=f"apprejw:{aid}")
-    b.button(text="✏️ Tayyor javobni tahrirlash", callback_data="rejtpl:menu")
+    b.button(text="✏️ Umumiy javobni tahrirlash", callback_data="rejtpl:menu")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def reject_templates_kb(aid):
+    """Bir nechta tayyor rad javoblari ro'yxati — bittasini tanlab yuboriladi."""
+    from utils import REJECT_REASON_TEMPLATES
+    b = InlineKeyboardBuilder()
+    for key, (label, _text) in REJECT_REASON_TEMPLATES.items():
+        b.button(text=label, callback_data=f"apprejpick:{aid}:{key}")
+    b.button(text="⬅️ Orqaga", callback_data=f"apprejback:{aid}")
     b.adjust(1)
     return b.as_markup()
 
@@ -1019,7 +1052,7 @@ def employee_profiles_list_kb(profiles, prefix="empview", with_search=True,
     b = InlineKeyboardBuilder()
     if with_search:
         b.button(
-            text="🔍 Xodim qidirish (ism)",
+            text="🔍 Xodim qidirish (ism/username/ID)",
             callback_data=search_cb or f"empfind:{prefix}",
         )
     for p in profiles:
@@ -1570,6 +1603,29 @@ def emp_manage_field_kb(uid):
     return b.as_markup()
 
 
+# Ma'lumot (education) tanlash tugmalari — qo'lda yozish o'rniga
+EDUCATION_OPTIONS = [
+    "🎓 Oliy farmatsevt",
+    "🕗 Tugallanmagan oliy farmatsevt",
+    "📘 O'rta maxsus farmatsevt",
+    "🕓 Tugallanmagan o'rta maxsus",
+    "🎓 Oliy — boshqa soha",
+    "🕗 Tugallanmagan oliy — boshqa soha",
+    "📗 Umumiy o'rta ta'lim",
+    "❌ Diplom yo'q",
+]
+
+
+def emp_manage_education_kb(uid):
+    """Xodim ma'lumotini (oliy/o'rta/farmatsevt...) tugma orqali tanlash."""
+    b = InlineKeyboardBuilder()
+    for i, opt in enumerate(EDUCATION_OPTIONS):
+        b.button(text=opt, callback_data=f"emmedu:{uid}:{i}")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmedit:{uid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 # Rol tanlash — o'rganuvchi/sinov maqom sifatida (rolni o'zgartirmaydi)
 EMP_MANAGE_ROLES = [
     (ROLE_PHARMACIST, "💊 Farmatsevt"),
@@ -1923,6 +1979,7 @@ def accountant_menu():
     b.button(text="🏢 Filial tanlab ko'rish")
     b.button(text="👥 Xodimlar (oylik/jarima)")
     b.button(text="✂️ Oylik kesish")
+    b.button(text="🚫 Jarimani bekor qilish")
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
     b.button(text="🏠 Asosiy menyu")
@@ -2000,8 +2057,58 @@ def accountant_employee_kb(user_id):
     b.button(text="💊 Dori yozish", callback_data=f"accmed:{user_id}")
     b.button(text="📋 Dorilar", callback_data=f"accmeds:{user_id}")
     b.button(text="🧮 Yakuniy oylik", callback_data=f"accfinal:{user_id}")
+    b.button(text="📨 Hisobotni yuborish", callback_data=f"accsendreport:{user_id}")
     b.button(text="🧾 To'lovlar tarixi", callback_data=f"accpayhist:{user_id}")
-    b.adjust(2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 1)
+    return b.as_markup()
+
+
+def hr_employee_kb(user_id, profile=None):
+    """HR panelidagi xodim kartochkasi tugmalari — jarima (moliyaga boradi)
+    va (farmatsevt bo'lsa) forma holati."""
+    b = InlineKeyboardBuilder()
+    b.button(text="💸 Jarima yozish", callback_data=f"phfine:{user_id}")
+    b.button(text="📋 Jarimalar", callback_data=f"phfines:{user_id}")
+    sizes = [2]
+    from utils import is_pharmacist_like
+    if profile and is_pharmacist_like(profile):
+        status = profile.get("uniform_status")
+        if status != "yes":
+            b.button(text="✅ Forma bor", callback_data=f"ufset:{user_id}:yes")
+        if status != "no":
+            b.button(text="❌ Forma yo'q", callback_data=f"ufset:{user_id}:no")
+        sizes.append(2)
+    b.adjust(*sizes)
+    return b.as_markup()
+
+
+def fine_cancel_people_kb(rows, prefix="fcperson"):
+    """Jarimasi bor xodimlar ro'yxati (bekor qilish uchun) + qidiruv tugmasi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔍 Qidirish (filial/ism/username/ID)", callback_data="fcfind")
+    for p in rows:
+        name = p.get("full_name") or str(p.get("tg_id"))
+        br = p.get("branch_name") or "-"
+        cnt = p.get("fine_cnt") or 0
+        b.button(
+            text=f"👤 {name} · 🏢 {br} · 💸 {cnt} ta",
+            callback_data=f"{prefix}:{p['user_id']}",
+        )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def fine_cancel_list_kb(fines, user_id):
+    """Bitta xodimning jarimalari — har biri yonida «bekor qilish» tugmasi."""
+    b = InlineKeyboardBuilder()
+    for f in fines:
+        amt = f.get("amount") or "-"
+        d = (f.get("created_at") or "")[:10]
+        b.button(
+            text=f"🚫 {amt} · {d} — bekor qilish",
+            callback_data=f"fcancel:{f['id']}",
+        )
+    b.adjust(1)
     return b.as_markup()
 
 

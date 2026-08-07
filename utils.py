@@ -365,6 +365,8 @@ def employee_profile_text(profile):
         parts.append(f"📍 Manzil: {profile['address']}")
     if profile.get("work_hours"):
         parts.append(f"🕒 Ish vaqti: {profile['work_hours']}")
+    if profile.get("shift"):
+        parts.append(f"🔁 Smena: {profile['shift']}")
     if profile.get("rest_day"):
         parts.append(f"🛌 Dam olish kuni: {profile['rest_day']}")
     # Forma faqat farmatsevtlar uchun ko'rsatiladi
@@ -663,6 +665,56 @@ REJECT_TEMPLATE_CYR = (
 REJECT_TEMPLATES = {
     "lat": ("Lotincha", REJECT_TEMPLATE_LAT),
     "cyr": ("Кириллча", REJECT_TEMPLATE_CYR),
+}
+
+
+# Bir nechta tayyor rad javoblari — HR ariza rad etganda tanlab yuboradi.
+# Har biri: key -> (tugma matni, nomzodga yuboriladigan to'liq matn).
+REJECT_REASON_TEMPLATES = {
+    "no_vacancy": (
+        "🚫 Bo'sh o'rin yo'q",
+        "Assalomu alaykum!\n\n"
+        "Murojaatingiz uchun rahmat. Afsuski, hozirda siz murojaat qilgan "
+        "yo'nalish bo'yicha bo'sh ish o'rni mavjud emas. Shu sababli arizangiz "
+        "rad etildi.\n\nKelgusida mos o'rin paydo bo'lsa, sizni yana taklif "
+        "qilishdan mamnun bo'lamiz. Ishlaringizga omad!",
+    ),
+    "experience": (
+        "📉 Tajriba yetarli emas",
+        "Assalomu alaykum!\n\n"
+        "Arizangiz ko'rib chiqildi. Afsuski, hozirgi bosqichda ish tajribangiz "
+        "va malakangiz talab qilinayotgan darajaga to'liq mos kelmadi. Shu "
+        "sababli arizangiz rad etildi.\n\nTajribangizni oshirib, kelgusida qayta "
+        "murojaat qilishingiz mumkin. Sizga omad tilaymiz!",
+    ),
+    "other_selected": (
+        "👥 Boshqa nomzod tanlandi",
+        "Assalomu alaykum!\n\n"
+        "Arizangiz uchun rahmat. Ushbu lavozimga boshqa nomzod tanlangani "
+        "sababli, afsuski, arizangiz rad etildi.\n\nSizning malakangiz e'tiborga "
+        "olindi — kelgusida mos o'rin bo'lsa siz bilan bog'lanamiz. Omad!",
+    ),
+    "documents": (
+        "📄 Hujjatlar to'liq emas",
+        "Assalomu alaykum!\n\n"
+        "Arizangizni ko'rib chiqdik. Afsuski, taqdim etilgan ma'lumot/hujjatlar "
+        "to'liq bo'lmagani sababli arizangiz rad etildi.\n\nMa'lumotlaringizni "
+        "to'ldirib, qayta murojaat qilishingiz mumkin. Rahmat!",
+    ),
+    "location": (
+        "📍 Manzil mos emas",
+        "Assalomu alaykum!\n\n"
+        "Arizangiz uchun rahmat. Afsuski, yashash manzilingiz ish joyidan uzoq "
+        "bo'lgani sababli arizangiz rad etildi.\n\nSizga yaqin filialda o'rin "
+        "bo'lsa, albatta ko'rib chiqamiz. Omad tilaymiz!",
+    ),
+    "requirements": (
+        "❌ Talablarga mos emas",
+        "Assalomu alaykum!\n\n"
+        "Arizangiz ko'rib chiqildi. Afsuski, ba'zi asosiy talablarga mos "
+        "kelmaganingiz sababli arizangiz rad etildi.\n\nE'tiboringiz uchun "
+        "rahmat. Sizga kelgusi faoliyatingizda omad tilaymiz!",
+    ),
 }
 
 

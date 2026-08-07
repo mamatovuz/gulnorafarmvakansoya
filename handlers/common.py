@@ -37,7 +37,8 @@ async def emp_find_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(GenericEmpSearch.query)
     await state.update_data(emp_find_prefix=prefix)
     await call.message.answer(
-        "🔤 Xodimning <b>ismini</b> yozing.\n"
+        "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+        "<b>ID</b> sini yozing.\n"
         "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
     )
     await call.answer()

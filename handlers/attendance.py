@@ -16,10 +16,25 @@ import keyboards as kb
 from i18n import t, tf
 from utils import (
     haversine_m, employee_profile_text, safe_send, now_tk_hm, fmt_duration,
-    send_employee_profile,
+    send_employee_profile, now_tk,
 )
 
 router = Router()
+
+
+def _fmt_hms(seconds):
+    """Sekundni «1 soat 5 daqiqa 10 soniya» ko'rinishida chiroyli yozadi."""
+    seconds = int(seconds or 0)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h} soat")
+    if m:
+        parts.append(f"{m} daqiqa")
+    if s or not parts:
+        parts.append(f"{s} soniya")
+    return " ".join(parts)
 
 PERIOD_TITLES = {"day": "📅 Bugun", "week": "🗓 Oxirgi 7 kun", "month": "📆 Oxirgi 30 kun"}
 
@@ -37,6 +52,15 @@ def _parse_work_hours(work_hours):
     return start, end
 
 
+def _hm_to_seconds(hm):
+    """«HH:MM» yoki «HH:MM:SS» ni yarim tundan boshlab sekundga o'giradi."""
+    parts = [int(x) for x in str(hm).split(":")]
+    while len(parts) < 3:
+        parts.append(0)
+    h, m, s = parts[:3]
+    return h * 3600 + m * 60 + s
+
+
 def _is_late(work_hours, now_hm):
     start, _ = _parse_work_hours(work_hours)
     if not start:
@@ -44,11 +68,42 @@ def _is_late(work_hours, now_hm):
     return now_hm > start
 
 
+def _late_seconds(work_hours, now_hms):
+    """Ish boshlanishidan qancha sekund kech kelinganini qaytaradi (0 => kech emas)."""
+    start, _ = _parse_work_hours(work_hours)
+    if not start:
+        return 0
+    diff = _hm_to_seconds(now_hms) - _hm_to_seconds(start)
+    return diff if diff > 0 else 0
+
+
 def _is_early(work_hours, now_hm):
     _, end = _parse_work_hours(work_hours)
     if not end:
         return False
     return now_hm < end
+
+
+def _early_seconds(work_hours, now_hms):
+    """Ish tugashidan qancha sekund erta ketilganini qaytaradi (0 => erta emas)."""
+    _, end = _parse_work_hours(work_hours)
+    if not end:
+        return 0
+    diff = _hm_to_seconds(end) - _hm_to_seconds(now_hms)
+    return diff if diff > 0 else 0
+
+
+def workday_seconds(work_hours):
+    """Ish kunining davomiyligi (sekund). Aniqlanmasa 0.
+
+    Tungi smena (end < start) uchun 24 soatdan oshirib hisoblanadi."""
+    start, end = _parse_work_hours(work_hours)
+    if not start or not end:
+        return 0
+    diff = _hm_to_seconds(end) - _hm_to_seconds(start)
+    if diff <= 0:
+        diff += 24 * 3600
+    return diff
 
 
 async def _open_shift(tg_id):
@@ -138,13 +193,17 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
     radius = branch.get("radius") or 150
 
     if dist is not None and dist <= radius:
-        now_hm = now_tk_hm()
-        late = _is_late(profile.get("work_hours"), now_hm)
+        now_hms = now_tk().strftime("%H:%M:%S")
+        late_sec = _late_seconds(profile.get("work_hours"), now_hms)
+        late = late_sec > 0
         await q.add_attendance(
-            user["id"], branch["id"], lat, lon, dist, status="present", late=late
+            user["id"], branch["id"], lat, lon, dist, status="present",
+            late=late, late_seconds=late_sec,
         )
         row = await q.get_attendance_today(message.from_user.id)
-        late_note = "\n⚠️ <b>Kech keldingiz.</b>" if late else ""
+        late_note = (
+            f"\n⚠️ <b>Kech keldingiz:</b> {_fmt_hms(late_sec)}." if late else ""
+        )
         await message.answer(
             "✅ <b>Keldingiz belgilandi!</b>\n\n"
             f"🏢 Filial: {branch['name']}\n"
@@ -228,9 +287,15 @@ async def checkout_location(message: Message, state: FSMContext):
     if branch and branch.get("latitude") is not None:
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
     now_hm = now_tk_hm()
-    early = _is_early(profile.get("work_hours"), now_hm)
-    await q.set_attendance_checkout(today["id"], lat, lon, dist, early=early)
-    early_note = "\n⚠️ <b>Erta ketdingiz.</b>" if early else ""
+    now_hms = now_tk().strftime("%H:%M:%S")
+    early_sec = _early_seconds(profile.get("work_hours"), now_hms)
+    early = early_sec > 0
+    await q.set_attendance_checkout(
+        today["id"], lat, lon, dist, early=early, early_seconds=early_sec,
+    )
+    early_note = (
+        f"\n⚠️ <b>Erta ketdingiz:</b> {_fmt_hms(early_sec)}." if early else ""
+    )
     await message.answer(
         "🏁 <b>Ketganingiz belgilandi!</b>\n\n"
         f"🕐 Kelgan vaqt: {today.get('time') or '-'}\n"

@@ -98,7 +98,8 @@ async def emp_manage_by_text(call: CallbackQuery, state: FSMContext):
         return
     await state.set_state(EmpManageForm.query)
     await call.message.answer(
-        "🔤 Xodimning <b>ismi</b>, <b>@username</b> yoki <b>telefonini</b> yozing.\n"
+        "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+        "<b>ID</b> sini yozing.\n"
         "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
     )
     await call.answer()
@@ -214,10 +215,42 @@ async def emp_manage_field_ask(call: CallbackQuery, state: FSMContext):
     if not prompt:
         await call.answer("Noma'lum maydon.", show_alert=True)
         return
+    # Ma'lumot (education) — qo'lda yozish o'rniga tugmalardan tanlanadi
+    if field == "education":
+        await state.clear()
+        await call.message.answer(
+            "🎓 <b>Ma'lumotini tanlang:</b>",
+            reply_markup=kb.emp_manage_education_kb(uid),
+        )
+        await call.answer()
+        return
     await state.set_state(EmpEditForm.value)
     await state.update_data(edit_uid=uid, edit_field=field)
     await call.message.answer(prompt)
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmedu:"))
+async def emp_manage_set_education(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    _, uid_s, idx_s = call.data.split(":")
+    uid = int(uid_s)
+    idx = int(idx_s)
+    if not (0 <= idx < len(kb.EDUCATION_OPTIONS)):
+        await call.answer("Noma'lum tanlov.", show_alert=True)
+        return
+    value = kb.EDUCATION_OPTIONS[idx]
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await q.update_employee_field(uid, "education", value)
+    await _log_edit(call, uid, "🎓 Ma'lumoti")
+    await call.answer("Saqlandi ✅")
+    await _show_card(call.message, uid, prefix=f"✅ Ma'lumoti yangilandi: <b>{value}</b>")
 
 
 @router.message(EmpEditForm.value, F.photo)

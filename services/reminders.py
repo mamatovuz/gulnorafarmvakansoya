@@ -278,6 +278,56 @@ async def advance_prompt_loop(bot: Bot, interval_seconds=3600):
         await asyncio.sleep(interval_seconds)
 
 
+# ---------------- OY OXIRI OYLIK HISOBOTI (xodimlarga) ----------------
+async def _run_salary_reports(bot: Bot):
+    """Oyning oxirgi kunida har bir xodimga o'z oylik hisobotini yuboradi:
+    nimaga qancha summa ayirilgani (kelmagan kun, kechikish, jarima, avans, dori)."""
+    from calendar import monthrange
+    now = now_tk()
+    last_day = monthrange(now.year, now.month)[1]
+    if now.day != last_day:
+        return
+    # Soat sozlamasi (standart 19:00)
+    if not _time_reached(now, await q.get_setting("salary_report_time", "19:00")):
+        return
+    period = now.strftime("%Y-%m")
+    flag_key = f"salary_report_sent:{period}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return  # bu oy allaqachon yuborilgan
+
+    # Lazy import — hisoblash mantig'i moliya handlerida
+    from handlers.accountant import _compute_final_salary, _final_salary_text
+
+    profiles = await q.list_employee_profiles()
+    sent = 0
+    for p in profiles:
+        if not p.get("tg_id"):
+            continue
+        try:
+            r = await _compute_final_salary(p["user_id"])
+        except Exception:
+            logger.exception("Oylik hisoblashda xatolik (user #%s)", p.get("user_id"))
+            continue
+        if not r.get("base"):
+            continue  # oyligi belgilanmagan — hisobot yuborilmaydi
+        text = _final_salary_text(r, p.get("full_name") or "-", for_employee=True)
+        if await safe_send(bot, p["tg_id"], text):
+            sent += 1
+    await q.set_setting(flag_key, "1")
+    logger.info("Oy oxiri oylik hisoboti %s ta xodimga yuborildi (%s)", sent, period)
+
+
+async def salary_report_loop(bot: Bot, interval_seconds=1800):
+    while True:
+        try:
+            await _run_salary_reports(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Oylik hisobotini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
 # ---------------- KUNLIK DAM OLISH: 17:00 RAHBARGA SO'ROV ----------------
 async def _run_dayoff_prompt(bot: Bot):
     now = now_tk()

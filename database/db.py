@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     since TEXT,
     emp_status TEXT NOT NULL DEFAULT 'regular',  -- regular / trial / learner
     education TEXT,               -- ma'lumoti / diplomi (staff_regs dan ko'chiriladi)
+    shift TEXT,                   -- smena: kunduzgi / tungi (qabulda belgilanadi)
     update_required INTEGER NOT NULL DEFAULT 0,  -- admin «ma'lumotlarni yangilash» so'ragan
     update_requested_at TEXT,
     updated_by_self_at TEXT,      -- xodim oxirgi marta o'zi yangilagan vaqt
@@ -260,6 +261,8 @@ CREATE TABLE IF NOT EXISTS attendance (
     out_distance INTEGER,
     late INTEGER NOT NULL DEFAULT 0,
     early INTEGER NOT NULL DEFAULT 0,
+    late_seconds INTEGER NOT NULL DEFAULT 0,
+    early_seconds INTEGER NOT NULL DEFAULT 0,
     on_break INTEGER NOT NULL DEFAULT 0,
     break_seconds INTEGER NOT NULL DEFAULT 0,
     break_started_at TEXT,
@@ -327,8 +330,14 @@ CREATE INDEX IF NOT EXISTS idx_salary_deductions_period
 CREATE TABLE IF NOT EXISTS fines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_user_id INTEGER NOT NULL,
+    branch_id INTEGER,
+    period TEXT,                          -- qaysi oy: YYYY-MM (created_at asosida)
     amount TEXT NOT NULL,
     reason TEXT,
+    source TEXT NOT NULL DEFAULT 'finance', -- finance (moliya) / hr (kadrlar)
+    cancelled INTEGER NOT NULL DEFAULT 0,   -- 1 => bekor qilingan (oylikdan qaytariladi)
+    cancelled_by INTEGER,
+    cancelled_at TEXT,
     created_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
@@ -653,6 +662,7 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "since": "TEXT",
     "emp_status": "TEXT NOT NULL DEFAULT 'regular'",
     "education": "TEXT",
+    "shift": "TEXT",                       # smena: kunduzgi / tungi / ... (qabulda belgilanadi)
     "update_required": "INTEGER NOT NULL DEFAULT 0",
     "update_requested_at": "TEXT",
     "updated_by_self_at": "TEXT",
@@ -665,10 +675,21 @@ ATTENDANCE_COLUMNS = {
     "out_distance": "INTEGER",
     "late": "INTEGER NOT NULL DEFAULT 0",
     "early": "INTEGER NOT NULL DEFAULT 0",
+    "late_seconds": "INTEGER NOT NULL DEFAULT 0",   # kechikkan vaqt (sekund)
+    "early_seconds": "INTEGER NOT NULL DEFAULT 0",  # erta ketgan vaqt (sekund)
     "on_break": "INTEGER NOT NULL DEFAULT 0",
     "break_seconds": "INTEGER NOT NULL DEFAULT 0",
     "break_started_at": "TEXT",
     "last_prompt_at": "TEXT",
+}
+
+FINES_COLUMNS = {
+    "branch_id": "INTEGER",
+    "period": "TEXT",
+    "source": "TEXT NOT NULL DEFAULT 'finance'",
+    "cancelled": "INTEGER NOT NULL DEFAULT 0",
+    "cancelled_by": "INTEGER",
+    "cancelled_at": "TEXT",
 }
 
 STAFF_REG_COLUMNS = {
@@ -887,6 +908,18 @@ async def _migrate(db):
     existing = {row[1] for row in await cur.fetchall()}
     if existing and "amount" not in existing:
         await db.execute("ALTER TABLE advance_requests ADD COLUMN amount INTEGER")
+
+    cur = await db.execute("PRAGMA table_info(fines)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing:
+        for col, coltype in FINES_COLUMNS.items():
+            if col not in existing:
+                await db.execute(f"ALTER TABLE fines ADD COLUMN {col} {coltype}")
+        # Eski jarimalarga period ni created_at dan to'ldiramiz
+        await db.execute(
+            "UPDATE fines SET period=substr(created_at,1,7) "
+            "WHERE period IS NULL OR period=''"
+        )
     await db.commit()
 
 

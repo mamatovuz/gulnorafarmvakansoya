@@ -252,44 +252,129 @@ async def tech_issue_start(message: Message, state: FSMContext):
     user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
     if not user:
         return
-    await state.set_state(TechIssueForm.title)
-    await message.answer("🔧 Nosozlik mavzusini yozing. Masalan: <b>Kassa ishlamayapti</b>")
+    await state.set_state(TechIssueForm.content)
+    await message.answer(
+        "🔧 <b>Texnik nosozlik</b>\n\n"
+        "Nosozlik haqida xabaringizni yuboring — <b>matn</b>, <b>rasm</b>, "
+        "<b>video</b> yoki <b>dumaloq video</b> (video-xabar) bo'lishi mumkin.\n"
+        "Rasm/videoga izoh (caption) yozsangiz, u ham HR ga yetkaziladi.\n\n"
+        "<i>Xabarni yuborgach, HR ga jo'natishdan oldin tasdiqlash so'raladi.</i>"
+    )
 
 
-@router.message(TechIssueForm.title, F.text)
-async def tech_issue_title(message: Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
-    await state.set_state(TechIssueForm.details)
-    await message.answer("📝 Nosozlik tafsilotini yozing:")
+def _tech_issue_summary(message: Message):
+    """Yuborilgan xabar turini va matnini qisqacha tavsiflaydi (bazaga yozish uchun)."""
+    caption = (message.caption or message.text or "").strip()
+    if message.photo:
+        kind = "🖼 Rasm"
+    elif message.video:
+        kind = "🎬 Video"
+    elif message.video_note:
+        kind = "⭕️ Dumaloq video"
+    elif message.voice:
+        kind = "🎤 Ovozli xabar"
+    elif message.document:
+        kind = "📎 Fayl"
+    elif message.animation:
+        kind = "🎞 GIF"
+    else:
+        kind = "📝 Matn"
+    return kind, caption
 
 
-@router.message(TechIssueForm.details, F.text)
-async def tech_issue_finish(message: Message, state: FSMContext, bot: Bot):
+@router.message(TechIssueForm.content)
+async def tech_issue_content(message: Message, state: FSMContext):
     user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
     if not user:
         await state.clear()
         return
+    kind, caption = _tech_issue_summary(message)
+    if kind == "📝 Matn" and not caption:
+        await message.answer(
+            "❗️ Iltimos, nosozlik haqida xabar (matn/rasm/video/dumaloq video) yuboring."
+        )
+        return
+    # Xabarni saqlaymiz — tasdiqdan keyin aynan shu xabar HR ga ko'chiriladi
+    await state.update_data(
+        ti_chat_id=message.chat.id,
+        ti_message_id=message.message_id,
+        ti_kind=kind,
+        ti_caption=caption,
+    )
+    await state.set_state(TechIssueForm.confirm)
+    preview = f"\n\n📄 Izoh: {caption}" if caption else ""
+    await message.answer(
+        f"🔎 <b>Tekshiring</b>\n\nTuri: <b>{kind}</b>{preview}\n\n"
+        "Ushbu xabar aynan shu ko'rinishda <b>HR bo'limiga yuborilsinmi?</b>",
+        reply_markup=kb.tech_issue_confirm_kb(),
+    )
+
+
+@router.callback_query(TechIssueForm.confirm, F.data == "techissue:cancel")
+async def tech_issue_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("❌ Bekor qilindi. Texnik nosozlik HR ga yuborilmadi.")
+    await call.answer("Bekor qilindi")
+
+
+@router.callback_query(TechIssueForm.confirm, F.data == "techissue:send")
+async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_MANAGER, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
     data = await state.get_data()
     await state.clear()
-    rid = await q.add_manager_request(
-        {
-            "manager_user_id": user["id"],
-            "branch_id": user.get("branch_id"),
-            "kind": "technical",
-            "title": data.get("title"),
-            "staff_count": None,
-            "details": message.text.strip(),
-        }
+    chat_id = data.get("ti_chat_id")
+    message_id = data.get("ti_message_id")
+    kind = data.get("ti_kind") or "📝 Matn"
+    caption = data.get("ti_caption") or ""
+    branch_id = user.get("branch_id") or await _manager_branch_id(user)
+    rid = await q.add_manager_request({
+        "manager_user_id": user["id"],
+        "branch_id": branch_id,
+        "kind": "technical",
+        "title": f"{kind} — texnik nosozlik",
+        "staff_count": None,
+        "details": caption or f"({kind})",
+    })
+    await q.add_log(call.from_user.id, call.from_user.full_name, "texnik_nosozlik", f"#{rid}")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    branch = await q.get_branch(branch_id) if branch_id else None
+    header = (
+        "🔧 <b>Filial rahbaridan texnik nosozlik!</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Rahbar: <b>{user.get('full_name') or call.from_user.full_name}</b>\n"
+        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
+        f"🗂 Turi: {kind}"
     )
-    req = await q.get_manager_request(rid)
-    await q.add_log(message.from_user.id, message.from_user.full_name, "texnik_nosozlik", f"#{rid}")
-    await message.answer("✅ Texnik nosozlik HR ga yuborildi.")
-    await notify_hr_admin(
-        bot,
-        "🔧 <b>Filial rahbaridan texnik nosozlik!</b>\n\n" + manager_request_text(req),
-        reply_markup=kb.manager_request_actions_kb(rid, "technical"),
-        kind="manager_request", ref_id=rid,
+    hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR))
+    hr_ids |= set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    delivered = 0
+    for tid in hr_ids:
+        # Avval sarlavha, so'ng xabarning AYNAN o'zini (media+caption) ko'chiramiz
+        await safe_send(bot, tid, header,
+                        reply_markup=kb.manager_request_actions_kb(rid, "technical"))
+        try:
+            await bot.copy_message(chat_id=tid, from_chat_id=chat_id,
+                                   message_id=message_id)
+            delivered += 1
+        except Exception:
+            pass
+    await call.message.answer(
+        f"✅ Texnik nosozlik HR ga yuborildi ({delivered} ta qabul qiluvchiga)."
+        if delivered else
+        "⚠️ Xabar hech kimga yetkazilmadi (HR/admin topilmadi)."
     )
+    await call.answer("Yuborildi ✅")
 
 
 @router.message(F.text == "📋 Mening so'rovlarim")

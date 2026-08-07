@@ -167,6 +167,7 @@ class AccForm(StatesGroup):
     fine_reason = State()
     med_amount = State()     # dorixonadan olingan dori qiymati
     med_reason = State()     # dori izohi
+    fine_cancel_search = State()  # jarimani bekor qilish — xodim qidirish
 
 
 class ChannelForm(StatesGroup):
@@ -198,9 +199,9 @@ class ManagerVacancyForm(StatesGroup):
 
 
 class TechIssueForm(StatesGroup):
-    """Filial rahbari texnik nosozlik yuboradi."""
-    title = State()
-    details = State()
+    """Filial rahbari texnik nosozlik yuboradi (matn/rasm/video/dumaloq video)."""
+    content = State()   # istalgan turdagi xabar (media/matn)
+    confirm = State()   # HR ga yuborilsinmi? tasdiq
 
 
 class SalaryForm(StatesGroup):
@@ -235,6 +236,7 @@ class ProbationForm(StatesGroup):
     """HR ariza qabul qilganda sinov/o'rganuvchi muddatini belgilaydi."""
     branch = State()       # qaysi filialga chiqadi
     start_date = State()   # muddat qaysi kundan boshlanadi
+    shift = State()        # qaysi smenada ishlaydi
     days = State()         # o'rganuvchi uchun — necha kun
 
 
