@@ -101,6 +101,12 @@ class GenericEmpSearch(StatesGroup):
     query = State()
 
 
+class DirectorEmpSearch(StatesGroup):
+    """Direktor «👥 Filial xodimlari» — ism/username/telefon/ID bo'yicha qidirish.
+    Filial va lavozim bo'yicha qidiruv inline tugmalar orqali ketadi."""
+    query = State()
+
+
 class EmpManageForm(StatesGroup):
     """«Ma'lumotlarni o'zgartirish» — xodimni ism/username bo'yicha topish."""
     query = State()

@@ -1,6 +1,6 @@
 """Ishga arizadagi yo'nalishlar (lavozimlar) ro'yxatini boshqarish.
 
-Admin va HR panelida «🏷 Yo'nalishlar» tugmasi orqali qo'shish/o'chirish mumkin.
+Admin va HR panelida «🏷 Lavozimlar» tugmasi orqali qo'shish/o'chirish mumkin.
 Bu ro'yxat ishga ariza topshirishda «Qaysi yo'nalish bo'yicha ishga kirmoqchisiz?»
 savolida ko'rsatiladi.
 """
@@ -21,14 +21,14 @@ async def _can_manage(tg_id):
     return u and u["role"] in (ROLE_ADMIN, ROLE_HR)
 
 
-@router.message(F.text == "🏷 Yo'nalishlar")
+@router.message(F.text == "🏷 Lavozimlar")
 async def positions_menu(message: Message):
     if not await _can_manage(message.from_user.id):
         await message.answer("⛔ Sizda ruxsat yo'q.")
         return
     positions = await q.list_positions()
     await message.answer(
-        "🏷 <b>Ishga ariza yo'nalishlari</b>\n\n"
+        "🏷 <b>Ishga ariza lavozimlari</b>\n\n"
         "Bu ro'yxat ishga ariza topshirishda lavozim tanlashda ko'rinadi.\n"
         "➕ qo'shish yoki 🗑 o'chirish:",
         reply_markup=kb.positions_manage_kb(positions),
@@ -42,7 +42,7 @@ async def pos_add(call: CallbackQuery, state: FSMContext):
         return
     await state.set_state(PositionForm.name)
     await call.message.answer(
-        "🏷 Yangi yo'nalish nomini yozing (emoji bilan bo'lsa ham bo'ladi).\n"
+        "🏷 Yangi lavozim nomini yozing (emoji bilan bo'lsa ham bo'ladi).\n"
         "Misol: <i>💉 Hamshira</i>"
     )
     await call.answer()
@@ -60,7 +60,7 @@ async def pos_name(message: Message, state: FSMContext):
     await q.add_log(message.from_user.id, me["full_name"] if me else "?", "yonalish_qoshildi", name)
     positions = await q.list_positions()
     await message.answer(
-        f"✅ «{name}» yo'nalishi qo'shildi.",
+        f"✅ «{name}» lavozimi qo'shildi.",
         reply_markup=kb.positions_manage_kb(positions),
     )
 

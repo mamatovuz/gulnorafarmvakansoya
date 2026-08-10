@@ -82,7 +82,7 @@ Nomzod, HR va Administrator uchun alohida panellar bilan.
   Eski ma'lumotlar faqat yakunda tasdiqlangach almashadi, roli o'zgarmaydi
   (yo'nalish o'zgargan bo'lsa HR ga xabar boradi). Nomzodlarga tegishli emas.
   **Yangilangan ma'lumot hech qanday kanalga joylanmaydi — faqat HR/Admin paneliga keladi**
-- Yo'nalishlar: 💊 Farmatsevt · 👨‍💼 Filial rahbari · 👔 Direktor · 🧮 Buxgalter · 🧹 Tozalik rahbari · 📦 Omborchi · 🚚 Haydovchi
+- Lavozimlar: 💊 Farmatsevt · 👨‍💼 Filial rahbari · 👔 Direktor · 🧮 Moliya bo'limi · 📦 Omborchi · 🚚 Haydovchi
 
 ### 📍 Davomat (GPS)
 - **📍 Ishga keldim** — bot GPS joylashuvni so'raydi; filial koordinatasidan **belgilangan radius** (default 150 m)

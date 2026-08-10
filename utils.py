@@ -418,7 +418,7 @@ def staff_reg_text(reg):
         f"👤 Ism-familiya: {_v(reg, 'full_name')}",
         f"📅 Tug'ilgan sana: {_v(reg, 'birth_date')}",
         f"📱 Telefon: {_v(reg, 'phone')}",
-        f"💼 Yo'nalish: {_v(reg, 'position')}",
+        f"💼 Lavozim: {_v(reg, 'position')}",
         f"📍 Manzil: {_v(reg, 'address')}",
         f"🏢 Filial: {_v(reg, 'branch_name')}",
         f"🕒 Ish vaqti: {_v(reg, 'work_hours')}",
@@ -465,7 +465,7 @@ def manager_request_text(req):
         kind,
         f"🏢 Filial: {_v(req, 'branch_name')}",
         f"👤 Rahbar: {_v(req, 'manager_name')}",
-        f"📌 {'Yo`nalish' if is_vacancy else 'Mavzu'}: {_v(req, 'title')}",
+        f"📌 {'Lavozim' if is_vacancy else 'Mavzu'}: {_v(req, 'title')}",
     ]
     if is_vacancy:
         lines.append(f"👥 Kerakli soni: {_v(req, 'staff_count')}")
@@ -675,7 +675,7 @@ REJECT_REASON_TEMPLATES = {
         "🚫 Bo'sh o'rin yo'q",
         "Assalomu alaykum!\n\n"
         "Murojaatingiz uchun rahmat. Afsuski, hozirda siz murojaat qilgan "
-        "yo'nalish bo'yicha bo'sh ish o'rni mavjud emas. Shu sababli arizangiz "
+        "lavozim bo'yicha bo'sh ish o'rni mavjud emas. Shu sababli arizangiz "
         "rad etildi.\n\nKelgusida mos o'rin paydo bo'lsa, sizni yana taklif "
         "qilishdan mamnun bo'lamiz. Ishlaringizga omad!",
     ),

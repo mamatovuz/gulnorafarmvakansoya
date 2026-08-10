@@ -740,7 +740,7 @@ async def app_edit_field(call: CallbackQuery, state: FSMContext):
     elif field == "position":
         positions = await q.list_position_names()
         await call.message.answer(
-            "💼 Yangi yo'nalishni tanlang:", reply_markup=kb.apply_position_kb(positions)
+            "💼 Yangi lavozimni tanlang:", reply_markup=kb.apply_position_kb(positions)
         )
     elif field == "district":
         data = await state.get_data()

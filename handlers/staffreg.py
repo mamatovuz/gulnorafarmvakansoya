@@ -86,7 +86,7 @@ def _reg_summary(d):
         f"👤 Ism-familiya: {g('full_name')}",
         f"📅 Tug'ilgan sana: {g('birth_date')}",
         f"📱 Telefon: {g('phone')}",
-        f"💼 Yo'nalish: {g('position')}",
+        f"💼 Lavozim: {g('position')}",
         f"📍 Manzil: {g('address')}",
         f"🏢 Filial: {g('branch_name')}",
         f"🕒 Ish vaqti: {g('work_hours')}",
@@ -579,7 +579,7 @@ async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
     changed = ""
     if old_profile.get("position") and old_profile["position"] != reg.get("position"):
         changed = (
-            f"\n⚠️ Yo'nalish o'zgargan: <b>{old_profile['position']}</b> → "
+            f"\n⚠️ Lavozim o'zgargan: <b>{old_profile['position']}</b> → "
             f"<b>{reg.get('position')}</b> (rolni HR o'zgartirishi kerak)"
         )
     # DIQQAT: yangilangan ma'lumot HECH QANDAY kanalga joylanmaydi —

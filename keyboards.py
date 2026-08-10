@@ -244,7 +244,7 @@ def apply_position_kb(names=None):
 
 def positions_manage_kb(positions):
     b = InlineKeyboardBuilder()
-    b.button(text="➕ Yo'nalish qo'shish", callback_data="pos_add")
+    b.button(text="➕ Lavozim qo'shish", callback_data="pos_add")
     for p in positions:
         b.button(text=f"🗑 {p['name']}", callback_data=f"pos_del:{p['id']}")
     b.adjust(1)
@@ -537,7 +537,7 @@ def hr_menu():
     b.button(text="📅 Suhbatlar")
     b.button(text="⭐ Saralanganlar")
     b.button(text="💼 Vakansiyalar (HR)")
-    b.button(text="🏷 Yo'nalishlar")
+    b.button(text="🏷 Lavozimlar")
     b.button(text="👕 Forma nazorati")
     b.button(text="🎓 Diplom statistikasi")
     b.button(text="💊 Farmatsevtlar")
@@ -1107,6 +1107,39 @@ def employee_search_role_kb():
     return b.as_markup()
 
 
+# ---------------- DIREKTOR «👥 FILIAL XODIMLARI» QIDIRUVI ----------------
+def director_search_kb(show_branch=True):
+    """Direktor xodimlarni qidirish usullari.
+    `show_branch` — direktor bitta filialga biriktirilgan bo'lsa, filial
+    tanlash ma'nosiz, shu sababli tugma ko'rsatilmaydi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Ism / username / telefon", callback_data="dirsrch:text")
+    if show_branch:
+        b.button(text="🏢 Filial bo'yicha", callback_data="dirsrch:branch")
+    b.button(text="💼 Lavozim bo'yicha", callback_data="dirsrch:role")
+    b.button(text="👥 Barcha xodimlar", callback_data="dirsrch:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def director_search_branch_kb(branches):
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"dirsrchb:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="dirsrch:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def director_search_role_kb():
+    b = InlineKeyboardBuilder()
+    for role, label in EMP_SEARCH_ROLES:
+        b.button(text=label, callback_data=f"dirsrchr:{role}")
+    b.button(text="⬅️ Orqaga", callback_data="dirsrch:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def manager_requests_list_kb(requests, prefix="mrview"):
     b = InlineKeyboardBuilder()
     for r in requests:
@@ -1370,7 +1403,7 @@ def admin_menu():
     b.button(text="🎭 Rollar")
     b.button(text="👤 Foydalanuvchilar")
     b.button(text="💼 Vakansiyalar (Admin)")
-    b.button(text="🏷 Yo'nalishlar")
+    b.button(text="🏷 Lavozimlar")
     b.button(text="📢 Xabarnoma")
     b.button(text="📤 Eksport")
     b.button(text="⚙️ Sozlamalar")
@@ -1737,14 +1770,13 @@ STAFF_ROLES = [
     ("👨‍💼 Filial rahbari", ROLE_MANAGER, "Filial rahbari"),
     ("👔 Direktor", ROLE_DIRECTOR, "Direktor"),
     ("🧮 Moliya bo'limi", ROLE_ACCOUNTANT, "Moliya bo'limi"),
-    ("🧹 Tozalik rahbari", ROLE_EMPLOYEE, "Tozalik rahbari"),
     ("📦 Omborchi", ROLE_EMPLOYEE, "Omborchi"),
     ("🚚 Haydovchi", ROLE_EMPLOYEE, "Haydovchi"),
 ]
 
 
 def staff_role_options(positions=None):
-    """Standart STAFF_ROLES + admin «🏷 Yo'nalishlar»da qo'shgan yo'nalishlar.
+    """Standart STAFF_ROLES + admin «🏷 Lavozimlar»da qo'shgan lavozimlar.
     Har bir element — (label, role, position). Admin qo'shgan yangi yo'nalishlar
     oddiy xodim (ROLE_EMPLOYEE) sifatida maplanadi va davomat panelini oladi.
     Dublikat label (standart ro'yxatda bor bo'lsa) qayta qo'shilmaydi."""

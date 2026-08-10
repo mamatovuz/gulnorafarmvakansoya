@@ -182,7 +182,7 @@ TEXTS = {
               "филиал обязателен.",
     },
     "apply.position": {
-        "uz": "💼 Qaysi yo'nalish bo'yicha ishga kirmoqchisiz?",
+        "uz": "💼 Qaysi lavozim bo'yicha ishga kirmoqchisiz?",
         "ru": "💼 На какую должность вы хотите устроиться?",
     },
     "apply.shift": {
@@ -315,7 +315,7 @@ TEXTS = {
               "Пример: <code>+998932303410</code>",
     },
     "sreg.role": {
-        "uz": "💼 Qaysi yo'nalishda ishlaysiz? Tanlang:",
+        "uz": "💼 Qaysi lavozimda ishlaysiz? Tanlang:",
         "ru": "💼 В каком направлении вы работаете? Выберите:",
     },
     "sreg.address": {

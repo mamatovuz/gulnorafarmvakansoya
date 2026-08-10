@@ -11,7 +11,7 @@ from database.db import (
 )
 from states import (
     ManagerVacancyForm, TechIssueForm, CommentForm, ManagerMessageForm,
-    TerminationForm,
+    TerminationForm, DirectorEmpSearch,
 )
 import keyboards as kb
 from utils import (
@@ -87,7 +87,7 @@ def _mgr_vacancy_summary(data):
     return (
         "📋 <b>Vakansiya so'rovi</b>\n"
         "━━━━━━━━━━━━\n"
-        f"💼 Yo'nalish: <b>{data.get('position') or '-'}</b>\n"
+        f"💼 Lavozim: <b>{data.get('position') or '-'}</b>\n"
         f"👥 Kerakli soni: <b>{data.get('staff_count') or '-'}</b>\n"
         f"🚻 Kimlar kerak: <b>{gender_label(data.get('gender')) or '-'}</b>\n"
         f"🕒 Smena: {data.get('shift') or '-'}\n"
@@ -105,7 +105,7 @@ async def manager_vacancy_start(message: Message, state: FSMContext):
     positions = await q.list_position_names()
     await state.set_state(ManagerVacancyForm.position)
     await message.answer(
-        "➕ <b>Xodim kerak</b>\n\nQaysi yo'nalishga xodim kerak? Ro'yxatdan tanlang:",
+        "➕ <b>Xodim kerak</b>\n\nQaysi lavozimga xodim kerak? Ro'yxatdan tanlang:",
         reply_markup=kb.manager_vacancy_position_kb(positions),
     )
 
@@ -485,18 +485,21 @@ async def manager_vacancy_finish_cb(call: CallbackQuery, bot: Bot):
 
 
 @router.message(F.text == "👥 Filial xodimlari")
-async def manager_branch_employees(message: Message):
-    """Filial rahbari, direktor yoki admin o'z filialidagi xodimlarni ko'radi.
+async def manager_branch_employees(message: Message, state: FSMContext):
+    """Filial rahbari, direktor yoki admin filial xodimlarini ko'radi.
+    Direktor uchun — ko'p usulli qidiruv (ism/filial/lavozim/barchasi).
     Xodim ustiga bosilsa — ma'lumot va «Ishdan bo'shatish» tugmasi chiqadi."""
     user = await ensure_role(message, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_ADMIN)
     if not user:
         return
-    if user["role"] == ROLE_DIRECTOR:
-        branch_id = await _director_branch_id(user)
-        prefix = "diremp"
-    else:
-        branch_id = await _manager_branch_id(user)
-        prefix = "mgremp"
+    # Direktor (va admin) — qidiruv usulini tanlaydigan menyu
+    if user["role"] in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await state.clear()
+        await _director_search_menu(message, user)
+        return
+    # Filial rahbari — o'z filiali xodimlari ro'yxati
+    branch_id = await _manager_branch_id(user)
+    prefix = "mgremp"
     if not branch_id and user["role"] == ROLE_MANAGER:
         await message.answer("Sizga filial biriktirilmagan. HR yoki admin bilan bog'laning.")
         return
@@ -795,6 +798,129 @@ async def director_employee_view(call: CallbackQuery):
         reply_markup=kb.staff_fire_kb(profile["user_id"]),
     )
     await call.answer()
+
+
+# ---------------- DIREKTOR «👥 FILIAL XODIMLARI» QIDIRUVI ----------------
+async def _director_scope_branch(user):
+    """Direktor qidiruvida qo'llaniladigan filial cheklovi.
+    Admin uchun cheklov yo'q (None = barcha filiallar); direktor filialga
+    biriktirilgan bo'lsa — faqat o'sha filial."""
+    if user["role"] == ROLE_ADMIN:
+        return None
+    return await _director_branch_id(user)
+
+
+async def _director_search_menu(target, user):
+    base_branch = await _director_scope_branch(user)
+    await target.answer(
+        "👥 <b>Filial xodimlari</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Xodimni qanday topamiz?",
+        reply_markup=kb.director_search_kb(show_branch=base_branch is None),
+    )
+
+
+async def _director_send_results(target, profiles, title):
+    if not profiles:
+        await target.answer(f"{title}\n\n😔 Hech kim topilmadi.")
+        return
+    await target.answer(
+        f"{title}\n\n👥 Topildi: <b>{len(profiles)}</b> ta\n"
+        "Batafsil ko'rish uchun xodimni tanlang:",
+        reply_markup=kb.employee_profiles_list_kb(
+            profiles[:30], prefix="diremp", with_search=False
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("dirsrch:"))
+async def director_search_pick(call: CallbackQuery, state: FSMContext):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    mode = call.data.split(":")[1]
+    base_branch = await _director_scope_branch(user)
+    if mode == "home":
+        await state.clear()
+        await _director_search_menu(call.message, user)
+    elif mode == "text":
+        await state.set_state(DirectorEmpSearch.query)
+        await call.message.answer(
+            "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+            "<b>ID</b> sini yozing.\n"
+            "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
+        )
+    elif mode == "branch":
+        await state.clear()
+        branches = await q.list_branches()
+        if base_branch is not None:
+            branches = [b for b in branches if b["id"] == base_branch]
+        if not branches:
+            await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+            return
+        await call.message.answer(
+            "🏢 Qaysi filial xodimlarini ko'ramiz?",
+            reply_markup=kb.director_search_branch_kb(branches),
+        )
+    elif mode == "role":
+        await state.clear()
+        await call.message.answer(
+            "💼 Qaysi lavozim bo'yicha qidiramiz?",
+            reply_markup=kb.director_search_role_kb(),
+        )
+    else:  # all
+        await state.clear()
+        profiles = await q.search_employees(branch_id=base_branch)
+        await _director_send_results(call.message, profiles, "👥 <b>Barcha xodimlar</b>")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dirsrchb:"))
+async def director_search_by_branch(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    base_branch = await _director_scope_branch(user)
+    if base_branch is not None and bid != base_branch:
+        await call.answer("Bu filial sizga tegishli emas.", show_alert=True)
+        return
+    branch = await q.get_branch(bid)
+    profiles = await q.search_employees(branch_id=bid)
+    await _director_send_results(
+        call.message, profiles,
+        f"🏢 <b>{branch['name'] if branch else 'Filial'}</b> xodimlari",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dirsrchr:"))
+async def director_search_by_role(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not user or user["role"] not in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await call.answer("⛔", show_alert=True)
+        return
+    role = call.data.split(":")[1]
+    base_branch = await _director_scope_branch(user)
+    label = dict(kb.EMP_SEARCH_ROLES).get(role, role)
+    profiles = await q.search_employees(role=role, branch_id=base_branch)
+    await _director_send_results(call.message, profiles, f"💼 <b>{label}</b>")
+    await call.answer()
+
+
+@router.message(DirectorEmpSearch.query, F.text)
+async def director_search_run(message: Message, state: FSMContext):
+    user = await q.get_user(message.from_user.id)
+    if not user or user["role"] not in (ROLE_DIRECTOR, ROLE_ADMIN):
+        await state.clear()
+        return
+    await state.clear()
+    base_branch = await _director_scope_branch(user)
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text, branch_id=base_branch)
+    await _director_send_results(message, profiles, f"🔍 <b>Qidiruv:</b> {text}")
 
 
 # ---------------- ISHDAN BO'SHATISH (rahbar/direktor -> HR) ----------------
