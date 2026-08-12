@@ -2865,6 +2865,19 @@ async def set_advance_status(user_id, period, status):
         await db.close()
 
 
+async def reset_advance_period(period):
+    """Berilgan oy uchun barcha avans javoblarini o'chiradi. O'chirilgan sonni qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "DELETE FROM advance_requests WHERE period=?", (period,)
+        )
+        await db.commit()
+        return cur.rowcount
+    finally:
+        await db.close()
+
+
 async def list_advances(period, status="confirmed"):
     """Avans oluvchilar ro'yxati (Excel uchun): ism, karta, filial, lavozim, telefon."""
     db = await _conn()

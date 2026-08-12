@@ -554,6 +554,7 @@ def hr_menu():
     b.button(text="🧪 Sinov muddati")
     b.button(text="💵 Avans")
     b.button(text="💵 Avans sozlamalari")
+    b.button(text="🔄 Avans so'rovini boshidan yuborish")
     b.button(text="💸 Maosh so'rovlari")
     b.button(text="🕒 Ish vaqti so'rovlari")
     b.button(text="🏢 Filial o'zgartirish so'rovlari")

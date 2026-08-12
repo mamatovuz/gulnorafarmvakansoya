@@ -336,6 +336,36 @@ async def hr_advance(message: Message):
     )
 
 
+@router.message(F.text == "🔄 Avans so'rovini boshidan yuborish")
+async def hr_advance_restart(message: Message, bot: Bot):
+    if not await _is_hr(message.from_user.id):
+        return
+    period = _period_now()
+    deleted = await q.reset_advance_period(period)
+    await q.set_setting(f"avans_prompt_sent:{period}", "0")
+    released_period = await q.get_setting("avans_released_period")
+    if released_period == period:
+        await q.set_setting("avans_released_period", "")
+
+    from services.reminders import send_advance_prompt
+
+    sent, total, _period = await send_advance_prompt(bot, period)
+    me = await q.get_user(message.from_user.id)
+    await q.add_log(
+        message.from_user.id, (me or {}).get("full_name"),
+        "avans_boshidan_yuborildi",
+        f"{period}: {deleted} ta eski yozuv o'chdi, {sent}/{total} yuborildi",
+    )
+    await message.answer(
+        "🔄 <b>Avans so'rovi boshidan yuborildi.</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"📆 Davr: <b>{period}</b>\n"
+        f"🗑 Eski javoblar o'chirildi: <b>{deleted}</b> ta\n"
+        f"📨 Yuborildi: <b>{sent}/{total}</b> xodimga\n\n"
+        "Xodimlar endi avansni boshidan tanlaydi."
+    )
+
+
 @router.callback_query(F.data.startswith("avns_send:"))
 async def hr_advance_send(call: CallbackQuery, bot: Bot):
     if not await _is_hr(call.from_user.id):

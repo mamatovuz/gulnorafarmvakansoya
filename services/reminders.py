@@ -191,6 +191,39 @@ async def location_check_loop(bot: Bot, interval_seconds=60):
 
 
 # ---------------- AVANS SO'ROVI (har oy belgilangan kunda) ----------------
+def _advance_prompt_text(pay_day):
+    return (
+        "💵 <b>Avans so'rovi</b>\n\n"
+        "Assalomu alaykum! <b>\"Gulnora Farm\"</b> dorixonalar tarmog'i "
+        "xodimlari uchun avans ro'yxatini shakllantirish boshlandi.\n\n"
+        f"Iltimos, har oyning <b>{pay_day}-sanasida</b> kartangizga tushadigan "
+        "avans miqdorlaridan mos keladiganini tanlash uchun <b>«Ha»</b> "
+        "tugmasini bosing.\n\n"
+        "Quyidagi tugmalardan birini tanlang 👇"
+    )
+
+
+async def send_advance_prompt(bot: Bot, period=None, mark_sent=True):
+    period = period or now_tk().strftime("%Y-%m")
+    try:
+        pay_day = int(await q.get_setting("avans_day", "15") or 15)
+    except (TypeError, ValueError):
+        pay_day = 15
+
+    ids = await q.advance_employee_tg_ids()
+    text = _advance_prompt_text(pay_day)
+    sent = 0
+    for tid in ids:
+        if await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period)):
+            sent += 1
+    if mark_sent:
+        await q.set_setting(f"avans_prompt_sent:{period}", "1")
+    logger.info(
+        "Avans so'rovi %s/%s ta xodimga yuborildi (%s)", sent, len(ids), period
+    )
+    return sent, len(ids), period
+
+
 async def _run_advance_prompt(bot: Bot):
     enabled = await q.get_setting("avans_enabled", "1")
     if str(enabled) != "1":
@@ -208,25 +241,7 @@ async def _run_advance_prompt(bot: Bot):
     if str(await q.get_setting(flag_key, "0")) == "1":
         return  # bu oy allaqachon yuborilgan
 
-    try:
-        pay_day = int(await q.get_setting("avans_day", "15") or 15)
-    except (TypeError, ValueError):
-        pay_day = 15
-
-    ids = await q.advance_employee_tg_ids()
-    text = (
-        "💵 <b>Avans so'rovi</b>\n\n"
-        "Assalomu alaykum! <b>\"Gulnora Farm\"</b> dorixonalar tarmog'i "
-        "xodimlari uchun avans ro'yxatini shakllantirish boshlandi.\n\n"
-        f"Iltimos, har oyning <b>{pay_day}-sanasida</b> kartangizga tushadigan "
-        "avans miqdorlaridan mos keladiganini tanlash uchun <b>«Ha»</b> "
-        "tugmasini bosing.\n\n"
-        "Quyidagi tugmalardan birini tanlang 👇"
-    )
-    for tid in ids:
-        await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period))
-    await q.set_setting(flag_key, "1")
-    logger.info("Avans so'rovi %s ta xodimga yuborildi (%s)", len(ids), period)
+    await send_advance_prompt(bot, period)
 
 
 # ---------------- IT KADRLAR HISOBOTI (har oy 14-sanada) ----------------
