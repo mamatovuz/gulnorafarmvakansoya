@@ -2258,14 +2258,15 @@ def _fmt_amount(value):
 
 
 def advance_amount_kb(options):
-    """Avans miqdori tugmalari — oylikning ulushiga qarab (oshmaydigan qiymatlar).
+    """Avans miqdori tugmalari.
 
-    options — [(amount, percent), ...] ko'rinishida.
+    options — [amount, ...] yoki eski [(amount, percent), ...] ko'rinishida.
     """
     b = InlineKeyboardBuilder()
-    for amount, pct in options:
+    for item in options:
+        amount = item[0] if isinstance(item, (list, tuple)) else item
         b.button(
-            text=f"💵 {_fmt_amount(amount)} so'm  ({pct}%)",
+            text=f"💵 {_fmt_amount(amount)} so'm",
             callback_data=f"avns_amt:{int(amount)}",
         )
     b.adjust(1)
@@ -2286,7 +2287,7 @@ def advance_send_acc_kb(period):
     return b.as_markup()
 
 
-def advance_settings_kb(prompt_day, pay_day, enabled=True):
+def advance_settings_kb(prompt_day, pay_day, enabled=True, amounts_count=None):
     b = InlineKeyboardBuilder()
     if enabled:
         b.button(text="💵 Avans so'rovi: 🟢 YOQILGAN", callback_data="avset:toggle")
@@ -2300,7 +2301,23 @@ def advance_settings_kb(prompt_day, pay_day, enabled=True):
         text=f"💳 To'lov sanasi: {pay_day}-sana",
         callback_data="avset:payday",
     )
+    suffix = f": {amounts_count} ta" if amounts_count is not None else ""
+    b.button(text=f"💵 Avans miqdorlari{suffix}", callback_data="avset:amounts")
     b.adjust(1)
+    return b.as_markup()
+
+
+def advance_amount_settings_kb(amounts):
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ Miqdor qo'shish", callback_data="avset:amtadd")
+    for amount in amounts:
+        b.button(
+            text=f"✏️ {_fmt_amount(amount)} so'm",
+            callback_data=f"avset:amtedit:{int(amount)}",
+        )
+        b.button(text="🗑", callback_data=f"avset:amtdel:{int(amount)}")
+    b.button(text="⬅️ Ortga", callback_data="avset:back")
+    b.adjust(1, 2)
     return b.as_markup()
 
 

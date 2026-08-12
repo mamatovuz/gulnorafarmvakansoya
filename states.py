@@ -236,6 +236,8 @@ class SettingsForm(StatesGroup):
     match_threshold = State()  # moslik (tavsiya) foizi
     avans_prompt_day = State()  # avans so'rovi yuboriladigan kun
     avans_pay_day = State()     # avans to'lov sanasi
+    avans_amount_add = State()  # avans tugmalariga yangi miqdor qo'shish
+    avans_amount_edit = State()  # mavjud avans miqdorini tahrirlash
 
 
 class BranchChangeForm(StatesGroup):

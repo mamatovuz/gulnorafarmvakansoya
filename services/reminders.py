@@ -216,9 +216,11 @@ async def _run_advance_prompt(bot: Bot):
     ids = await q.advance_employee_tg_ids()
     text = (
         "💵 <b>Avans so'rovi</b>\n\n"
-        "Assalomu alaykum! <b>Avans oluvchilar ro'yxatiga</b> qo'shilishni "
-        "xohlaysizmi?\n"
-        f"<i>Avans har oy {pay_day}-sanada kartangizga o'tkaziladi.</i>\n\n"
+        "Assalomu alaykum! <b>\"Gulnora Farm\"</b> dorixonalar tarmog'i "
+        "xodimlari uchun avans ro'yxatini shakllantirish boshlandi.\n\n"
+        f"Iltimos, har oyning <b>{pay_day}-sanasida</b> kartangizga tushadigan "
+        "avans miqdorlaridan mos keladiganini tanlash uchun <b>«Ha»</b> "
+        "tugmasini bosing.\n\n"
         "Quyidagi tugmalardan birini tanlang 👇"
     )
     for tid in ids:
