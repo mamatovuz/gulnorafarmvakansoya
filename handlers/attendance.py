@@ -39,6 +39,16 @@ def _fmt_hms(seconds):
 PERIOD_TITLES = {"day": "📅 Bugun", "week": "🗓 Oxirgi 7 kun", "month": "📆 Oxirgi 30 kun"}
 
 
+def _is_mobile_worker(user, profile=None):
+    """HR va haydovchilar «harakatdagi» xodimlar — ular istalgan filial/lokatsiyada
+    ishga kelib-ketishi mumkin (ofisdan masofa tekshirilmaydi)."""
+    role = (user or {}).get("role") if isinstance(user, dict) else None
+    if role in (ROLE_HR,):
+        return True
+    pos = ((profile or {}).get("position") or "").lower()
+    return "haydovchi" in pos or "driver" in pos
+
+
 def _parse_work_hours(work_hours):
     """«09:00 - 18:00» dan (start_time, end_time) qaytaradi. Aniqlanmasa (None, None)."""
     if not work_hours:
@@ -133,7 +143,8 @@ async def _no_open_shift_reason(tg_id):
 @router.message(tf("btn.checkin"))
 async def checkin_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
-    if not profile:
+    user = await q.get_user(message.from_user.id)
+    if not profile and not _is_mobile_worker(user, profile):
         await message.answer(
             "⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun. "
             "«🏢 Gulnora Farm hodimi» orqali ro'yxatdan o'ting."
@@ -171,51 +182,65 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
     user = await q.get_user(message.from_user.id)
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     menu = kb.main_menu(user["role"] if user else "candidate")
+    mobile = _is_mobile_worker(user, profile)
 
     branch = await q.get_branch(profile["branch_id"]) if profile and profile.get("branch_id") else None
-    if not branch:
-        await message.answer(
-            "⛔ Sizga filial biriktirilmagan. HR yoki administrator bilan bog'laning.",
-            reply_markup=menu,
-        )
-        return
-    if branch.get("latitude") is None or branch.get("longitude") is None:
-        await message.answer(
-            f"⛔ «{branch['name']}» filiali joylashuvi hali sozlanmagan.\n"
-            "Administrator filial koordinatasini kiritgach qayta urinib ko'ring.",
-            reply_markup=menu,
-        )
-        return
+    # Harakatdagi xodim (HR/haydovchi) emas — filial va joylashuv majburiy
+    if not mobile:
+        if not branch:
+            await message.answer(
+                "⛔ Sizga filial biriktirilmagan. HR yoki administrator bilan bog'laning.",
+                reply_markup=menu,
+            )
+            return
+        if branch.get("latitude") is None or branch.get("longitude") is None:
+            await message.answer(
+                f"⛔ «{branch['name']}» filiali joylashuvi hali sozlanmagan.\n"
+                "Administrator filial koordinatasini kiritgach qayta urinib ko'ring.",
+                reply_markup=menu,
+            )
+            return
 
     lat = message.location.latitude
     lon = message.location.longitude
-    dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
-    radius = branch.get("radius") or 150
+    dist = None
+    if branch and branch.get("latitude") is not None and branch.get("longitude") is not None:
+        dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
+    radius = (branch.get("radius") if branch else None) or 150
 
-    if dist is not None and dist <= radius:
+    # Harakatdagi xodim uchun masofa tekshirilmaydi — istalgan joyda qabul qilinadi
+    accepted = mobile or (dist is not None and dist <= radius)
+
+    if accepted:
         now_hms = now_tk().strftime("%H:%M:%S")
-        late_sec = _late_seconds(profile.get("work_hours"), now_hms)
+        late_sec = _late_seconds((profile or {}).get("work_hours"), now_hms)
         late = late_sec > 0
         await q.add_attendance(
-            user["id"], branch["id"], lat, lon, dist, status="present",
-            late=late, late_seconds=late_sec,
+            user["id"], branch["id"] if branch else None, lat, lon, dist,
+            status="present", late=late, late_seconds=late_sec,
         )
         row = await q.get_attendance_today(message.from_user.id)
         late_note = (
             f"\n⚠️ <b>Kech keldingiz:</b> {_fmt_hms(late_sec)}." if late else ""
         )
+        if mobile:
+            loc_line = "📍 Lokatsiya: qabul qilindi (istalgan filialdan)"
+        else:
+            loc_line = f"📏 Ofisgacha masofa: ~{dist} m"
         await message.answer(
             "✅ <b>Keldingiz belgilandi!</b>\n\n"
-            f"🏢 Filial: {branch['name']}\n"
+            f"🏢 Filial: {branch['name'] if branch else '— (harakatda)'}\n"
             f"🕐 Kelgan vaqt: {row.get('time') if row else '-'}\n"
-            f"📏 Ofisgacha masofa: ~{dist} m"
+            f"{loc_line}"
             f"{late_note}\n\n"
             "Ish tugagach «🏁 Ishdan ketdim» tugmasini bosishni unutmang.",
             reply_markup=menu,
         )
         await q.add_log(
             message.from_user.id, user.get("full_name") if user else "?",
-            "ishga_keldi", f"{branch['name']} · {dist}m{' · kech' if late else ''}"
+            "ishga_keldi",
+            f"{branch['name'] if branch else 'harakatda'} · "
+            f"{dist if dist is not None else '—'}m{' · kech' if late else ''}"
         )
     else:
         await message.answer(
@@ -240,7 +265,8 @@ async def checkin_need_location(message: Message):
 @router.message(tf("btn.checkout"))
 async def checkout_start(message: Message, state: FSMContext):
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
-    if not profile:
+    user = await q.get_user(message.from_user.id)
+    if not profile and not _is_mobile_worker(user, profile):
         await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
         return
     today = await _open_shift(message.from_user.id)
@@ -288,7 +314,7 @@ async def checkout_location(message: Message, state: FSMContext):
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
     now_hm = now_tk_hm()
     now_hms = now_tk().strftime("%H:%M:%S")
-    early_sec = _early_seconds(profile.get("work_hours"), now_hms)
+    early_sec = _early_seconds((profile or {}).get("work_hours"), now_hms)
     early = early_sec > 0
     await q.set_attendance_checkout(
         today["id"], lat, lon, dist, early=early, early_seconds=early_sec,

@@ -90,6 +90,9 @@ def main_menu(role, has_applied=False, lang=None):
     if role == ROLE_IT:
         b.button(text="🖥 IT xodim panel")
     if role == ROLE_HR:
+        # HR ham davomat belgilaydi — istalgan filialdan (masofa cheklovsiz)
+        b.button(text=t("btn.checkin", lang))
+        b.button(text=t("btn.checkout", lang))
         b.button(text="👨‍💼 HR panel")
     if role == ROLE_ADMIN:
         b.button(text="👨‍💼 HR panel")
@@ -1189,8 +1192,9 @@ def pharmacist_manage_kb(user_id, uniform_status=None):
 
 
 def staff_fire_kb(user_id):
-    """Xodim profili tagida «Ishdan bo'shatish» tugmasi (rahbar/direktor)."""
+    """Xodim profili tagida «Hujjatlar» va «Ishdan bo'shatish» tugmalari (rahbar/direktor)."""
     b = InlineKeyboardBuilder()
+    b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"empdocs:{user_id}")
     b.button(text="🚫 Ishdan bo'shatish", callback_data=f"fire:{user_id}")
     b.adjust(1)
     return b.as_markup()
@@ -1413,9 +1417,47 @@ def admin_menu():
     b.button(text=PROFILE_UPDATE_BTN)
     b.button(text=EMP_MANAGE_BTN)
     b.button(text="🔀 Filial almashtirish")
+    b.button(text="🚫 Ishdan bo'shatish")
+    b.button(text="♻️ Dublikatlar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+def admin_duplicates_kb(groups):
+    """Dublikat guruhlari ro'yxati — har biri uchun bitta tugma (vakil user_id bilan)."""
+    b = InlineKeyboardBuilder()
+    for name_key, rows in groups.items():
+        if not rows:
+            continue
+        rep = rows[0]
+        name = rep.get("full_name") or name_key or "—"
+        b.button(text=f"👤 {name} ({len(rows)} ta)", callback_data=f"dupgrp:{rep['user_id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_dup_group_kb(rows):
+    """Bitta dublikat guruhidagi har bir yozuv uchun «🗑 O'chirish» tugmasi."""
+    b = InlineKeyboardBuilder()
+    for r in rows:
+        name = r.get("full_name") or str(r.get("tg_id"))
+        br = r.get("branch_name") or "—"
+        b.button(
+            text=f"🗑 O'chirish: {name} · {br} · ID{r['user_id']}",
+            callback_data=f"dupdel:{r['user_id']}",
+        )
+    b.button(text="⬅️ Orqaga", callback_data="dupback")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_dup_confirm_kb(uid):
+    b = InlineKeyboardBuilder()
+    b.button(text="🗑 Ha, shu yozuvni o'chirish", callback_data=f"dupdelok:{uid}")
+    b.button(text="❌ Bekor qilish", callback_data="dupback")
+    b.adjust(1)
+    return b.as_markup()
 
 
 def export_kb(scope="admin"):
@@ -1600,6 +1642,7 @@ def emp_manage_list_kb(profiles, prefix="emmemp"):
 def emp_manage_edit_kb(uid):
     """Bitta xodim kartochkasi ostidagi tahrirlash tugmalari."""
     b = InlineKeyboardBuilder()
+    b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"empdocs:{uid}")
     b.button(text="✏️ Ma'lumotni tahrirlash", callback_data=f"emmedit:{uid}")
     b.button(text="🎭 Rolni almashtirish", callback_data=f"emmrole:{uid}")
     b.button(text="🏢 Filialni almashtirish", callback_data=f"emmbranch:{uid}")
@@ -1644,6 +1687,7 @@ EDUCATION_OPTIONS = [
     "🎓 Oliy farmatsevt",
     "🕗 Tugallanmagan oliy farmatsevt",
     "📘 O'rta maxsus farmatsevt",
+    "🕓 Tugallanmagan o'rta maxsus farmatsevt",
     "🕓 Tugallanmagan o'rta maxsus",
     "🎓 Oliy — boshqa soha",
     "🕗 Tugallanmagan oliy — boshqa soha",
@@ -1852,6 +1896,7 @@ EDUCATION_OPTIONS = [
     "🎓 Oliy farmatsevt",
     "🕗 Tugallanmagan oliy farmatsevt",
     "📘 O'rta maxsus farmatsevt",
+    "🕓 Tugallanmagan o'rta maxsus farmatsevt",
     "🕓 Tugallanmagan o'rta maxsus",
     "🎓 Oliy — boshqa soha",
     "🕗 Tugallanmagan oliy — boshqa soha",
@@ -1880,6 +1925,29 @@ def staff_photo_kb(lang=None):
     b = ReplyKeyboardBuilder()
     b.button(text=cancel_text(lang))
     return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+
+# Pasport/ID va diplom yig'ish tugmalari (matnlar handlerda taqqoslanadi)
+STAFF_DOCS_DONE = "✅ Tayyor"
+STAFF_DIPLOMA_SKIP = "⏭ Diplomsiz davom etish"
+
+
+def staff_passport_kb(lang=None):
+    """Pasport/ID rasmlarini yig'ishda — «✅ Tayyor» va «Bekor qilish»."""
+    b = ReplyKeyboardBuilder()
+    b.button(text=STAFF_DOCS_DONE)
+    b.button(text=cancel_text(lang))
+    b.adjust(1)
+    return b.as_markup(resize_keyboard=True)
+
+
+def staff_diploma_kb(lang=None):
+    """Diplom rasmini yig'ishda — «Diplomsiz davom etish» va «Bekor qilish»."""
+    b = ReplyKeyboardBuilder()
+    b.button(text=STAFF_DIPLOMA_SKIP)
+    b.button(text=cancel_text(lang))
+    b.adjust(1)
+    return b.as_markup(resize_keyboard=True)
 
 
 def staff_confirm_kb(update_mode=False):
@@ -2162,9 +2230,10 @@ def hr_employee_kb(user_id, profile=None):
     """HR panelidagi xodim kartochkasi tugmalari — jarima (moliyaga boradi)
     va (farmatsevt bo'lsa) forma holati."""
     b = InlineKeyboardBuilder()
+    b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"empdocs:{user_id}")
     b.button(text="💸 Jarima yozish", callback_data=f"phfine:{user_id}")
     b.button(text="📋 Jarimalar", callback_data=f"phfines:{user_id}")
-    sizes = [2]
+    sizes = [1, 2]
     from utils import is_pharmacist_like
     if profile and is_pharmacist_like(profile):
         status = profile.get("uniform_status")

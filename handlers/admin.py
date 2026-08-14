@@ -1341,3 +1341,143 @@ async def admin_audit(message: Message):
 
 def _split(text, size=3800):
     return [text[i:i + size] for i in range(0, len(text), size)]
+
+
+# ---------------- DUBLIKAT XODIMLAR (2 marta ro'yxatdan o'tganlar) ----------------
+def _dup_group_text(rows):
+    lines = [
+        "♻️ <b>Dublikat yozuvlar</b>",
+        "━━━━━━━━━━━━━",
+        f"👤 Ism: <b>{rows[0].get('full_name') or '—'}</b>",
+        f"🔢 Topildi: <b>{len(rows)}</b> ta yozuv\n",
+    ]
+    for i, r in enumerate(rows, 1):
+        lines.append(
+            f"{i}) 🆔 ID{r['user_id']} · TG {r.get('tg_id') or '—'}\n"
+            f"   💼 {r.get('position') or '—'} · 🏢 {r.get('branch_name') or '—'}\n"
+            f"   📱 {r.get('phone') or '—'} · 🗓 {r.get('created_at') or '—'}"
+        )
+    lines.append(
+        "\n⚠️ Kerakli <b>bittasini</b> tanlab o'chiring — qolgani saqlanib qoladi."
+    )
+    return "\n".join(lines)
+
+
+@router.message(F.text == "♻️ Dublikatlar")
+async def admin_duplicates(message: Message):
+    if not await is_admin(message.from_user.id):
+        await message.answer("⛔ Sizda administrator huquqi yo'q.")
+        return
+    groups = await q.find_duplicate_employees()
+    if not groups:
+        await message.answer(
+            "✅ Dublikat topilmadi.\n\n"
+            "Bir xil ism bilan 2 martadan ko'p ro'yxatdan o'tgan xodim yo'q."
+        )
+        return
+    await message.answer(
+        f"♻️ <b>Dublikat xodimlar</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"Bir xil ismli <b>{len(groups)}</b> ta guruh topildi. "
+        "Ko'rish va bittasini o'chirish uchun tanlang:",
+        reply_markup=kb.admin_duplicates_kb(groups),
+    )
+
+
+@router.callback_query(F.data == "dupback")
+async def admin_dup_back(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    groups = await q.find_duplicate_employees()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if not groups:
+        await call.message.answer("✅ Boshqa dublikat qolmadi.")
+        await call.answer()
+        return
+    await call.message.answer(
+        f"♻️ <b>Dublikat xodimlar</b> — <b>{len(groups)}</b> ta guruh:",
+        reply_markup=kb.admin_duplicates_kb(groups),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dupgrp:"))
+async def admin_dup_group(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    rows = await q.list_same_name_employees(uid)
+    if len(rows) < 2:
+        await call.answer("Bu guruhda dublikat qolmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        _dup_group_text(rows), reply_markup=kb.admin_dup_group_kb(rows)
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dupdel:"))
+async def admin_dup_delete_ask(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Yozuv topilmadi (allaqachon o'chirilgan bo'lishi mumkin).",
+                          show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "🗑 <b>O'chirishni tasdiqlaysizmi?</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"👤 {profile.get('full_name') or '—'}\n"
+        f"🆔 ID{uid} · 🏢 {profile.get('branch_name') or '—'}\n"
+        f"💼 {profile.get('position') or '—'}\n\n"
+        "⚠️ Bu yozuv <b>butunlay o'chiriladi</b> (profil + foydalanuvchi). "
+        "Bu amalni ortga qaytarib bo'lmaydi.",
+        reply_markup=kb.admin_dup_confirm_kb(uid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dupdelok:"))
+async def admin_dup_delete_ok(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    name = (profile or {}).get("full_name") or f"ID{uid}"
+    await q.delete_employee_completely(uid)
+    me = await actor(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, (me or {}).get("full_name") or "?",
+        "dublikat_ochirildi", f"{name} · ID{uid}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>O'chirildi:</b> {name} (ID{uid}).\n"
+        "Dublikatning qolgan yozuvi saqlanib qoldi."
+    )
+    await call.answer("O'chirildi ✅")
+    # Qolgan dublikatlarni ko'rsatamiz
+    groups = await q.find_duplicate_employees()
+    if groups:
+        await call.message.answer(
+            f"♻️ Qolgan dublikat guruhlari: <b>{len(groups)}</b> ta",
+            reply_markup=kb.admin_duplicates_kb(groups),
+        )
+    else:
+        await call.message.answer("🎉 Boshqa dublikat qolmadi.")

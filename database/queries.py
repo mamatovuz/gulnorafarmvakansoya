@@ -810,7 +810,8 @@ async def upsert_employee_profile(
     user_id, application_id, role, position, branch_id=None, uniform_status=None,
     monthly_salary=None, birth_date=None, address=None, work_hours=None,
     rest_day=None, photo_file_id=None, extra_info=None, since=None,
-    education=None, shift=None,
+    education=None, shift=None, parent_phone=None, passport_front=None,
+    passport_back=None, diploma_file=None,
 ):
     """Xodim profilini yaratadi yoki yangilaydi.
     None berilgan qo'shimcha maydonlar mavjud qiymatni o'zgartirmaydi (COALESCE)."""
@@ -837,22 +838,29 @@ async def upsert_employee_profile(
                        since=COALESCE(?, since),
                        education=COALESCE(?, education),
                        shift=COALESCE(?, shift),
+                       parent_phone=COALESCE(?, parent_phone),
+                       passport_front=COALESCE(?, passport_front),
+                       passport_back=COALESCE(?, passport_back),
+                       diploma_file=COALESCE(?, diploma_file),
                        updated_at=datetime('now','+5 hours')
                    WHERE user_id=?""",
                 (application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education, shift, user_id),
+                 photo_file_id, extra_info, since, education, shift,
+                 parent_phone, passport_front, passport_back, diploma_file, user_id),
             )
         else:
             await db.execute(
                 """INSERT INTO employee_profiles
                    (user_id, application_id, role, position, branch_id, uniform_status,
                     monthly_salary, birth_date, address, work_hours, rest_day,
-                    photo_file_id, extra_info, since, education, shift)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    photo_file_id, extra_info, since, education, shift,
+                    parent_phone, passport_front, passport_back, diploma_file)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (user_id, application_id, role, position, branch_id, status,
                  monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education, shift),
+                 photo_file_id, extra_info, since, education, shift,
+                 parent_phone, passport_front, passport_back, diploma_file),
             )
         await db.commit()
     finally:
@@ -1794,6 +1802,81 @@ async def fire_employee(user_id):
         await db.close()
 
 
+# ---------------- DUBLIKAT XODIMLAR (2 marta ro'yxatdan o'tganlar) ----------------
+async def find_duplicate_employees():
+    """Bir xil ism (yoki telefon) bilan bir nechta marta ro'yxatdan o'tgan
+    xodimlarni topadi. Har bir dublikat guruhidagi barcha yozuvlar qaytariladi.
+
+    Solishtirish uchun ism bo'sh joy/registrsiz normallashtiriladi (pylower),
+    telefon esa faqat raqamlari bo'yicha olinadi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """WITH emp AS (
+                   SELECT u.id AS user_id, u.tg_id, u.username, u.full_name,
+                          u.phone, ep.position, ep.branch_id, ep.created_at,
+                          b.name AS branch_name,
+                          TRIM(pylower(COALESCE(u.full_name,''))) AS name_key
+                   FROM users u
+                   JOIN employee_profiles ep ON ep.user_id=u.id
+                   LEFT JOIN branches b ON b.id=ep.branch_id
+               )
+               SELECT e.* FROM emp e
+               WHERE e.name_key != '' AND e.name_key IN (
+                       SELECT name_key FROM emp
+                       WHERE name_key != ''
+                       GROUP BY name_key HAVING COUNT(*) > 1
+                   )
+               ORDER BY e.name_key, e.user_id"""
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+        # Guruhlarga ajratamiz: {name_key: [rows...]}
+        groups = {}
+        for r in rows:
+            groups.setdefault(r["name_key"], []).append(r)
+        return groups
+    finally:
+        await db.close()
+
+
+async def list_same_name_employees(user_id):
+    """Berilgan xodim bilan bir xil (normallashtirilgan) ismga ega barcha xodimlar."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT u.id AS user_id, u.tg_id, u.username, u.full_name, u.phone,
+                      ep.position, ep.branch_id, ep.created_at, b.name AS branch_name
+               FROM users u
+               JOIN employee_profiles ep ON ep.user_id=u.id
+               LEFT JOIN branches b ON b.id=ep.branch_id
+               WHERE TRIM(pylower(COALESCE(u.full_name,''))) = (
+                       SELECT TRIM(pylower(COALESCE(full_name,'')))
+                       FROM users WHERE id=?
+                   )
+                 AND TRIM(pylower(COALESCE(u.full_name,''))) != ''
+               ORDER BY u.id""",
+            (user_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def delete_employee_completely(user_id):
+    """Dublikat yozuvni butunlay o'chiradi: profil, xodim so'rovlari va
+    foydalanuvchi yozuvi. Ishdan bo'shatishdan farqli — bu yozuvni tamoman yo'q qiladi.
+    Boshqa hujjatlar (davomat, jarima) foydalanuvchiga bog'liq bo'lsa ular ham
+    egasiz qoladi, lekin biz asosiy yozuvlarni tozalaymiz."""
+    db = await _conn()
+    try:
+        await db.execute("DELETE FROM employee_profiles WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM staff_regs WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM users WHERE id=?", (user_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def search_applications(field, value):
     """field: full_name | phone | branch | vacancy"""
     db = await _conn()
@@ -2249,6 +2332,7 @@ STAFF_REG_FIELDS = [
     "user_id", "full_name", "birth_date", "phone", "role", "position", "address",
     "branch_id", "branch_name", "work_hours", "salary", "rest_day",
     "uniform_status", "photo_file_id", "since", "extra_info", "education",
+    "parent_phone", "passport_front", "passport_back", "diploma_file",
 ]
 
 

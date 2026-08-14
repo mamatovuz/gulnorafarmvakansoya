@@ -86,6 +86,7 @@ def _reg_summary(d):
         f"👤 Ism-familiya: {g('full_name')}",
         f"📅 Tug'ilgan sana: {g('birth_date')}",
         f"📱 Telefon: {g('phone')}",
+        f"👪 Ota/ona telefoni: {g('parent_phone')}",
         f"💼 Lavozim: {g('position')}",
         f"📍 Manzil: {g('address')}",
         f"🏢 Filial: {g('branch_name')}",
@@ -100,6 +101,9 @@ def _reg_summary(d):
     if d.get("extra_info"):
         lines.append(f"🧩 Qo'shimcha: {d['extra_info']}")
     lines.append(f"🖼 Rasm: {'✅ biriktirilgan' if d.get('photo_file_id') else '— yo`q'}")
+    pf = d.get("passport_files") or []
+    lines.append(f"🪪 Pasport/ID: {'✅ ' + str(len(pf)) + ' ta rasm' if pf else '— yo`q'}")
+    lines.append(f"🎓 Diplom: {'✅ biriktirilgan' if d.get('diploma_file') else '— yo`q'}")
     return "\n".join(lines)
 
 
@@ -159,10 +163,11 @@ async def staff_update_start(call: CallbackQuery, state: FSMContext):
 
 # ---------------- BEKOR QILISH ----------------
 @router.message(StateFilter(
-    StaffReg.full_name, StaffReg.birth_date, StaffReg.phone, StaffReg.role,
-    StaffReg.address, StaffReg.branch, StaffReg.shift, StaffReg.work_hours,
-    StaffReg.salary, StaffReg.rest_day, StaffReg.uniform, StaffReg.education,
-    StaffReg.since, StaffReg.extra, StaffReg.photo,
+    StaffReg.full_name, StaffReg.birth_date, StaffReg.phone, StaffReg.parent_phone,
+    StaffReg.role, StaffReg.address, StaffReg.branch, StaffReg.shift,
+    StaffReg.work_hours, StaffReg.salary, StaffReg.rest_day, StaffReg.uniform,
+    StaffReg.education, StaffReg.since, StaffReg.extra, StaffReg.photo,
+    StaffReg.passport, StaffReg.diploma,
 ), F.text.in_(kb.CANCEL_BUTTONS))
 async def staff_reg_cancel(message: Message, state: FSMContext, lang: str = None):
     data = await state.get_data()
@@ -221,6 +226,25 @@ async def sr_phone(message: Message, state: FSMContext, lang: str = None):
         )
         return
     await state.update_data(phone=phone)
+    await state.set_state(StaffReg.parent_phone)
+    await message.answer(
+        "<b>3b-savol</b>\n👪 <b>Ota yoki onangizning telefon raqamini</b> yozing.\n"
+        f"Misol: <i>+998901234567</i>\n\n{PHONE_HINT}",
+        reply_markup=kb.staff_photo_kb(lang),
+    )
+
+
+# 3b) Ota/ona telefon raqami
+@router.message(StaffReg.parent_phone, F.text)
+async def sr_parent_phone(message: Message, state: FSMContext, lang: str = None):
+    phone = normalize_phone(message.text)
+    if not phone:
+        await message.answer(
+            "❗️ Telefon raqamini to'g'ri kiriting.\n" + PHONE_HINT,
+            reply_markup=kb.staff_photo_kb(lang),
+        )
+        return
+    await state.update_data(parent_phone=phone)
     await state.set_state(StaffReg.role)
     names = await q.list_position_names()
     await message.answer(
@@ -413,7 +437,7 @@ async def _ask_photo(message: Message, state: FSMContext):
 @router.message(StaffReg.photo, F.photo)
 async def sr_photo(message: Message, state: FSMContext):
     await state.update_data(photo_file_id=message.photo[-1].file_id)
-    await _show_confirm(message, state)
+    await _ask_passport(message, state)
 
 
 @router.message(StaffReg.photo, F.text)
@@ -422,6 +446,110 @@ async def sr_photo_missing(message: Message):
         "❗️ Iltimos, rasm (surat) yuboring — matn emas. "
         "Oxirgi 10 kun ichidagi suratingizni yuboring.",
         reply_markup=kb.staff_photo_kb(),
+    )
+
+
+# ---------------- PASPORT / ID KARTA (maxfiy — kanalga chiqmaydi) ----------------
+async def _ask_passport(message: Message, state: FSMContext):
+    await state.update_data(passport_files=[])
+    await state.set_state(StaffReg.passport)
+    await message.answer(
+        "🪪 <b>Pasport yoki ID karta rasmi</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "Hujjatingizning <b>oldi</b> va <b>orqa</b> tomonini yuboring.\n"
+        "• Ikkalasini <b>birdaniga (albom qilib)</b> yoki\n"
+        "• <b>alohida</b> — avval oldi, keyin orqa tomonini yuborishingiz mumkin.\n\n"
+        "🔒 Bu rasm faqat HR/rahbar panelida saqlanadi — <b>kanalga chiqmaydi</b>.\n"
+        "Ikkala rasmni yuborib bo'lgach «✅ Tayyor» tugmasini bosing.",
+        reply_markup=kb.staff_passport_kb(),
+    )
+
+
+def _doc_file_id(message: Message):
+    """Xabardan rasm yoki hujjat file_id sini oladi (pasport rasm yoki fayl bo'lishi mumkin)."""
+    if message.photo:
+        return message.photo[-1].file_id
+    if message.document:
+        return message.document.file_id
+    return None
+
+
+@router.message(StaffReg.passport, F.photo | F.document)
+async def sr_passport_file(message: Message, state: FSMContext):
+    file_id = _doc_file_id(message)
+    if not file_id:
+        return
+    data = await state.get_data()
+    files = list(data.get("passport_files") or [])
+    files.append(file_id)
+    files = files[:2]  # faqat oldi va orqa
+    await state.update_data(passport_files=files)
+    if len(files) >= 2:
+        # Oldi + orqa yig'ildi — diplomga o'tamiz
+        await _ask_diploma(message, state)
+    else:
+        await message.answer(
+            "✅ 1-rasm (oldi tomoni) qabul qilindi.\n"
+            "Endi hujjatning <b>orqa</b> tomonini yuboring. "
+            "Agar bitta rasm yetarli bo'lsa «✅ Tayyor» tugmasini bosing.",
+            reply_markup=kb.staff_passport_kb(),
+        )
+
+
+@router.message(StaffReg.passport, F.text == kb.STAFF_DOCS_DONE)
+async def sr_passport_done(message: Message, state: FSMContext):
+    data = await state.get_data()
+    files = list(data.get("passport_files") or [])
+    if not files:
+        await message.answer(
+            "❗️ Avval pasport yoki ID karta rasmini yuboring.",
+            reply_markup=kb.staff_passport_kb(),
+        )
+        return
+    await _ask_diploma(message, state)
+
+
+@router.message(StaffReg.passport, F.text)
+async def sr_passport_hint(message: Message):
+    await message.answer(
+        "❗️ Iltimos, pasport yoki ID karta <b>rasmini</b> yuboring (matn emas). "
+        "Tugatgach «✅ Tayyor» tugmasini bosing.",
+        reply_markup=kb.staff_passport_kb(),
+    )
+
+
+# ---------------- DIPLOM (maxfiy — kanalga chiqmaydi) ----------------
+async def _ask_diploma(message: Message, state: FSMContext):
+    await state.set_state(StaffReg.diploma)
+    await message.answer(
+        "🎓 <b>Diplom rasmi / hujjati</b>\n"
+        "━━━━━━━━━━━━━\n"
+        "Diplomingiz rasmini yoki fayl ko'rinishida yuboring.\n"
+        "🔒 Bu ham faqat HR/rahbar panelida saqlanadi.\n\n"
+        "Agar diplomingiz bo'lmasa «⏭ Diplomsiz davom etish» tugmasini bosing.",
+        reply_markup=kb.staff_diploma_kb(),
+    )
+
+
+@router.message(StaffReg.diploma, F.photo | F.document)
+async def sr_diploma_file(message: Message, state: FSMContext):
+    file_id = _doc_file_id(message)
+    if not file_id:
+        return
+    await state.update_data(diploma_file=file_id)
+    await _show_confirm(message, state)
+
+
+@router.message(StaffReg.diploma, F.text == kb.STAFF_DIPLOMA_SKIP)
+async def sr_diploma_skip(message: Message, state: FSMContext):
+    await _show_confirm(message, state)
+
+
+@router.message(StaffReg.diploma, F.text)
+async def sr_diploma_hint(message: Message):
+    await message.answer(
+        "❗️ Diplom <b>rasmini</b> yuboring yoki «⏭ Diplomsiz davom etish» tugmasini bosing.",
+        reply_markup=kb.staff_diploma_kb(),
     )
 
 
@@ -472,6 +600,7 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         await state.clear()
         return
     user = await q.get_user(call.from_user.id)
+    passport_files = data.get("passport_files") or []
     reg = {
         "user_id": user["id"],
         "full_name": data.get("full_name"),
@@ -490,6 +619,10 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         "since": data.get("since"),
         "extra_info": data.get("extra_info"),
         "education": data.get("education"),
+        "parent_phone": data.get("parent_phone"),
+        "passport_front": passport_files[0] if len(passport_files) >= 1 else None,
+        "passport_back": passport_files[1] if len(passport_files) >= 2 else None,
+        "diploma_file": data.get("diploma_file"),
     }
     rid = await q.add_staff_reg(reg)
     # Panellarda Telegram nomi emas, anketada kiritilgan ism ko'rinsin
@@ -558,6 +691,10 @@ async def _finish_update(call: CallbackQuery, state: FSMContext, bot: Bot,
         extra_info=reg.get("extra_info"),
         since=reg.get("since"),
         education=reg.get("education"),
+        parent_phone=reg.get("parent_phone"),
+        passport_front=reg.get("passport_front"),
+        passport_back=reg.get("passport_back"),
+        diploma_file=reg.get("diploma_file"),
     )
     await q.clear_profile_update(user["id"])
     await q.add_log(
@@ -686,6 +823,10 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         extra_info=reg.get("extra_info"),
         since=reg.get("since"),
         education=reg.get("education"),
+        parent_phone=reg.get("parent_phone"),
+        passport_front=reg.get("passport_front"),
+        passport_back=reg.get("passport_back"),
+        diploma_file=reg.get("diploma_file"),
     )
     await q.add_log(call.from_user.id, me["full_name"], "hodim_tasdiqlandi", f"#{rid}")
     # Kadrlar harakati (IT hisoboti): ishga kirdi

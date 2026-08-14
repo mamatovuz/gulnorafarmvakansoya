@@ -137,6 +137,7 @@ class StaffReg(StatesGroup):
     full_name = State()      # 1  Ism familiya
     birth_date = State()     # 2  Tug'ilgan sana kun.oy.yil
     phone = State()          # 3  Telefon raqam (qo'lda yoziladi)
+    parent_phone = State()   # 3b Ota yoki ona telefon raqami
     role = State()           # 4  Yo'nalish (rol)
     address = State()        # 4  Manzil
     branch = State()         # 5  Filial (admin ro'yxatidan)
@@ -149,6 +150,8 @@ class StaffReg(StatesGroup):
     since = State()          # 10 Necha yildan beri Gulnora Farmda ishlaydi
     extra = State()          # 10b rolga oid qo'shimcha savol
     photo = State()          # 11 oxirgi 10 kundagi rasm
+    passport = State()       # 12 pasport/ID karta oldi+orqa rasmi (maxfiy)
+    diploma = State()        # 13 diplom rasmi/hujjati (maxfiy)
     confirm = State()        # yakuniy tasdiqlash
 
 

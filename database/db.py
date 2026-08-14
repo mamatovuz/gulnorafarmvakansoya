@@ -213,6 +213,10 @@ CREATE TABLE IF NOT EXISTS employee_profiles (
     emp_status TEXT NOT NULL DEFAULT 'regular',  -- regular / trial / learner
     education TEXT,               -- ma'lumoti / diplomi (staff_regs dan ko'chiriladi)
     shift TEXT,                   -- smena: kunduzgi / tungi (qabulda belgilanadi)
+    parent_phone TEXT,            -- ota yoki ona telefon raqami
+    passport_front TEXT,          -- pasport / ID karta OLDI rasmi (file_id) — maxfiy, kanalga chiqmaydi
+    passport_back TEXT,           -- pasport / ID karta ORQA rasmi (file_id) — maxfiy
+    diploma_file TEXT,            -- diplom rasmi / hujjati (file_id) — maxfiy
     update_required INTEGER NOT NULL DEFAULT 0,  -- admin «ma'lumotlarni yangilash» so'ragan
     update_requested_at TEXT,
     updated_by_self_at TEXT,      -- xodim oxirgi marta o'zi yangilagan vaqt
@@ -239,6 +243,10 @@ CREATE TABLE IF NOT EXISTS staff_regs (
     since TEXT,
     extra_info TEXT,
     education TEXT,               -- ma'lumoti: o'rta maxsus / oliy farmatsevt / boshqa / diplom yo'q
+    parent_phone TEXT,            -- ota yoki ona telefon raqami
+    passport_front TEXT,          -- pasport / ID karta OLDI rasmi (file_id) — maxfiy
+    passport_back TEXT,           -- pasport / ID karta ORQA rasmi (file_id) — maxfiy
+    diploma_file TEXT,            -- diplom rasmi / hujjati (file_id) — maxfiy
     status TEXT NOT NULL DEFAULT 'new',
     reject_reason TEXT,           -- HR rad etganda yozgan sabab
     handled_by INTEGER,
@@ -663,6 +671,10 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "emp_status": "TEXT NOT NULL DEFAULT 'regular'",
     "education": "TEXT",
     "shift": "TEXT",                       # smena: kunduzgi / tungi / ... (qabulda belgilanadi)
+    "parent_phone": "TEXT",                # ota/ona telefoni
+    "passport_front": "TEXT",              # pasport/ID oldi rasmi (maxfiy)
+    "passport_back": "TEXT",               # pasport/ID orqa rasmi (maxfiy)
+    "diploma_file": "TEXT",                # diplom rasmi/hujjati (maxfiy)
     "update_required": "INTEGER NOT NULL DEFAULT 0",
     "update_requested_at": "TEXT",
     "updated_by_self_at": "TEXT",
@@ -696,6 +708,10 @@ STAFF_REG_COLUMNS = {
     "phone": "TEXT",
     "reject_reason": "TEXT",
     "education": "TEXT",
+    "parent_phone": "TEXT",
+    "passport_front": "TEXT",
+    "passport_back": "TEXT",
+    "diploma_file": "TEXT",
 }
 
 

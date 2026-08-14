@@ -398,6 +398,8 @@ CHOICES = {
          "ru": "🕗 Неоконченное высшее фармацевтическое"},
         {"uz": "📘 O'rta maxsus farmatsevt",
          "ru": "📘 Среднее специальное фармацевтическое"},
+        {"uz": "🕓 Tugallanmagan o'rta maxsus farmatsevt",
+         "ru": "🕓 Тугалланмаган урта махсус фармацевт"},
         {"uz": "🕓 Tugallanmagan o'rta maxsus",
          "ru": "🕓 Неоконченное среднее специальное"},
         {"uz": "🎓 Oliy — boshqa soha", "ru": "🎓 Высшее — другая сфера"},

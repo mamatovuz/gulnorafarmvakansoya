@@ -353,6 +353,8 @@ def employee_profile_text(profile):
         f"🏢 Filial: {_v(profile, 'branch_name')}",
         f"📱 Telefon: {_v(profile, 'phone')}",
     ]
+    if profile.get("parent_phone"):
+        parts.append(f"👪 Ota/ona telefoni: {profile['parent_phone']}")
     username = profile.get("username")
     if username:
         parts.append(f"🔗 Username: @{username}")
@@ -374,6 +376,13 @@ def employee_profile_text(profile):
         parts.append(f"👕 Forma: {uniform_label(profile.get('uniform_status'))}")
     if profile.get("education"):
         parts.append(f"🎓 Ma'lumoti: {profile['education']}")
+    docs = []
+    if profile.get("passport_front") or profile.get("passport_back"):
+        docs.append("🪪 pasport/ID")
+    if profile.get("diploma_file"):
+        docs.append("🎓 diplom")
+    if docs:
+        parts.append("📎 Hujjatlar: " + ", ".join(docs) + " (🪪 tugma orqali)")
     parts.append(f"💰 Oylik: {_v(profile, 'monthly_salary')}")
     if profile.get("since"):
         parts.append(f"⏳ Gulnora Farmda: {profile['since']}")
@@ -418,6 +427,7 @@ def staff_reg_text(reg):
         f"👤 Ism-familiya: {_v(reg, 'full_name')}",
         f"📅 Tug'ilgan sana: {_v(reg, 'birth_date')}",
         f"📱 Telefon: {_v(reg, 'phone')}",
+        f"👪 Ota/ona telefoni: {_v(reg, 'parent_phone')}",
         f"💼 Lavozim: {_v(reg, 'position')}",
         f"📍 Manzil: {_v(reg, 'address')}",
         f"🏢 Filial: {_v(reg, 'branch_name')}",
@@ -429,6 +439,13 @@ def staff_reg_text(reg):
     if is_pharmacist_like(reg):
         parts.append(f"👕 Forma: {uniform_label(reg.get('uniform_status'))}")
     parts.append(f"🎓 Ma'lumoti: {_v(reg, 'education')}")
+    docs = []
+    if reg.get("passport_front") or reg.get("passport_back"):
+        docs.append("🪪 pasport/ID")
+    if reg.get("diploma_file"):
+        docs.append("🎓 diplom")
+    if docs:
+        parts.append("📎 Hujjatlar (maxfiy): " + ", ".join(docs))
     if reg.get("since"):
         parts.append(f"⏳ Gulnora Farmda: {reg['since']}")
     if reg.get("extra_info"):

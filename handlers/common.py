@@ -69,6 +69,58 @@ async def emp_find_run(message: Message, state: FSMContext):
     )
 
 
+# Hujjatlarni (pasport/ID, diplom) ko'ra oladigan rollar
+DOCS_ROLES = {ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_DIRECTOR}
+
+
+async def _send_doc(call: CallbackQuery, file_id, caption):
+    """file_id rasm yoki hujjat bo'lishi mumkin — avval rasm, bo'lmasa hujjat sifatida."""
+    try:
+        await call.message.answer_photo(file_id, caption=caption)
+        return
+    except Exception:
+        pass
+    try:
+        await call.message.answer_document(file_id, caption=caption)
+    except Exception:
+        await call.message.answer(f"⚠️ {caption} — faylni ko'rsatib bo'lmadi (eskirgan).")
+
+
+@router.callback_query(F.data.startswith("empdocs:"))
+async def emp_docs_view(call: CallbackQuery):
+    """«🪪 Hujjatlar» — xodimning pasport/ID oldi-orqa va diplom rasmini ko'rsatadi.
+    Faqat HR / admin / filial rahbari / direktor uchun (maxfiy — kanalga chiqmaydi)."""
+    user = await q.get_user(call.from_user.id)
+    if not user or user.get("role") not in DOCS_ROLES:
+        await call.answer("⛔ Ruxsat yo'q.", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    # Filial rahbari faqat o'z filiali xodimini ko'radi
+    if user.get("role") == ROLE_MANAGER and profile.get("branch_id") != user.get("branch_id"):
+        await call.answer("⛔ Bu xodim sizning filialingizga tegishli emas.",
+                          show_alert=True)
+        return
+    name = profile.get("full_name") or "Xodim"
+    front = profile.get("passport_front")
+    back = profile.get("passport_back")
+    diploma = profile.get("diploma_file")
+    if not (front or back or diploma):
+        await call.answer("Bu xodimda saqlangan hujjat yo'q.", show_alert=True)
+        return
+    await call.answer()
+    await call.message.answer(f"🪪 <b>{name}</b> — hujjatlari (maxfiy):")
+    if front:
+        await _send_doc(call, front, "🪪 Pasport / ID karta — oldi tomoni")
+    if back:
+        await _send_doc(call, back, "🪪 Pasport / ID karta — orqa tomoni")
+    if diploma:
+        await _send_doc(call, diploma, "🎓 Diplom")
+
+
 async def show_subscription(message: Message):
     channels = await q.list_channels(active_only=True)
     if not channels:
