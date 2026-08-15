@@ -48,7 +48,7 @@ MENU_ESCAPE_BUTTONS = {
     "🔐 Ishonch xabari", "📊 Bildirishnoma statistika",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
     "🔧 Texnik xodim panel", "🆕 Yangi topshiriqlar", "🔧 Jarayondagi ishlar",
-    "✅ Bajarilgan ishlar",
+    "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish",
 }
 
@@ -555,6 +555,7 @@ def hr_menu():
     b.button(text="💊 Farmatsevtlar")
     b.button(text="📨 Rahbar so'rovlari")
     b.button(text="🧾 Xodim so'rovlari")
+    b.button(text="🔧 Texnik ishlar")
     b.button(text="❌ Rad etilgan murojaatlar")
     b.button(text="👥 Xodimlar")
     b.button(text=EMP_MANAGE_BTN)
@@ -1307,12 +1308,19 @@ def tech_task_actions_kb(task_id, status):
     """Texnik xodim topshiriq tagidagi tugmalar — holatga qarab progressiv."""
     b = InlineKeyboardBuilder()
     if status == "assigned":
-        b.button(text="🕗 Ertaga boshlayman", callback_data=f"tttom:{task_id}")
+        # Hali qabul qilinmagan — avval qabul qilinadi yoki bekor qilinadi
+        b.button(text="✅ Qabul qilish", callback_data=f"ttaccept:{task_id}")
+        b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
+    elif status in ("accepted", "tomorrow"):
         b.button(text="▶️ Ishni boshladim", callback_data=f"ttstart:{task_id}")
-    elif status == "tomorrow":
-        b.button(text="▶️ Ishni boshladim", callback_data=f"ttstart:{task_id}")
+        b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
+        b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
     elif status == "in_progress":
         b.button(text="✅ Tugatdim", callback_data=f"ttdone:{task_id}")
+        b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
+        b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
+    elif status in ("done", "rated"):
+        b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
     b.adjust(1)
     return b.as_markup()
 
@@ -1326,11 +1334,19 @@ def tech_rating_kb(task_id):
     return b.as_markup()
 
 
+def tech_review_skip_kb(task_id):
+    """Baho qo'yilgach — qo'shimcha otziv yozish yoki o'tkazib yuborish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="⏭ Otzivsiz yakunlash", callback_data=f"ttrevskip:{task_id}")
+    return b.as_markup()
+
+
 def tech_tasks_list_kb(tasks, prefix="ttview"):
     b = InlineKeyboardBuilder()
     marks = {
-        "assigned": "🆕", "tomorrow": "🕗", "in_progress": "🔧",
-        "done": "✅", "rated": "⭐", "closed": "🔒", "pending_hr": "⏳",
+        "assigned": "🆕", "accepted": "🤝", "tomorrow": "🕗", "in_progress": "🔧",
+        "done": "✅", "rated": "⭐", "cancelled": "🚫", "closed": "🔒",
+        "pending_hr": "⏳",
     }
     for tk in tasks:
         mark = marks.get(tk.get("status"), "•")
@@ -1339,6 +1355,21 @@ def tech_tasks_list_kb(tasks, prefix="ttview"):
             text=f"{mark} #{tk['id']} · {tk.get('branch_name') or '-'} · {title}",
             callback_data=f"{prefix}:{tk['id']}",
         )
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- HR / DIREKTOR «🔧 Texnik ishlar» paneli ----------------
+def tech_admin_menu_kb(counts):
+    """HR/Direktor uchun texnik ishlar bo'yicha 4 xil holat (raqamlar bilan)."""
+    b = InlineKeyboardBuilder()
+    b.button(text=f"🆕 Yangi ({counts.get('new', 0)})", callback_data="techadm:new")
+    b.button(text=f"🔧 Bajarilmoqda ({counts.get('active', 0)})",
+             callback_data="techadm:active")
+    b.button(text=f"✅ Tugatilgan ({counts.get('done', 0)})",
+             callback_data="techadm:done")
+    b.button(text=f"🚫 Bekor qilingan ({counts.get('cancelled', 0)})",
+             callback_data="techadm:cancelled")
     b.adjust(1)
     return b.as_markup()
 
@@ -1463,9 +1494,10 @@ def director_menu():
     b.button(text="⏸ Tanaffus hisoboti")
     b.button(text="🏆 Filiallar reytingi")
     b.button(text="📈 Taqqoslash")
+    b.button(text="🔧 Texnik ishlar")
     b.button(text="📑 Hisobot (Excel)")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 

@@ -594,6 +594,19 @@ CREATE TABLE IF NOT EXISTS tech_tasks (
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_status ON tech_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_tech ON tech_tasks(tech_user_id);
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_request ON tech_tasks(manager_request_id);
+
+-- Texnik topshiriq bo'yicha yozishmalar (texnik xodim «💬 Javob berish» qilsa —
+-- filial rahbariga boradi; rahbar javobi ham shu yerda saqlanadi).
+CREATE TABLE IF NOT EXISTS tech_task_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    from_role TEXT,                   -- tech / manager
+    from_user_id INTEGER,            -- users.id
+    from_name TEXT,
+    text TEXT,
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_tech_replies_task ON tech_task_replies(task_id);
 """
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)
@@ -627,6 +640,14 @@ DEFAULT_BRANCHES = [
 
 
 # Eski bazalar uchun migratsiya: yangi ustunlar
+TECH_TASK_COLUMNS = {
+    "accepted_at": "TEXT",       # texnik xodim topshiriqni qabul qilgan vaqt
+    "cancel_reason": "TEXT",     # bekor qilish sababi (texnik xodimdan)
+    "cancelled_at": "TEXT",
+    "cancelled_by": "INTEGER",   # bekor qilgan (users.id)
+    "manager_review": "TEXT",    # filial rahbari otzivi (baho bilan birga)
+}
+
 APP_COLUMNS = {
     "branch_id": "INTEGER", "birth_date": "TEXT", "city": "TEXT",
     "district": "TEXT", "address": "TEXT", "position": "TEXT",
@@ -957,6 +978,13 @@ async def _migrate(db):
     existing = {row[1] for row in await cur.fetchall()}
     if existing and "amount" not in existing:
         await db.execute("ALTER TABLE advance_requests ADD COLUMN amount INTEGER")
+
+    cur = await db.execute("PRAGMA table_info(tech_tasks)")
+    existing = {row[1] for row in await cur.fetchall()}
+    if existing:
+        for col, coltype in TECH_TASK_COLUMNS.items():
+            if col not in existing:
+                await db.execute(f"ALTER TABLE tech_tasks ADD COLUMN {col} {coltype}")
 
     cur = await db.execute("PRAGMA table_info(fines)")
     existing = {row[1] for row in await cur.fetchall()}

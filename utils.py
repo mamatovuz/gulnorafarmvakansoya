@@ -502,11 +502,13 @@ def manager_request_text(req):
 
 TECH_STATUS_LABELS = {
     "pending_hr": "⏳ HR tasdig'i kutilmoqda",
-    "assigned": "🆕 Texnik xodimga yuborildi",
+    "assigned": "🆕 Yangi (hali qabul qilinmagan)",
+    "accepted": "🤝 Qabul qilingan",
     "tomorrow": "🕗 Ertaga boshlanadi",
     "in_progress": "🔧 Bajarilmoqda",
-    "done": "✅ Bajarildi (baho kutilmoqda)",
+    "done": "✅ Tugatildi (baho kutilmoqda)",
     "rated": "⭐ Yakunlandi (baholandi)",
+    "cancelled": "🚫 Bekor qilingan",
     "closed": "🔒 Yopilgan",
 }
 
@@ -515,10 +517,48 @@ def tech_status_label(status):
     return TECH_STATUS_LABELS.get(status, status or "-")
 
 
-def tech_task_text(task, for_tech=False):
+def _parse_dt(s):
+    """Baza vaqt satri (YYYY-MM-DD HH:MM:SS) -> datetime yoki None."""
+    if not s:
+        return None
+    from datetime import datetime
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(str(s)[:19], fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def human_duration(start, end):
+    """Ikki vaqt orasidagi farqni «2 kun 3 soat 15 daqiqa» ko'rinishida qaytaradi."""
+    a, b = _parse_dt(start), _parse_dt(end)
+    if not a or not b:
+        return "-"
+    secs = int((b - a).total_seconds())
+    if secs < 0:
+        secs = 0
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, _ = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} kun")
+    if hours:
+        parts.append(f"{hours} soat")
+    if mins:
+        parts.append(f"{mins} daqiqa")
+    if not parts:
+        parts.append(f"{secs} soniya")
+    return " ".join(parts)
+
+
+def tech_task_text(task, for_tech=False, for_admin=False):
     """Texnik topshiriq kartochkasi matni.
 
-    for_tech=True — texnik xodimga ko'rsatiladigan ko'rinish (nima qilish kerak)."""
+    for_tech=True  — texnik xodimga ko'rsatiladigan ko'rinish (nima qilish kerak).
+    for_admin=True — HR/Direktor paneli: to'liq statistika (qabul vaqti, davomiylik,
+                     otziv/baho, bekor sababi)."""
     lines = [
         f"🔧 <b>Texnik topshiriq #{task['id']}</b>",
         "━━━━━━━━━━━━",
@@ -532,9 +572,34 @@ def tech_task_text(task, for_tech=False):
     lines.append(f"📌 Holati: {tech_status_label(task.get('status'))}")
     if task.get("tech_name") and not for_tech:
         lines.append(f"🔧 Texnik xodim: {task['tech_name']}")
+
+    # Statistika — HR/Direktor panelida (va texnik xodimning yakunlangan ishida)
+    if for_admin:
+        if task.get("accepted_at"):
+            lines.append(f"🤝 Qabul qilingan: {task['accepted_at']}")
+        if task.get("started_at"):
+            lines.append(f"▶️ Ish boshlangan: {task['started_at']}")
+        if task.get("done_at"):
+            lines.append(f"✅ Tugatilgan: {task['done_at']}")
+            base = task.get("accepted_at") or task.get("started_at")
+            if base:
+                lines.append(
+                    f"⏱ Bajarish davomiyligi: "
+                    f"{human_duration(base, task['done_at'])}"
+                )
+
     if task.get("rating"):
-        lines.append(f"⭐ Baho: {'⭐' * int(task['rating'])} ({task['rating']}/5)")
-    lines.append(f"🕐 Sana: {_v(task, 'created_at')}")
+        lines.append(f"⭐ Baho (otziv): {'⭐' * int(task['rating'])} ({task['rating']}/5)")
+    if for_admin and task.get("manager_review"):
+        lines.append(f"💬 Rahbar otzivi: {task['manager_review']}")
+
+    if task.get("status") == "cancelled":
+        if task.get("cancel_reason"):
+            lines.append(f"🚫 Bekor sababi: {task['cancel_reason']}")
+        if task.get("cancelled_at"):
+            lines.append(f"🕐 Bekor qilingan: {task['cancelled_at']}")
+
+    lines.append(f"🕐 So'rov sanasi: {_v(task, 'created_at')}")
     return "\n".join(lines)
 
 

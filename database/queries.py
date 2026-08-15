@@ -1871,17 +1871,117 @@ async def set_tech_task_status(tid, new_status, expected=None, tech_user_id=None
         await db.close()
 
 
-async def rate_tech_task(tid, rating):
-    """Rahbar bahosi: done -> rated (ATOMIK, faqat bir marta). True/False."""
+async def accept_tech_task(tid, tech_user_id):
+    """Texnik xodim topshiriqni ATOMIK qabul qiladi: faqat hali egasiz (assigned).
+    True — shu texnik qabul qildi; False — boshqa texnik allaqachon oldi."""
     db = await _conn()
     try:
         cur = await db.execute(
-            "UPDATE tech_tasks SET status='rated', rating=?, "
-            "rated_at=datetime('now','+5 hours') WHERE id=? AND status='done'",
-            (int(rating), tid),
+            "UPDATE tech_tasks SET tech_user_id=?, status='accepted', "
+            "accepted_at=datetime('now','+5 hours') "
+            "WHERE id=? AND status='assigned' AND tech_user_id IS NULL",
+            (tech_user_id, tid),
         )
         await db.commit()
         return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def cancel_tech_task(tid, cancelled_by, reason, tech_user_id=None):
+    """Texnik xodim topshiriqni bekor qiladi (sabab bilan). ATOMIK — faqat hali
+    yakunlanmagan/bekor qilinmagan holatdan. `tech_user_id` berilsa, faqat shu
+    texnik xodimniki. True/False."""
+    db = await _conn()
+    try:
+        sql = (
+            "UPDATE tech_tasks SET status='cancelled', cancel_reason=?, "
+            "cancelled_by=?, cancelled_at=datetime('now','+5 hours') "
+            "WHERE id=? AND status IN "
+            "('assigned','accepted','tomorrow','in_progress')"
+        )
+        params = [reason, cancelled_by, tid]
+        if tech_user_id is not None:
+            sql += " AND tech_user_id=?"
+            params.append(tech_user_id)
+        cur = await db.execute(sql, params)
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def rate_tech_task(tid, rating, review=None):
+    """Rahbar bahosi (otziv): done -> rated (ATOMIK, faqat bir marta). True/False."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET status='rated', rating=?, manager_review=?, "
+            "rated_at=datetime('now','+5 hours') WHERE id=? AND status='done'",
+            (int(rating), review, tid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def set_tech_review(tid, review):
+    """Baho qo'yilgach — rahbar otzivini (izohini) yozadi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_tasks SET manager_review=? WHERE id=?", (review, tid)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def add_tech_reply(task_id, from_role, from_user_id, from_name, text):
+    """Texnik topshiriq bo'yicha yozishma qo'shadi (texnik xodim / rahbar javobi)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "INSERT INTO tech_task_replies "
+            "(task_id, from_role, from_user_id, from_name, text) VALUES (?,?,?,?,?)",
+            (task_id, from_role, from_user_id, from_name, text),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def list_tech_replies(task_id, limit=20):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM tech_task_replies WHERE task_id=? "
+            "ORDER BY id ASC LIMIT ?",
+            (task_id, int(limit)),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def tech_task_admin_counts():
+    """HR/Direktor «🔧 Texnik ishlar» paneli uchun 4 xil holat sanoq'i:
+    yangi (qabul qilinmagan) / bajarilmoqda / tugatilgan / bekor qilingan."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT status, COUNT(*) c FROM tech_tasks GROUP BY status"
+        )
+        rows = {r["status"]: r["c"] for r in await cur.fetchall()}
+        return {
+            "new": rows.get("assigned", 0) + rows.get("pending_hr", 0),
+            "active": rows.get("accepted", 0) + rows.get("tomorrow", 0)
+            + rows.get("in_progress", 0),
+            "done": rows.get("done", 0) + rows.get("rated", 0),
+            "cancelled": rows.get("cancelled", 0),
+        }
     finally:
         await db.close()
 
@@ -1901,7 +2001,8 @@ async def tech_task_counts(tech_user_id=None):
         )
         rows = {r["status"]: r["c"] for r in await cur.fetchall()}
         new = rows.get("assigned", 0)
-        active = rows.get("in_progress", 0) + rows.get("tomorrow", 0)
+        active = (rows.get("accepted", 0) + rows.get("in_progress", 0)
+                  + rows.get("tomorrow", 0))
         done = rows.get("done", 0) + rows.get("rated", 0)
         return {"new": new, "active": active, "done": done}
     finally:

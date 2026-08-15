@@ -214,6 +214,21 @@ class TechIssueForm(StatesGroup):
     confirm = State()   # HR ga yuborilsinmi? tasdiq
 
 
+class TechReplyForm(StatesGroup):
+    """Texnik xodim topshiriq bo'yicha filial rahbariga javob yozadi."""
+    text = State()
+
+
+class TechCancelForm(StatesGroup):
+    """Texnik xodim topshiriqni bekor qiladi — sabab so'raladi."""
+    reason = State()
+
+
+class TechRatingForm(StatesGroup):
+    """Filial rahbari baho qo'ygach — ixtiyoriy otziv (izoh) yozadi."""
+    review = State()
+
+
 class SalaryForm(StatesGroup):
     """HR farmatsevt oyligini belgilaydi."""
     value = State()
