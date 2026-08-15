@@ -910,6 +910,7 @@ async def admin_settings(message: Message):
     vacancy_channel = await q.get_setting("vacancy_channel")
     candidate_channel = await q.get_setting("candidate_channel")
     interview_channel = await q.get_setting("interview_channel")
+    tech_channel = await q.get_setting("tech_channel")
     threshold = await q.get_setting("match_threshold", "60")
     chan_line = (
         f"🔒 <b>Maxfiy kanal</b> — hozir: <code>{secret_channel}</code>"
@@ -931,6 +932,11 @@ async def admin_settings(message: Message):
         if interview_channel
         else "🗣 <b>Suhbat kanali</b> — hali ulanmagan"
     )
+    tech_line = (
+        f"🔧 <b>Texnik ishlar kanali</b> — hozir: <code>{tech_channel}</code>"
+        if tech_channel
+        else "🔧 <b>Texnik ishlar kanali</b> — hali ulanmagan"
+    )
     await message.answer(
         "⚙️ <b>Bot sozlamalari</b>\n\n"
         "📢 <b>Majburiy obuna</b> — yoqilsa, foydalanuvchi kanallarga obuna bo'lmaguncha "
@@ -942,11 +948,13 @@ async def admin_settings(message: Message):
         "holati (kutuvda/tasdiqlangan/rad etilgan) avtomatik yangilanadi.\n"
         f"{int_line} — HR suhbatga chaqirgan nomzodlar shu kanalga tushadi; kelish "
         "holati (keldi/kelmadi) HR paneldan belgilanadi.\n"
+        f"{tech_line} — texnik ish yakunlanib baholangach, uning to'liq statistikasi "
+        "shu kanalga tushadi.\n"
         f"🎯 <b>Moslik chegarasi</b> — {threshold}%. Oddiy ariza shu foizdan yuqori mos "
         "kelsa, HR ga avtomatik tavsiya beriladi.",
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
                                           vacancy_channel, candidate_channel,
-                                          interview_channel),
+                                          interview_channel, tech_channel),
     )
 
 
@@ -964,11 +972,12 @@ async def toggle_subscription(call: CallbackQuery):
     vacancy_channel = await q.get_setting("vacancy_channel")
     candidate_channel = await q.get_setting("candidate_channel")
     interview_channel = await q.get_setting("interview_channel")
+    tech_channel = await q.get_setting("tech_channel")
     threshold = await q.get_setting("match_threshold", "60")
     await call.message.edit_reply_markup(
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
                                           vacancy_channel, candidate_channel,
-                                          interview_channel)
+                                          interview_channel, tech_channel)
     )
     await call.answer("✅ Yangilandi")
 
@@ -1068,9 +1077,11 @@ async def secret_channel_clear(call: CallbackQuery):
     vacancy_channel = await q.get_setting("vacancy_channel")
     candidate_channel = await q.get_setting("candidate_channel")
     interview_channel = await q.get_setting("interview_channel")
+    tech_channel = await q.get_setting("tech_channel")
     await call.message.edit_reply_markup(
         reply_markup=kb.admin_settings_kb(require_sub, None, threshold, vacancy_channel,
-                                          candidate_channel, interview_channel)
+                                          candidate_channel, interview_channel,
+                                          tech_channel)
     )
     await call.answer("🗑 Maxfiy kanal uzildi", show_alert=True)
 
@@ -1136,9 +1147,11 @@ async def vacancy_channel_clear(call: CallbackQuery):
     threshold = await q.get_setting("match_threshold", "60")
     candidate_channel = await q.get_setting("candidate_channel")
     interview_channel = await q.get_setting("interview_channel")
+    tech_channel = await q.get_setting("tech_channel")
     await call.message.edit_reply_markup(
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold, None,
-                                          candidate_channel, interview_channel)
+                                          candidate_channel, interview_channel,
+                                          tech_channel)
     )
     await call.answer("🗑 Vakansiya kanali uzildi", show_alert=True)
 
@@ -1203,9 +1216,11 @@ async def candidate_channel_clear(call: CallbackQuery):
     threshold = await q.get_setting("match_threshold", "60")
     vacancy_channel = await q.get_setting("vacancy_channel")
     interview_channel = await q.get_setting("interview_channel")
+    tech_channel = await q.get_setting("tech_channel")
     await call.message.edit_reply_markup(
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
-                                          vacancy_channel, None, interview_channel)
+                                          vacancy_channel, None, interview_channel,
+                                          tech_channel)
     )
     await call.answer("🗑 Nomzodlar kanali uzildi", show_alert=True)
 
@@ -1270,11 +1285,82 @@ async def interview_channel_clear(call: CallbackQuery):
     threshold = await q.get_setting("match_threshold", "60")
     vacancy_channel = await q.get_setting("vacancy_channel")
     candidate_channel = await q.get_setting("candidate_channel")
+    tech_channel = await q.get_setting("tech_channel")
     await call.message.edit_reply_markup(
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
-                                          vacancy_channel, candidate_channel, None)
+                                          vacancy_channel, candidate_channel, None,
+                                          tech_channel)
     )
     await call.answer("🗑 Suhbat kanali uzildi", show_alert=True)
+
+
+# ---------------- TEXNIK ISHLAR KANALI ----------------
+@router.callback_query(F.data == "settech")
+async def tech_channel_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.tech_channel)
+    await call.message.answer(
+        "🔧 <b>Texnik ishlar kanalini ulash</b>\n\n"
+        "Texnik ish <b>yakunlanib baholangach</b>, uning to'liq statistikasi "
+        "(qabul vaqti, bajarish davomiyligi, baho va otziv) shu kanalga tushadi.\n\n"
+        "1️⃣ Botni o'sha kanalga <b>administrator</b> qilib qo'shing.\n"
+        "2️⃣ Kanal ID sini yuboring:\n"
+        "   • Yopiq kanal: <code>-1001234567890</code> ko'rinishida\n"
+        "   • Ochiq kanal: <code>@kanal_username</code> ko'rinishida\n\n"
+        "Bekor qilish uchun <b>-</b> yuboring."
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.tech_channel, F.text)
+async def tech_channel_save(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    value = message.text.strip()
+    if value == "-":
+        await message.answer("Bekor qilindi.")
+        return
+    title = None
+    try:
+        chat = await bot.get_chat(value)
+        title = chat.title or chat.full_name
+    except Exception:
+        await message.answer(
+            "❗️ Kanalni tekshira olmadim. Bot o'sha kanalda administrator ekaniga "
+            "va ID/username to'g'ri ekaniga ishonch hosil qiling. Baribir saqlayapman."
+        )
+    await q.set_setting("tech_channel", value)
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "sozlama_texnik_kanal", value)
+    suffix = f"\n📛 Nomi: <b>{title}</b>" if title else ""
+    await message.answer(
+        f"✅ Texnik ishlar kanali ulandi: <code>{value}</code>{suffix}\n\n"
+        "Endi har bir yakunlangan (baholangan) texnik ish to'liq statistikasi "
+        "bilan shu kanalga tushadi."
+    )
+
+
+@router.callback_query(F.data == "settech_clear")
+async def tech_channel_clear(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await q.set_setting("tech_channel", "")
+    me = await actor(call.from_user.id)
+    await q.add_log(call.from_user.id, me["full_name"], "sozlama_texnik_kanal", "uzildi")
+    require_sub = (await q.get_setting("require_subscription", "1")) != "0"
+    secret_channel = await q.get_setting("secret_channel")
+    threshold = await q.get_setting("match_threshold", "60")
+    vacancy_channel = await q.get_setting("vacancy_channel")
+    candidate_channel = await q.get_setting("candidate_channel")
+    interview_channel = await q.get_setting("interview_channel")
+    await call.message.edit_reply_markup(
+        reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
+                                          vacancy_channel, candidate_channel,
+                                          interview_channel, None)
+    )
+    await call.answer("🗑 Texnik ishlar kanali uzildi", show_alert=True)
 
 
 # ---------------- MOSLIK CHEGARASI ----------------

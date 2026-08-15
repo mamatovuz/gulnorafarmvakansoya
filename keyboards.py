@@ -1608,7 +1608,7 @@ def user_manage_kb(tg_id, blocked=False):
 
 def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
                       vacancy_channel=None, candidate_channel=None,
-                      interview_channel=None):
+                      interview_channel=None, tech_channel=None):
     b = InlineKeyboardBuilder()
     if require_sub:
         b.button(text="📢 Majburiy obuna: 🟢 YOQILGAN", callback_data="setsub:off")
@@ -1636,6 +1636,13 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
         b.button(text="🗑 Suhbat kanalini uzish", callback_data="setint_clear")
     else:
         b.button(text="🗣 Suhbat kanali: 🔴 ULANMAGAN (ulash)", callback_data="setint")
+    if tech_channel:
+        b.button(text="🔧 Texnik ishlar kanali: 🟢 ULANGAN (o'zgartirish)",
+                 callback_data="settech")
+        b.button(text="🗑 Texnik ishlar kanalini uzish", callback_data="settech_clear")
+    else:
+        b.button(text="🔧 Texnik ishlar kanali: 🔴 ULANMAGAN (ulash)",
+                 callback_data="settech")
     b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
     b.adjust(1)
     return b.as_markup()

@@ -457,7 +457,8 @@ async def tech_task_rate(call: CallbackQuery, bot: Bot, state: FSMContext):
 
 
 async def _finalize_rating(bot: Bot, tid, review=None):
-    """Baho (va ixtiyoriy otziv) yakunlangach — HR/Direktor va texnik xodimga xabar."""
+    """Baho (va ixtiyoriy otziv) yakunlangach — HR/Direktor va texnik xodimga xabar,
+    hamda yakunlangan ishni to'liq statistikasi bilan texnik ishlar kanaliga joylaydi."""
     task = await q.get_tech_task(tid)
     if not task:
         return
@@ -482,6 +483,37 @@ async def _finalize_rating(bot: Bot, tid, review=None):
             f"<b>{'⭐' * stars}</b> ({stars}/5) bilan baholandi." + review_line +
             "\nRahmat!"
         )
+    # Texnik ishlar kanaliga — to'liq statistika (sozlamalardan ulangan bo'lsa)
+    await _post_task_to_channel(bot, tid)
+
+
+async def _post_task_to_channel(bot: Bot, tid):
+    """Yakunlangan texnik ishni to'liq statistikasi bilan texnik ishlar kanaliga
+    joylaydi (admin sozlamalarida ulangan bo'lsa)."""
+    channel = await q.get_setting("tech_channel")
+    if not channel:
+        return
+    task = await q.get_tech_task(tid)
+    if not task:
+        return
+    text = "✅ <b>Texnik ish yakunlandi</b>\n\n" + tech_task_text(task, for_admin=True)
+    replies = await q.list_tech_replies(tid)
+    if replies:
+        text += "\n\n💬 <b>Yozishmalar</b>"
+        for r in replies:
+            who = "👷" if r.get("from_role") == "tech" else "👤"
+            text += f"\n{who} {r.get('from_name') or '-'}: {r.get('text') or ''}"
+    posted = await safe_send(bot, channel, text)
+    # Murojaat rasmi/mazmuni (media) — asl xabarni ham kanalga ko'chiramiz
+    if posted and task.get("src_chat_id") and task.get("src_message_id"):
+        try:
+            await bot.copy_message(
+                chat_id=channel,
+                from_chat_id=task["src_chat_id"],
+                message_id=task["src_message_id"],
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("ttrevskip:"))

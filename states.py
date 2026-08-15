@@ -252,6 +252,7 @@ class SettingsForm(StatesGroup):
     vacancy_channel = State()  # vakansiyalar joylanadigan kanal chat_id
     candidate_channel = State()  # kutuvchi nomzodlar joylanadigan maxfiy kanal chat_id
     interview_channel = State()  # suhbatga chaqirilganlar joylanadigan kanal chat_id
+    tech_channel = State()  # yakunlangan texnik ishlar joylanadigan kanal chat_id
     match_threshold = State()  # moslik (tavsiya) foizi
     avans_prompt_day = State()  # avans so'rovi yuboriladigan kun
     avans_pay_day = State()     # avans to'lov sanasi
