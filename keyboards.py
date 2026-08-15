@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from i18n import t, choices as i18n_choices, LANG_NAMES, LANGS
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_CANDIDATE,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_TECH, ROLE_CANDIDATE,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED,
 )
 
@@ -47,6 +47,8 @@ MENU_ESCAPE_BUTTONS = {
     "❌ Rad etilgan murojaatlar", "👥 Xodimlar",
     "🔐 Ishonch xabari", "📊 Bildirishnoma statistika",
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
+    "🔧 Texnik xodim panel", "🆕 Yangi topshiriqlar", "🔧 Jarayondagi ishlar",
+    "✅ Bajarilgan ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish",
 }
 
@@ -89,6 +91,12 @@ def main_menu(role, has_applied=False, lang=None):
         b.button(text="🧮 Moliya bo'limi")
     if role == ROLE_IT:
         b.button(text="🖥 IT xodim panel")
+    if role == ROLE_TECH:
+        # Texnik xodim davomatga bog'lanmaydi (filialma-filial yuradi) — o'z paneli
+        b.button(text="🔧 Texnik xodim panel")
+        b.button(text=t("btn.profile", lang))
+        b.button(text=t("btn.hr_request", lang))
+        b.button(text=t("btn.lang", lang))
     if role == ROLE_HR:
         # HR ham davomat belgilaydi — istalgan filialdan (masofa cheklovsiz)
         b.button(text=t("btn.checkin", lang))
@@ -101,6 +109,7 @@ def main_menu(role, has_applied=False, lang=None):
         b.button(text="🧮 Moliya bo'limi")
         b.button(text="🖥 IT xodim panel")
         b.button(text="🏢 Filial rahbari panel")
+        b.button(text="🔧 Texnik xodim panel")
     b.adjust(2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
 
@@ -1253,9 +1262,83 @@ def manager_request_actions_kb(request_id, kind):
     b = InlineKeyboardBuilder()
     if kind == "vacancy":
         b.button(text="✅ Vakansiya ochish", callback_data=f"mracc:{request_id}")
+    elif kind == "technical":
+        b.button(text="✅ Tasdiqlab texnik xodimga yuborish",
+                 callback_data=f"mracc:{request_id}")
     else:
         b.button(text="✅ Qabul qilindi", callback_data=f"mracc:{request_id}")
     b.button(text="❌ Yopish", callback_data=f"mrclose:{request_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- TEXNIK XODIM (topshiriqlar) ----------------
+TECH_MENU_NEW = "🆕 Yangi topshiriqlar"
+TECH_MENU_ACTIVE = "🔧 Jarayondagi ishlar"
+TECH_MENU_DONE = "✅ Bajarilgan ishlar"
+
+# Rahbar texnik nosozlik uchun muddat kiritadi — tez tanlov + qo'lda yozish
+TECH_DEADLINE_TODAY = "⏱ Bugun"
+TECH_DEADLINE_TOMORROW = "📅 Ertaga"
+TECH_DEADLINE_2 = "🗓 2 kun ichida"
+TECH_DEADLINE_3 = "🗓 3 kun ichida"
+TECH_DEADLINE_WEEK = "🗓 1 hafta ichida"
+
+
+def tech_menu():
+    b = ReplyKeyboardBuilder()
+    b.button(text=TECH_MENU_NEW)
+    b.button(text=TECH_MENU_ACTIVE)
+    b.button(text=TECH_MENU_DONE)
+    b.button(text="🏠 Asosiy menyu")
+    b.adjust(1, 2, 1)
+    return b.as_markup(resize_keyboard=True)
+
+
+def tech_deadline_kb():
+    return _choices(
+        [TECH_DEADLINE_TODAY, TECH_DEADLINE_TOMORROW, TECH_DEADLINE_2,
+         TECH_DEADLINE_3, TECH_DEADLINE_WEEK],
+        row=2,
+    )
+
+
+def tech_task_actions_kb(task_id, status):
+    """Texnik xodim topshiriq tagidagi tugmalar — holatga qarab progressiv."""
+    b = InlineKeyboardBuilder()
+    if status == "assigned":
+        b.button(text="🕗 Ertaga boshlayman", callback_data=f"tttom:{task_id}")
+        b.button(text="▶️ Ishni boshladim", callback_data=f"ttstart:{task_id}")
+    elif status == "tomorrow":
+        b.button(text="▶️ Ishni boshladim", callback_data=f"ttstart:{task_id}")
+    elif status == "in_progress":
+        b.button(text="✅ Tugatdim", callback_data=f"ttdone:{task_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_rating_kb(task_id):
+    """Filial rahbari texnik xodim ishini 1..5 yulduz bilan baholaydi."""
+    b = InlineKeyboardBuilder()
+    for n in range(1, 6):
+        b.button(text="⭐" * n, callback_data=f"ttrate:{task_id}:{n}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_tasks_list_kb(tasks, prefix="ttview"):
+    b = InlineKeyboardBuilder()
+    marks = {
+        "assigned": "🆕", "tomorrow": "🕗", "in_progress": "🔧",
+        "done": "✅", "rated": "⭐", "closed": "🔒", "pending_hr": "⏳",
+    }
+    for tk in tasks:
+        mark = marks.get(tk.get("status"), "•")
+        title = (tk.get("title") or tk.get("details") or "Topshiriq")[:28]
+        b.button(
+            text=f"{mark} #{tk['id']} · {tk.get('branch_name') or '-'} · {title}",
+            callback_data=f"{prefix}:{tk['id']}",
+        )
     b.adjust(1)
     return b.as_markup()
 
@@ -1817,6 +1900,7 @@ STAFF_ROLES = [
     ("🧮 Moliya bo'limi", ROLE_ACCOUNTANT, "Moliya bo'limi"),
     ("📦 Omborchi", ROLE_EMPLOYEE, "Omborchi"),
     ("🚚 Haydovchi", ROLE_EMPLOYEE, "Haydovchi"),
+    ("🔧 Texnik xodim", ROLE_TECH, "Texnik xodim"),
 ]
 
 

@@ -301,11 +301,40 @@ async def tech_issue_content(message: Message, state: FSMContext):
         ti_kind=kind,
         ti_caption=caption,
     )
+    await state.set_state(TechIssueForm.deadline)
+    await message.answer(
+        "⏰ <b>Muddat</b>\n\n"
+        "Ushbu texnik ish <b>qachongacha</b> bajarilishi kerak?\n"
+        "Quyidagilardan birini tanlang yoki muddatni o'zingiz yozing "
+        "(masalan: <i>25.08.2025 gacha</i> yoki <i>2 kun ichida</i>).",
+        reply_markup=kb.tech_deadline_kb(),
+    )
+
+
+@router.message(TechIssueForm.deadline, F.text)
+async def tech_issue_deadline(message: Message, state: FSMContext):
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    if not user:
+        await state.clear()
+        return
+    deadline = message.text.strip()
+    if not deadline:
+        await message.answer(
+            "❗️ Iltimos, muddatni tanlang yoki yozing.",
+            reply_markup=kb.tech_deadline_kb(),
+        )
+        return
+    await state.update_data(ti_deadline=deadline)
     await state.set_state(TechIssueForm.confirm)
+    data = await state.get_data()
+    kind = data.get("ti_kind") or "📝 Matn"
+    caption = data.get("ti_caption") or ""
     preview = f"\n\n📄 Izoh: {caption}" if caption else ""
     await message.answer(
-        f"🔎 <b>Tekshiring</b>\n\nTuri: <b>{kind}</b>{preview}\n\n"
-        "Ushbu xabar aynan shu ko'rinishda <b>HR bo'limiga yuborilsinmi?</b>",
+        f"🔎 <b>Tekshiring</b>\n\nTuri: <b>{kind}</b>{preview}\n"
+        f"⏰ Muddat: <b>{deadline}</b>\n\n"
+        "Ushbu xabar aynan shu ko'rinishda <b>HR bo'limiga yuborilsinmi?</b>\n"
+        "<i>HR tasdiqlagach topshiriq texnik xodimga tushadi.</i>",
         reply_markup=kb.tech_issue_confirm_kb(),
     )
 
@@ -333,6 +362,7 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
     message_id = data.get("ti_message_id")
     kind = data.get("ti_kind") or "📝 Matn"
     caption = data.get("ti_caption") or ""
+    deadline = data.get("ti_deadline") or "Kelishiladi"
     branch_id = user.get("branch_id") or await _manager_branch_id(user)
     rid = await q.add_manager_request({
         "manager_user_id": user["id"],
@@ -341,6 +371,20 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
         "title": f"{kind} — texnik nosozlik",
         "staff_count": None,
         "details": caption or f"({kind})",
+    })
+    # Texnik topshiriq — HR tasdig'ini kutadi (pending_hr). HR tasdiqlagach
+    # media manbasidan (rahbar chati) texnik xodimlarga ko'chiriladi.
+    await q.add_tech_task({
+        "manager_request_id": rid,
+        "branch_id": branch_id,
+        "manager_user_id": user["id"],
+        "title": f"{kind} — texnik nosozlik",
+        "details": caption,
+        "kind": kind,
+        "deadline": deadline,
+        "src_chat_id": chat_id,
+        "src_message_id": message_id,
+        "status": "pending_hr",
     })
     await q.add_log(call.from_user.id, call.from_user.full_name, "texnik_nosozlik", f"#{rid}")
     try:
@@ -354,7 +398,8 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
         "━━━━━━━━━━━━\n"
         f"👤 Rahbar: <b>{user.get('full_name') or call.from_user.full_name}</b>\n"
         f"🏢 Filial: {branch['name'] if branch else '-'}\n"
-        f"🗂 Turi: {kind}"
+        f"🗂 Turi: {kind}\n"
+        f"⏰ Muddat: {deadline}"
     )
     hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR))
     hr_ids |= set(await q.all_user_tg_ids(role=ROLE_ADMIN))

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
-    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE, ROLE_IT,
+    ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE, ROLE_IT, ROLE_TECH,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING, STATUS_LABELS,
 )
 from states import (
@@ -25,7 +25,7 @@ from utils import (
     close_request_notices, post_interview_to_channel, update_interview_channel,
     interview_confirm_label, interview_attendance_label, REJECT_TEMPLATES,
     effective_reject_template, broadcast_trust,
-    staff_reg_text,
+    staff_reg_text, tech_task_text,
 )
 from services import export
 
@@ -1637,6 +1637,74 @@ async def _already_handled(call: CallbackQuery, who=None):
     )
 
 
+async def _assign_tech_task(call: CallbackQuery, bot: Bot, req, me, rid):
+    """HR texnik nosozlikni tasdiqladi — topshiriqni barcha texnik xodimlarga
+    yuboradi (media + progressiv tugmalar). Kim birinchi bo'lsa — u egallaydi."""
+    task = await q.get_tech_task_by_request(rid)
+    if not task:
+        await call.message.answer(
+            "⚠️ Bu so'rovga bog'liq texnik topshiriq topilmadi."
+        )
+        await call.answer()
+        return
+    tid = task["id"]
+    # pending_hr -> assigned (ATOMIK)
+    await q.approve_tech_task(tid, me["id"])
+    task = await q.get_tech_task(tid)
+
+    tech_ids = await q.all_user_tg_ids(role=ROLE_TECH)
+    if not tech_ids:
+        await call.message.answer(
+            f"⚠️ So'rov #{rid} tasdiqlandi, lekin hozircha <b>texnik xodim yo'q</b>.\n"
+            "Texnik xodim ro'yxatdan o'tgach, uni «👥 Xodimlar» orqali tasdiqlang — "
+            "so'ng bu topshiriqni qayta yuboring."
+        )
+        await q.add_log(call.from_user.id, me["full_name"], "texnik_tasdiq_texniksiz", f"#{rid}")
+        await call.answer("Texnik xodim topilmadi", show_alert=True)
+        return
+
+    header = tech_task_text(task, for_tech=True) + (
+        "\n\n📎 Muammo tafsiloti (rasm/fayl) quyida 👇\n"
+        "Ishni boshlaganingizda va tugatganingizda tugmalarni bosing."
+    )
+    markup = kb.tech_task_actions_kb(tid, "assigned")
+    delivered = 0
+    for tid_chat in set(tech_ids):
+        try:
+            msg = await bot.send_message(tid_chat, header, reply_markup=markup)
+        except Exception:
+            msg = None
+        # Media manbasini (rahbar chatidagi asl xabar) texnik xodimga ko'chiramiz
+        if msg is not None and task.get("src_chat_id") and task.get("src_message_id"):
+            try:
+                await bot.copy_message(
+                    chat_id=tid_chat,
+                    from_chat_id=task["src_chat_id"],
+                    message_id=task["src_message_id"],
+                )
+            except Exception:
+                pass
+        if msg is not None:
+            delivered += 1
+            # Kim topshiriqni olsa — qolganlaridagi tugmalar o'chirilishi uchun yozamiz
+            try:
+                await q.add_request_notice("tech_task", tid, tid_chat, msg.message_id)
+            except Exception:
+                pass
+    await q.add_log(call.from_user.id, me["full_name"], "texnik_topshiriq_yuborildi",
+                    f"#{rid} -> {delivered} texnik")
+    await call.message.answer(
+        f"✅ So'rov #{rid} tasdiqlandi va <b>{delivered} ta texnik xodimga</b> yuborildi.\n"
+        "Ular ishni boshlab/tugatgach sizga xabar keladi."
+    )
+    await safe_send(
+        bot, req["manager_tg"],
+        f"✅ Siz yuborgan texnik nosozlik (#{rid}) HR tomonidan tasdiqlandi va "
+        "texnik xodimga yuborildi. Ish tugagach sizdan uni baholash so'raladi."
+    )
+    await call.answer("Yuborildi ✅")
+
+
 @router.callback_query(F.data.startswith("mracc:"))
 async def manager_request_accept(call: CallbackQuery, bot: Bot):
     if not await is_staff(call.from_user.id):
@@ -1660,6 +1728,9 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
     except Exception:
         pass
     extra = ""
+    if req["kind"] == "technical":
+        await _assign_tech_task(call, bot, req, me, rid)
+        return
     if req["kind"] == "vacancy":
         shift = req.get("shift") or "Kelishiladi"
         # Smena matnidan ish vaqtini ajratib olamiz (qavs ichidagi)
@@ -1726,6 +1797,12 @@ async def manager_request_close(call: CallbackQuery, bot: Bot):
         return
     await close_request_notices(bot, "manager_request", rid,
                                 keep_chat_id=call.from_user.id)
+    # Texnik nosozlik bo'lsa — bog'liq topshiriqni ham yopamiz (hali kutayotgan bo'lsa)
+    if req.get("kind") == "technical":
+        task = await q.get_tech_task_by_request(rid)
+        if task and task.get("status") in ("pending_hr", "assigned"):
+            await q.set_tech_task_status(task["id"], "closed")
+            await close_request_notices(bot, "tech_task", task["id"])
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:

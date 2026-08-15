@@ -11,6 +11,7 @@ ROLE_PHARMACIST = "pharmacist"  # Farmatsevt
 ROLE_DIRECTOR = "director"    # Direktor
 ROLE_ACCOUNTANT = "accountant"  # Buxgalter
 ROLE_IT = "it"                # IT xodim (kadrlar harakati hisoboti)
+ROLE_TECH = "tech"            # Texnik xodim (filial texnik nosozliklarini bartaraf etadi)
 ROLE_CANDIDATE = "candidate"  # Nomzod (default)
 
 # Ariza holatlari
@@ -561,12 +562,44 @@ CREATE TABLE IF NOT EXISTS trust_notice_reads (
 
 CREATE INDEX IF NOT EXISTS idx_trust_reads_notice
     ON trust_notice_reads(notice_id);
+
+-- Texnik topshiriqlar: filial rahbari -> HR tasdiqi -> texnik xodim.
+-- Rahbar texnik nosozlik + muddat yuboradi; HR tasdiqlaydi va topshiriq
+-- barcha texnik xodimlarga tushadi. Texnik xodim «boshladim / tugatdim»
+-- tugmalari bilan holatni yangilaydi; tugagach rahbar 1..5 yulduz bilan baholaydi.
+CREATE TABLE IF NOT EXISTS tech_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manager_request_id INTEGER,       -- bog'liq manager_requests (kind=technical)
+    branch_id INTEGER,
+    manager_user_id INTEGER,          -- so'rovni yuborgan rahbar (users.id)
+    tech_user_id INTEGER,             -- topshiriqni bajarayotgan texnik xodim (users.id)
+    assigned_by INTEGER,              -- HR/admin — tasdiqlab yuborgan (users.id)
+    title TEXT,                       -- qisqa mavzu
+    details TEXT,                     -- rahbar izohi (caption/matn)
+    kind TEXT,                        -- 🖼 Rasm / 🎬 Video / 📝 Matn ...
+    deadline TEXT,                    -- rahbar kiritgan muddat (matn)
+    src_chat_id INTEGER,              -- media manbai (copy_message uchun)
+    src_message_id INTEGER,
+    -- pending_hr (HR tasdig'ini kutmoqda) / assigned (texniklarga yuborildi) /
+    -- tomorrow (ertaga boshlanadi) / in_progress (boshlandi) / done (tugatildi) /
+    -- rated (rahbar baholadi) / closed (HR yopdi)
+    status TEXT NOT NULL DEFAULT 'pending_hr',
+    rating INTEGER,                   -- rahbar bahosi (1..5 yulduz)
+    started_at TEXT,
+    done_at TEXT,
+    rated_at TEXT,
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tech_tasks_status ON tech_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tech_tasks_tech ON tech_tasks(tech_user_id);
+CREATE INDEX IF NOT EXISTS idx_tech_tasks_request ON tech_tasks(manager_request_id);
 """
 
 # Ishga arizadagi standart yo'nalishlar (positions jadvali bo'sh bo'lsa seed qilinadi)
 DEFAULT_POSITIONS = [
     "💊 Farmatsevt", "👨‍💼 Filial rahbari", "👔 Direktor", "🧮 Moliya bo'limi",
-    "🧹 Tozalik xodimi", "📦 Omborchi", "🚚 Haydovchi",
+    "🧹 Tozalik xodimi", "📦 Omborchi", "🚚 Haydovchi", "🔧 Texnik xodim",
 ]
 
 # Standart filiallar — nomi bo'yicha mavjud bo'lmasa qo'shiladi (koordinatasi bilan).

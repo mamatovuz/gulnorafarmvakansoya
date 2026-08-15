@@ -1728,6 +1728,186 @@ async def set_manager_request_status(rid, status, handled_by=None, comment=None)
         await db.close()
 
 
+# ---------------- TEXNIK TOPSHIRIQLAR (rahbar -> HR -> texnik xodim) ----------------
+async def add_tech_task(data):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO tech_tasks
+               (manager_request_id, branch_id, manager_user_id, title, details,
+                kind, deadline, src_chat_id, src_message_id, status)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data.get("manager_request_id"),
+                data.get("branch_id"),
+                data.get("manager_user_id"),
+                data.get("title"),
+                data.get("details"),
+                data.get("kind"),
+                data.get("deadline"),
+                data.get("src_chat_id"),
+                data.get("src_message_id"),
+                data.get("status") or "pending_hr",
+            ),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+_TECH_TASK_SELECT = """
+    SELECT tt.*,
+           mgr.tg_id AS manager_tg, mgr.full_name AS manager_name,
+           tech.tg_id AS tech_tg, tech.full_name AS tech_name,
+           b.name AS branch_name
+    FROM tech_tasks tt
+    LEFT JOIN users mgr ON mgr.id = tt.manager_user_id
+    LEFT JOIN users tech ON tech.id = tt.tech_user_id
+    LEFT JOIN branches b ON b.id = tt.branch_id
+"""
+
+
+async def get_tech_task(tid):
+    db = await _conn()
+    try:
+        cur = await db.execute(_TECH_TASK_SELECT + " WHERE tt.id=?", (tid,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_tech_task_by_request(request_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            _TECH_TASK_SELECT + " WHERE tt.manager_request_id=? ORDER BY tt.id DESC LIMIT 1",
+            (request_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_tech_tasks(tech_user_id=None, statuses=None, limit=30):
+    db = await _conn()
+    try:
+        sql = _TECH_TASK_SELECT + " WHERE 1=1"
+        params = []
+        if tech_user_id is not None:
+            sql += " AND tt.tech_user_id=?"
+            params.append(tech_user_id)
+        if statuses:
+            marks = ",".join("?" for _ in statuses)
+            sql += f" AND tt.status IN ({marks})"
+            params.extend(statuses)
+        sql += " ORDER BY tt.id DESC"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def approve_tech_task(tid, assigned_by):
+    """HR tasdiqi: pending_hr -> assigned (ATOMIK). True qaytarsa — shu chaqiruv
+    tasdiqladi; False — allaqachon ko'rib chiqilgan."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET status='assigned', assigned_by=? "
+            "WHERE id=? AND status='pending_hr'",
+            (assigned_by, tid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def claim_tech_task(tid, tech_user_id, new_status):
+    """Texnik xodim topshiriqni ATOMIK egallaydi: faqat hali egasiz (assigned)
+    bo'lsa. True — shu texnik egalladi; False — boshqa texnik allaqachon oldi."""
+    stamp = ", started_at=datetime('now','+5 hours')" if new_status == "in_progress" else ""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            f"UPDATE tech_tasks SET tech_user_id=?, status=?{stamp} "
+            "WHERE id=? AND status='assigned' AND tech_user_id IS NULL",
+            (tech_user_id, new_status, tid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def set_tech_task_status(tid, new_status, expected=None, tech_user_id=None):
+    """Topshiriq holatini yangilaydi. `expected` berilsa — faqat shu holatdan
+    o'tkazadi (ATOMIK); `tech_user_id` berilsa — faqat shu texnik xodimniki.
+    True/False qaytaradi."""
+    stamp = ""
+    if new_status == "in_progress":
+        stamp = ", started_at=datetime('now','+5 hours')"
+    elif new_status == "done":
+        stamp = ", done_at=datetime('now','+5 hours')"
+    db = await _conn()
+    try:
+        sql = f"UPDATE tech_tasks SET status=?{stamp} WHERE id=?"
+        params = [new_status, tid]
+        if expected is not None:
+            sql += " AND status=?"
+            params.append(expected)
+        if tech_user_id is not None:
+            sql += " AND tech_user_id=?"
+            params.append(tech_user_id)
+        cur = await db.execute(sql, params)
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def rate_tech_task(tid, rating):
+    """Rahbar bahosi: done -> rated (ATOMIK, faqat bir marta). True/False."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET status='rated', rating=?, "
+            "rated_at=datetime('now','+5 hours') WHERE id=? AND status='done'",
+            (int(rating), tid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def tech_task_counts(tech_user_id=None):
+    """Panel uchun holat bo'yicha sanoq (yangi/jarayonda/bajarilgan)."""
+    db = await _conn()
+    try:
+        where = ""
+        params = []
+        if tech_user_id is not None:
+            where = " AND (tech_user_id=? OR tech_user_id IS NULL)"
+            params.append(tech_user_id)
+        cur = await db.execute(
+            "SELECT status, COUNT(*) c FROM tech_tasks WHERE 1=1" + where +
+            " GROUP BY status", params,
+        )
+        rows = {r["status"]: r["c"] for r in await cur.fetchall()}
+        new = rows.get("assigned", 0)
+        active = rows.get("in_progress", 0) + rows.get("tomorrow", 0)
+        done = rows.get("done", 0) + rows.get("rated", 0)
+        return {"new": new, "active": active, "done": done}
+    finally:
+        await db.close()
+
+
 # ---------------- ISHDAN BO'SHATISH SO'ROVLARI ----------------
 async def add_termination_request(data):
     db = await _conn()

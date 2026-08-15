@@ -500,6 +500,44 @@ def manager_request_text(req):
     return "\n".join(lines)
 
 
+TECH_STATUS_LABELS = {
+    "pending_hr": "⏳ HR tasdig'i kutilmoqda",
+    "assigned": "🆕 Texnik xodimga yuborildi",
+    "tomorrow": "🕗 Ertaga boshlanadi",
+    "in_progress": "🔧 Bajarilmoqda",
+    "done": "✅ Bajarildi (baho kutilmoqda)",
+    "rated": "⭐ Yakunlandi (baholandi)",
+    "closed": "🔒 Yopilgan",
+}
+
+
+def tech_status_label(status):
+    return TECH_STATUS_LABELS.get(status, status or "-")
+
+
+def tech_task_text(task, for_tech=False):
+    """Texnik topshiriq kartochkasi matni.
+
+    for_tech=True — texnik xodimga ko'rsatiladigan ko'rinish (nima qilish kerak)."""
+    lines = [
+        f"🔧 <b>Texnik topshiriq #{task['id']}</b>",
+        "━━━━━━━━━━━━",
+        f"🏢 Filial: {_v(task, 'branch_name')}",
+        f"👤 Rahbar: {_v(task, 'manager_name')}",
+        f"🗂 Turi: {_v(task, 'kind')}",
+    ]
+    if task.get("details"):
+        lines.append(f"📝 Muammo: {task['details']}")
+    lines.append(f"⏰ Muddat: {_v(task, 'deadline')}")
+    lines.append(f"📌 Holati: {tech_status_label(task.get('status'))}")
+    if task.get("tech_name") and not for_tech:
+        lines.append(f"🔧 Texnik xodim: {task['tech_name']}")
+    if task.get("rating"):
+        lines.append(f"⭐ Baho: {'⭐' * int(task['rating'])} ({task['rating']}/5)")
+    lines.append(f"🕐 Sana: {_v(task, 'created_at')}")
+    return "\n".join(lines)
+
+
 async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs):
     try:
         await bot.send_message(chat_id, text, **kwargs)

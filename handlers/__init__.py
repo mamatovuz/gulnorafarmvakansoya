@@ -3,7 +3,7 @@ from aiogram import Dispatcher
 from handlers import (
     common, candidate, hr, admin, staff, staffreg, attendance, accountant,
     dayoff, positions, advance, it, salaryraise, dayoff_plan, hrrequest,
-    branchtransfer, empmanage,
+    branchtransfer, empmanage, tech,
 )
 
 
@@ -25,3 +25,4 @@ def register_all(dp: Dispatcher):
     dp.include_router(hrrequest.router)
     dp.include_router(branchtransfer.router)
     dp.include_router(empmanage.router)
+    dp.include_router(tech.router)

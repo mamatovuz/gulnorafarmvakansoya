@@ -14,7 +14,7 @@ from aiogram.filters import StateFilter
 from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_PHARMACIST,
-    ROLE_EMPLOYEE,
+    ROLE_EMPLOYEE, ROLE_TECH,
 )
 from states import StaffReg, StaffRegRejectForm
 import keyboards as kb
@@ -31,6 +31,7 @@ ROLE_LABELS = {
     ROLE_MANAGER: "🏢 Filial rahbari",
     ROLE_PHARMACIST: "💊 Farmatsevt",
     ROLE_DIRECTOR: "👔 Direktor",
+    ROLE_TECH: "🔧 Texnik xodim",
     ROLE_EMPLOYEE: "👷 Xodim",
 }
 

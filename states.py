@@ -210,6 +210,7 @@ class ManagerVacancyForm(StatesGroup):
 class TechIssueForm(StatesGroup):
     """Filial rahbari texnik nosozlik yuboradi (matn/rasm/video/dumaloq video)."""
     content = State()   # istalgan turdagi xabar (media/matn)
+    deadline = State()  # bajarilishi kerak bo'lgan muddat (rahbar kiritadi)
     confirm = State()   # HR ga yuborilsinmi? tasdiq
 
 
