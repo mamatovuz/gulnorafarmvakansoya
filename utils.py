@@ -569,7 +569,13 @@ def tech_task_text(task, for_tech=False, for_admin=False):
     if task.get("details"):
         lines.append(f"📝 Muammo: {task['details']}")
     lines.append(f"⏰ Muddat: {_v(task, 'deadline')}")
-    lines.append(f"📌 Holati: {tech_status_label(task.get('status'))}")
+    # Texnik xodimga baho/holat ochib berilmaydi: «done» ham «rated» ham oddiy
+    # «✅ Bajarildi» ko'rinishida bo'ladi (yulduz soni sezilmasin).
+    _status = task.get("status")
+    if for_tech and _status in ("done", "rated"):
+        lines.append("📌 Holati: ✅ Bajarildi")
+    else:
+        lines.append(f"📌 Holati: {tech_status_label(_status)}")
     if task.get("tech_name") and not for_tech:
         lines.append(f"🔧 Texnik xodim: {task['tech_name']}")
 
@@ -588,7 +594,8 @@ def tech_task_text(task, for_tech=False, for_admin=False):
                     f"{human_duration(base, task['done_at'])}"
                 )
 
-    if task.get("rating"):
+    # Baho va otziv FAQAT HR/Direktor/Admin panelida ko'rinadi — texnik xodimga hech qachon
+    if for_admin and task.get("rating"):
         lines.append(f"⭐ Baho (otziv): {'⭐' * int(task['rating'])} ({task['rating']}/5)")
     if for_admin and task.get("manager_review"):
         lines.append(f"💬 Rahbar otzivi: {task['manager_review']}")

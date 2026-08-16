@@ -72,7 +72,7 @@ async def tech_new_tasks(message: Message):
     await message.answer(
         f"🆕 <b>Yangi topshiriqlar</b>\n\nJami: <b>{len(tasks)}</b> ta\n"
         "Batafsil ko'rish va olish uchun tanlang:",
-        reply_markup=kb.tech_tasks_list_kb(tasks),
+        reply_markup=kb.tech_tasks_list_kb(tasks, for_tech=True),
     )
 
 
@@ -89,7 +89,7 @@ async def tech_active_tasks(message: Message):
         return
     await message.answer(
         f"🔧 <b>Jarayondagi ishlar</b>\n\nJami: <b>{len(tasks)}</b> ta",
-        reply_markup=kb.tech_tasks_list_kb(tasks),
+        reply_markup=kb.tech_tasks_list_kb(tasks, for_tech=True),
     )
 
 
@@ -106,7 +106,7 @@ async def tech_done_tasks(message: Message):
         return
     await message.answer(
         f"✅ <b>Bajarilgan ishlar</b>\n\nJami: <b>{len(tasks)}</b> ta",
-        reply_markup=kb.tech_tasks_list_kb(tasks),
+        reply_markup=kb.tech_tasks_list_kb(tasks, for_tech=True),
     )
 
 
@@ -457,8 +457,11 @@ async def tech_task_rate(call: CallbackQuery, bot: Bot, state: FSMContext):
 
 
 async def _finalize_rating(bot: Bot, tid, review=None):
-    """Baho (va ixtiyoriy otziv) yakunlangach — HR/Direktor va texnik xodimga xabar,
-    hamda yakunlangan ishni to'liq statistikasi bilan texnik ishlar kanaliga joylaydi."""
+    """Baho (va ixtiyoriy otziv) yakunlangach — FAQAT HR/Direktor/Adminga xabar,
+    hamda yakunlangan ishni to'liq statistikasi bilan texnik ishlar kanaliga joylaydi.
+
+    DIQQAT: baho va otziv texnik xodimga UMUMAN yuborilmaydi/ko'rsatilmaydi —
+    ular «kam yulduz qo'ydingiz» kabi nizolarga sabab bo'lmasin."""
     task = await q.get_tech_task(tid)
     if not task:
         return
@@ -476,14 +479,8 @@ async def _finalize_rating(bot: Bot, tid, review=None):
         f"👤 Baholadi (rahbar): {task.get('manager_name') or '-'}\n"
         f"⭐ Baho: {'⭐' * stars} ({stars}/5)" + review_line
     )
-    if task.get("tech_tg"):
-        await safe_send(
-            bot, task["tech_tg"],
-            f"⭐ Siz bajargan topshiriq #{tid} filial rahbari tomonidan "
-            f"<b>{'⭐' * stars}</b> ({stars}/5) bilan baholandi." + review_line +
-            "\nRahmat!"
-        )
-    # Texnik ishlar kanaliga — to'liq statistika (sozlamalardan ulangan bo'lsa)
+    # Texnik ishlar kanaliga — to'liq statistika (sozlamalardan ulangan bo'lsa).
+    # Bu kanal HR/Direktor nazorati uchun; texnik xodimga shaxsan baho bormaydi.
     await _post_task_to_channel(bot, tid)
 
 

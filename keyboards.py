@@ -1341,7 +1341,7 @@ def tech_review_skip_kb(task_id):
     return b.as_markup()
 
 
-def tech_tasks_list_kb(tasks, prefix="ttview"):
+def tech_tasks_list_kb(tasks, prefix="ttview", for_tech=False):
     b = InlineKeyboardBuilder()
     marks = {
         "assigned": "🆕", "accepted": "🤝", "tomorrow": "🕗", "in_progress": "🔧",
@@ -1349,7 +1349,11 @@ def tech_tasks_list_kb(tasks, prefix="ttview"):
         "pending_hr": "⏳",
     }
     for tk in tasks:
-        mark = marks.get(tk.get("status"), "•")
+        status = tk.get("status")
+        # Texnik xodimga baholangan ish ham oddiy «✅» — yulduz bilan ajralib turmasin
+        if for_tech and status == "rated":
+            status = "done"
+        mark = marks.get(status, "•")
         title = (tk.get("title") or tk.get("details") or "Topshiriq")[:28]
         b.button(
             text=f"{mark} #{tk['id']} · {tk.get('branch_name') or '-'} · {title}",
