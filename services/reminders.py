@@ -162,10 +162,16 @@ async def _run_location_checks(bot: Bot):
         interval = 2.0
     # Javobsiz qolgan eski tekshiruvlarni 'missed' qilamiz
     await q.mark_stale_location_checks(minutes=30)
+    now_hm = now_tk().strftime("%H:%M")
     due = await q.attendance_due_for_check(interval)
     for row in due:
         tg_id = row.get("tg_id")
         if not tg_id:
+            continue
+        # Faqat ish vaqti ichida so'raymiz (masalan 08:00–17:00).
+        # Ish vaqtidan keyin xodimni bezovta qilmaymiz.
+        start, end = _parse_work_hours(row.get("work_hours"))
+        if start and end and not (start <= now_hm <= end):
             continue
         await q.add_location_check(row["id"], row["user_id"], row.get("branch_id"), kind="auto")
         await q.touch_attendance_prompt(row["id"])

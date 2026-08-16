@@ -2886,9 +2886,12 @@ async def attendance_due_for_check(interval_hours):
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT a.*, u.tg_id, u.full_name
+            """SELECT a.*, u.tg_id, u.full_name,
+                      COALESCE(ep.work_hours, b.work_hours) AS work_hours
                FROM attendance a
                JOIN users u ON u.id=a.user_id
+               LEFT JOIN employee_profiles ep ON ep.user_id=a.user_id
+               LEFT JOIN branches b ON b.id=a.branch_id
                WHERE a.date=date('now','+5 hours')
                  AND a.status='present' AND a.out_time IS NULL
                  AND COALESCE(a.on_break,0)=0
