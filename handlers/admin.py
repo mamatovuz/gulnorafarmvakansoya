@@ -114,16 +114,44 @@ async def profile_update_scope(call: CallbackQuery):
             "🏢 <b>Qaysi filial</b> xodimlaridan ma'lumot yangilash so'ralsin?",
             reply_markup=kb.profile_update_branch_kb(branches),
         )
-    else:  # one
-        profiles = await q.list_employee_profiles()
-        if not profiles:
-            await call.message.answer("👤 Xodimlar ro'yxati bo'sh.")
+    else:  # one — avval filial, so'ng shu filialdan bitta xodim tanlanadi
+        branches = await q.list_branches()
+        if not branches:
+            await call.message.answer("🏢 Filiallar ro'yxati bo'sh.")
             await call.answer()
             return
         await call.message.answer(
-            "👤 <b>Qaysi xodimdan</b> ma'lumot yangilash so'ralsin?",
-            reply_markup=kb.profile_update_employee_kb(profiles[:60]),
+            "👤 <b>Bitta xodimdan</b>\n\n"
+            "Avval <b>qaysi filial</b>dan ekanini tanlang:",
+            reply_markup=kb.profile_update_branch_kb(branches, for_one=True),
         )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("profupd_onebr:"))
+async def profile_update_one_pick_branch(call: CallbackQuery):
+    """«Bitta xodimdan» oqimi: filial tanlandi — shu filial xodimlarini ko'rsatamiz."""
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    branch = await q.get_branch(bid)
+    profiles = await q.list_employee_profiles(branch_id=bid)
+    if not profiles:
+        await call.message.answer(
+            f"👤 <b>{branch['name'] if branch else bid}</b> filialida xodim topilmadi."
+        )
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{branch['name'] if branch else bid}</b> · "
+        "<b>qaysi xodimdan</b> ma'lumot yangilash so'ralsin?",
+        reply_markup=kb.profile_update_employee_kb(profiles[:60]),
+    )
     await call.answer()
 
 

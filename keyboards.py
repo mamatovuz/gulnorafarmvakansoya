@@ -698,11 +698,15 @@ def profile_update_scope_kb():
     return b.as_markup()
 
 
-def profile_update_branch_kb(branches):
-    """Qaysi filial xodimlaridan yangilash so'ralsin?"""
+def profile_update_branch_kb(branches, for_one=False):
+    """Qaysi filial xodimlaridan yangilash so'ralsin?
+
+    for_one=True — «👤 Bitta xodimdan» oqimida filial tanlanadi, so'ng shu
+    filial xodimlaridan bittasi tanlanadi (butun filialga emas)."""
+    prefix = "profupd_onebr" if for_one else "profupd_br"
     b = InlineKeyboardBuilder()
     for br in branches:
-        b.button(text=f"🏢 {br['name']}", callback_data=f"profupd_br:{br['id']}")
+        b.button(text=f"🏢 {br['name']}", callback_data=f"{prefix}:{br['id']}")
     b.button(text="❌ Bekor qilish", callback_data="profupd_no")
     b.adjust(1)
     return b.as_markup()
