@@ -1813,13 +1813,14 @@ def emp_manage_field_kb(uid):
 
 # Ma'lumot (education) tanlash tugmalari — qo'lda yozish o'rniga
 EDUCATION_OPTIONS = [
-    "🎓 Oliy farmatsevt",
-    "🕗 Tugallanmagan oliy farmatsevt",
     "📘 O'rta maxsus farmatsevt",
     "🕓 Tugallanmagan o'rta maxsus farmatsevt",
-    "🕓 Tugallanmagan o'rta maxsus",
-    "🎓 Oliy — boshqa soha",
-    "🕗 Tugallanmagan oliy — boshqa soha",
+    "📘 O'rta maxsus — boshqa soha",
+    "🕓 Tugallanmagan o'rta maxsus — boshqa soha",
+    "🎓 Oliy ma'lumotli farmatsevt",
+    "🕗 Tugallanmagan oliy ma'lumotli farmatsevt",
+    "🎓 Oliy ma'lumotli — boshqa soha",
+    "🕗 Tugallanmagan oliy ma'lumotli — boshqa soha",
     "📗 Umumiy o'rta ta'lim",
     "❌ Diplom yo'q",
 ]
@@ -2023,13 +2024,14 @@ def staff_rest_day_kb(lang=None):
 # savolida bir xil variantlar chiqsin (avval har joyda boshqacha edi).
 STAFF_NO_DIPLOMA = "❌ Diplom yo'q"
 EDUCATION_OPTIONS = [
-    "🎓 Oliy farmatsevt",
-    "🕗 Tugallanmagan oliy farmatsevt",
     "📘 O'rta maxsus farmatsevt",
     "🕓 Tugallanmagan o'rta maxsus farmatsevt",
-    "🕓 Tugallanmagan o'rta maxsus",
-    "🎓 Oliy — boshqa soha",
-    "🕗 Tugallanmagan oliy — boshqa soha",
+    "📘 O'rta maxsus — boshqa soha",
+    "🕓 Tugallanmagan o'rta maxsus — boshqa soha",
+    "🎓 Oliy ma'lumotli farmatsevt",
+    "🕗 Tugallanmagan oliy ma'lumotli farmatsevt",
+    "🎓 Oliy ma'lumotli — boshqa soha",
+    "🕗 Tugallanmagan oliy ma'lumotli — boshqa soha",
     "📗 Umumiy o'rta ta'lim",
     STAFF_NO_DIPLOMA,
 ]
