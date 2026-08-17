@@ -49,6 +49,31 @@ def _is_mobile_worker(user, profile=None):
     return "haydovchi" in pos or "driver" in pos
 
 
+async def _detect_branch(lat, lon):
+    """Yuborilgan lokatsiyaga qaysi filial mos kelishini aniqlaydi.
+
+    HR/haydovchi istalgan filialdan lokatsiya yuborsa — koordinatasi bor
+    filiallar ichidan eng yaqinini topamiz. Agar filial radiusi ichida
+    bo'lsa «shu filialga keldi» deb aniq belgilaymiz, aks holda eng yaqin
+    filialni taxminiy joylashuv sifatida qaytaramiz.
+
+    (branch, dist_m, inside) qaytaradi. Koordinatali filial yo'q bo'lsa
+    (None, None, False)."""
+    best = None  # (dist, inside, branch)
+    for br in await q.list_branches():
+        if br.get("latitude") is None or br.get("longitude") is None:
+            continue
+        d = haversine_m(br["latitude"], br["longitude"], lat, lon)
+        inside = d <= ((br.get("radius") or 150))
+        cand = (d, not inside, br)  # radius ichidagilar oldinroq saralanadi
+        if best is None or cand[:2] < best[:2]:
+            best = cand
+    if not best:
+        return None, None, False
+    dist, not_inside, branch = best
+    return branch, round(dist), (not not_inside)
+
+
 def _parse_work_hours(work_hours):
     """«09:00 - 18:00» dan (start_time, end_time) qaytaradi. Aniqlanmasa (None, None)."""
     if not work_hours:
@@ -204,7 +229,15 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
     lat = message.location.latitude
     lon = message.location.longitude
     dist = None
-    if branch and branch.get("latitude") is not None and branch.get("longitude") is not None:
+    detected_inside = False
+    # Harakatdagi xodim (HR/haydovchi) — yuborgan lokatsiyasiga eng yaqin filialni
+    # aniqlaymiz va «shu filialga keldi» deb belgilaymiz
+    if mobile:
+        det_branch, det_dist, detected_inside = await _detect_branch(lat, lon)
+        if det_branch:
+            branch = det_branch
+            dist = det_dist
+    if branch and branch.get("latitude") is not None and branch.get("longitude") is not None and dist is None:
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
     radius = (branch.get("radius") if branch else None) or 150
 
@@ -224,14 +257,24 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
             f"\n⚠️ <b>Kech keldingiz:</b> {_fmt_hms(late_sec)}." if late else ""
         )
         if mobile:
-            loc_line = "📍 Lokatsiya: qabul qilindi (istalgan filialdan)"
+            if branch and detected_inside:
+                loc_line = f"📍 Lokatsiya: <b>{branch['name']}</b> filialidan qabul qilindi"
+            elif branch:
+                loc_line = (f"📍 Lokatsiya: eng yaqin filial — <b>{branch['name']}</b> "
+                            f"(~{dist} m)")
+            else:
+                loc_line = "📍 Lokatsiya: qabul qilindi (istalgan filialdan)"
         else:
             loc_line = f"📏 Ofisgacha masofa: ~{dist} m"
+        arrive_line = (
+            f"\n✅ Siz <b>{branch['name']}</b> filialiga keldingiz." if mobile and branch else ""
+        )
         await message.answer(
             "✅ <b>Keldingiz belgilandi!</b>\n\n"
             f"🏢 Filial: {branch['name'] if branch else '— (harakatda)'}\n"
             f"🕐 Kelgan vaqt: {row.get('time') if row else '-'}\n"
             f"{loc_line}"
+            f"{arrive_line}"
             f"{late_note}\n\n"
             "Ish tugagach «🏁 Ishdan ketdim» tugmasini bosishni unutmang.",
             reply_markup=menu,
@@ -306,11 +349,19 @@ async def checkout_location(message: Message, state: FSMContext):
     # Tanaffusda bo'lsa — avval tanaffusni yopamiz (vaqti hisobga olinadi)
     if today.get("on_break"):
         await q.end_break(today["id"])
+    mobile = _is_mobile_worker(user, profile)
     branch = await q.get_branch(profile["branch_id"]) if profile and profile.get("branch_id") else None
     lat = message.location.latitude
     lon = message.location.longitude
     dist = None
-    if branch and branch.get("latitude") is not None:
+    detected_inside = False
+    # Harakatdagi xodim — ketishda ham lokatsiyaga eng yaqin filialni aniqlaymiz
+    if mobile:
+        det_branch, det_dist, detected_inside = await _detect_branch(lat, lon)
+        if det_branch:
+            branch = det_branch
+            dist = det_dist
+    if branch and branch.get("latitude") is not None and dist is None:
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
     now_hm = now_tk_hm()
     now_hms = now_tk().strftime("%H:%M:%S")
@@ -322,16 +373,26 @@ async def checkout_location(message: Message, state: FSMContext):
     early_note = (
         f"\n⚠️ <b>Erta ketdingiz:</b> {_fmt_hms(early_sec)}." if early else ""
     )
+    finish_line = ""
+    if mobile and branch:
+        if detected_inside:
+            finish_line = f"\n🏢 Siz <b>{branch['name']}</b> filialidan ishni yakunladingiz."
+        else:
+            finish_line = (f"\n🏢 Ishni yakunladingiz · eng yaqin filial — "
+                           f"<b>{branch['name']}</b> (~{dist} m).")
     await message.answer(
         "🏁 <b>Ketganingiz belgilandi!</b>\n\n"
         f"🕐 Kelgan vaqt: {today.get('time') or '-'}\n"
         f"🕐 Ketgan vaqt: {now_hm}"
+        f"{finish_line}"
         f"{early_note}",
         reply_markup=menu,
     )
     await q.add_log(
         message.from_user.id, user.get("full_name") if user else "?",
-        "ishdan_ketdi", f"{now_hm}{' · erta' if early else ''}"
+        "ishdan_ketdi",
+        f"{branch['name'] + ' · ' if mobile and branch else ''}"
+        f"{now_hm}{' · erta' if early else ''}"
     )
 
 
