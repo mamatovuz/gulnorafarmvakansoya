@@ -107,17 +107,6 @@ async def emp_manage_by_text(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.callback_query(F.data == "emm:all")
-async def emp_manage_all(call: CallbackQuery, state: FSMContext):
-    if not await _is_staff(call.from_user.id):
-        await call.answer("⛔", show_alert=True)
-        return
-    await state.clear()
-    profiles = await q.search_employees()
-    await _send_list(call.message, profiles, "👥 <b>Barcha xodimlar</b>")
-    await call.answer()
-
-
 @router.callback_query(F.data.startswith("emmbr:"))
 async def emp_manage_branch_pick(call: CallbackQuery):
     if not await _is_staff(call.from_user.id):

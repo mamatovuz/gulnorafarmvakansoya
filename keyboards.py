@@ -1732,7 +1732,6 @@ def emp_manage_entry_kb():
     b = InlineKeyboardBuilder()
     b.button(text="🏢 Filial bo'yicha", callback_data="emm:branch")
     b.button(text="🔤 Ism / username / telefon", callback_data="emm:text")
-    b.button(text="👥 Barcha xodimlar", callback_data="emm:all")
     b.adjust(1)
     return b.as_markup()
 
