@@ -93,6 +93,23 @@ async def emp_manage_by_branch(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+@router.callback_query(F.data == "emm:nobranch")
+async def emp_manage_no_branch(call: CallbackQuery, state: FSMContext):
+    """Filiali biriktirilmagan xodimlar — topib, kartochkasidan filial beriladi."""
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    profiles = await q.search_employees(no_branch=True)
+    await _send_list(
+        call.message, profiles,
+        "⚠️ <b>Filialsiz xodimlar</b>\n"
+        "Har birini tanlab, kartochkasidan «🏢 Filialni almashtirish» orqali "
+        "filial biriktiring.",
+    )
+    await call.answer()
+
+
 # ---- Butun filialga maqom belgilash (barcha xodimlar) ----
 @router.callback_query(F.data == "emm:allstatus")
 async def emp_manage_allstatus_branches(call: CallbackQuery, state: FSMContext):

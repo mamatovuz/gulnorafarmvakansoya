@@ -902,12 +902,14 @@ async def get_employee_profile_by_tg(tg_id):
         await db.close()
 
 
-async def search_employees(text=None, role=None, branch_id=None, limit=50):
+async def search_employees(text=None, role=None, branch_id=None, limit=50,
+                           no_branch=False):
     """Xodimlarni qidiradi: ism / Telegram username / telefon bo'yicha,
     hamda rol va filial bo'yicha filtrlaydi.
 
     `text` bo'sh bo'lsa faqat filtrlar ishlaydi (masalan «Asaka filiali
-    farmatsevtlari»). Qidiruv registrga bog'liq emas."""
+    farmatsevtlari»). Qidiruv registrga bog'liq emas.
+    `no_branch=True` — faqat filiali biriktirilmagan (branch_id IS NULL) xodimlar."""
     db = await _conn()
     try:
         sql = """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
@@ -936,6 +938,8 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50):
         if branch_id:
             sql += " AND ep.branch_id=?"
             params.append(branch_id)
+        if no_branch:
+            sql += " AND ep.branch_id IS NULL"
         # Filial rahbari (manager) va direktor doim ro'yxat boshida chiqadi,
         # so'ng qolganlari ism bo'yicha.
         sql += (
