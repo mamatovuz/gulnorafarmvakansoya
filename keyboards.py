@@ -541,44 +541,105 @@ def confirm_interview_kb(interview_id):
 
 
 # ---------------- HR PANEL ----------------
+# HR panelidagi bo'lim (submenu) tugmalari — bosilganda ichki tugmalar chiqadi
+HR_SEC_REQUESTS = "📨 So'rovlar"
+HR_SEC_APPS = "📋 Arizalar / nomzodlar"
+HR_SEC_ATT = "📍 Davomat / dam olish"
+HR_SEC_ADVANCE = "💵 Avans / maosh"
+HR_SEC_BROADCAST = "📢 Xabarnomalar"
+HR_SEC_MANAGE = "🛠 Xodimlarni boshqarish"
+HR_BACK_BTN = "👨‍💼 HR panel"
+
+
 def hr_menu():
+    """HR bosh menyusi — tugmalar bo'limlarga (submenu) yig'ilgan."""
     b = ReplyKeyboardBuilder()
     b.button(text="📊 Dashboard")
-    b.button(text="📥 Arizalar")
-    b.button(text="⏳ Kutuvchilar")
-    b.button(text="📅 Suhbatlar")
-    b.button(text="⭐ Saralanganlar")
+    b.button(text=HR_SEC_APPS)
+    b.button(text=HR_SEC_REQUESTS)
+    b.button(text=HR_SEC_MANAGE)
+    b.button(text=HR_SEC_ATT)
+    b.button(text=HR_SEC_ADVANCE)
+    b.button(text=HR_SEC_BROADCAST)
     b.button(text="💼 Vakansiyalar (HR)")
     b.button(text="🏷 Lavozimlar")
     b.button(text="👕 Forma nazorati")
     b.button(text="🎓 Diplom statistikasi")
-    b.button(text="💊 Farmatsevtlar")
-    b.button(text="📨 Rahbar so'rovlari")
-    b.button(text="🧾 Xodim so'rovlari")
     b.button(text="🔧 Texnik ishlar")
-    b.button(text="❌ Rad etilgan murojaatlar")
-    b.button(text="👥 Xodimlar")
-    b.button(text=EMP_MANAGE_BTN)
-    b.button(text="🔀 Filial almashtirish")
-    b.button(text="🚫 Ishdan bo'shatish")
-    b.button(text="📍 Davomat")
-    b.button(text="🛌 Kunlik dam olish")
-    b.button(text="⚙️ Davomat sozlamalari")
-    b.button(text="🧪 Sinov muddati")
-    b.button(text="💵 Avans")
-    b.button(text="💵 Avans sozlamalari")
-    b.button(text="🔄 Avans so'rovini boshidan yuborish")
-    b.button(text="💸 Maosh so'rovlari")
-    b.button(text="🕒 Ish vaqti so'rovlari")
-    b.button(text="🏢 Filial o'zgartirish so'rovlari")
-    b.button(text="📢 Xabarnoma")
-    b.button(text="🔐 Ishonch xabari")
-    b.button(text="📊 Bildirishnoma statistika")
     b.button(text="🔍 Qidiruv")
-    b.button(text="📊 Excel eksport")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2)
+    b.adjust(2, 2, 2, 2, 2, 2, 2)
     return b.as_markup(resize_keyboard=True)
+
+
+def _hr_section_kb(buttons):
+    b = ReplyKeyboardBuilder()
+    for txt in buttons:
+        b.button(text=txt)
+    b.button(text=HR_BACK_BTN)
+    # tugmalarni 2 ustunga joylaymiz, oxirgi «orqaga» alohida
+    rows = [2] * (len(buttons) // 2)
+    if len(buttons) % 2:
+        rows.append(1)
+    rows.append(1)
+    b.adjust(*rows)
+    return b.as_markup(resize_keyboard=True)
+
+
+def hr_requests_menu():
+    return _hr_section_kb([
+        "📨 Rahbar so'rovlari",
+        "🧾 Xodim so'rovlari",
+        "💸 Maosh so'rovlari",
+        "🕒 Ish vaqti so'rovlari",
+        "🏢 Filial o'zgartirish so'rovlari",
+    ])
+
+
+def hr_applications_menu():
+    return _hr_section_kb([
+        "📥 Arizalar",
+        "⏳ Kutuvchilar",
+        "📅 Suhbatlar",
+        "⭐ Saralanganlar",
+        "💊 Farmatsevtlar",
+        "❌ Rad etilgan murojaatlar",
+    ])
+
+
+def hr_attendance_menu():
+    return _hr_section_kb([
+        "📍 Davomat",
+        "🛌 Kunlik dam olish",
+        "🧪 Sinov muddati",
+        "⚙️ Davomat sozlamalari",
+    ])
+
+
+def hr_advance_menu():
+    return _hr_section_kb([
+        "💵 Avans",
+        "💵 Avans sozlamalari",
+        "🔄 Avans so'rovini boshidan yuborish",
+    ])
+
+
+def hr_broadcast_menu():
+    return _hr_section_kb([
+        "📢 Xabarnoma",
+        "🔐 Ishonch xabari",
+        "📊 Bildirishnoma statistika",
+        "📊 Excel eksport",
+    ])
+
+
+def hr_manage_menu():
+    return _hr_section_kb([
+        "👥 Xodimlar",
+        EMP_MANAGE_BTN,
+        "🔀 Filial almashtirish",
+        "🚫 Ishdan bo'shatish",
+    ])
 
 
 def rejected_requests_kb(apps, regs):
@@ -1224,12 +1285,35 @@ def termination_actions_kb(rid):
 
 
 # ---- HR tashabbusli ishdan bo'shatish (filial -> xodim -> tasdiq) ----
-def hr_fire_branch_kb(branches):
-    """HR «Ishdan bo'shatish» — filiallar ro'yxati."""
+def hr_fire_mode_kb():
+    """«Ishdan bo'shatish» — bitta xodim yoki butun filial?"""
+    b = InlineKeyboardBuilder()
+    b.button(text="👤 Bitta xodim", callback_data="hrfmode:one")
+    b.button(text="👥 Butun filial (hammasi)", callback_data="hrfmode:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def hr_fire_branch_kb(branches, mode="one"):
+    """HR «Ishdan bo'shatish» — filiallar ro'yxati.
+
+    mode='one'  → filialni ochib bitta xodim tanlanadi (hrfbr).
+    mode='all'  → butun filial birdan bo'shatiladi (hrfallbr)."""
+    prefix = "hrfallbr" if mode == "all" else "hrfbr"
     b = InlineKeyboardBuilder()
     for br in branches:
-        b.button(text=f"🏢 {br['name']}", callback_data=f"hrfbr:{br['id']}")
+        b.button(text=f"🏢 {br['name']}", callback_data=f"{prefix}:{br['id']}")
     b.adjust(2)
+    return b.as_markup()
+
+
+def hr_fire_all_confirm_kb(branch_id):
+    """Butun filialni ishdan bo'shatish — qo'shimcha tasdiq."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, BUTUN filialni bo'shatish",
+             callback_data=f"hrfallyes:{branch_id}")
+    b.button(text="❌ Yo'q, bekor qilish", callback_data="hrfallno")
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -1734,8 +1818,30 @@ def branches_root_kb():
 def emp_manage_entry_kb():
     """«🛠 Ma'lumotlarni o'zgartirish» — qidiruv usuli."""
     b = InlineKeyboardBuilder()
-    b.button(text="🏢 Filial bo'yicha", callback_data="emm:branch")
+    b.button(text="🏢 Filial bo'yicha (bitta xodim)", callback_data="emm:branch")
     b.button(text="🔤 Ism / username / telefon", callback_data="emm:text")
+    b.button(text="👥 Butun filial — maqom belgilash", callback_data="emm:allstatus")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_allstatus_branch_kb(branches):
+    """Butun filialga maqom belgilash — avval filial tanlanadi."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"emmallst:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="emm:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def emp_manage_allstatus_kb(bid):
+    """Butun filialga qo'yiladigan maqomni tanlash."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🟢 Doimiy xodim", callback_data=f"emmallsts:{bid}:regular")
+    b.button(text="🧪 Sinovda", callback_data=f"emmallsts:{bid}:trial")
+    b.button(text="🎓 O'rganuvchi", callback_data=f"emmallsts:{bid}:learner")
+    b.button(text="⬅️ Orqaga", callback_data="emm:allstatus")
     b.adjust(1)
     return b.as_markup()
 
@@ -2300,10 +2406,32 @@ def accountant_employee_kb(user_id):
 
 # ================= FILIAL ALMASHTIRISH (admin/HR) =================
 def branch_change_entry_kb():
-    """«🔀 Filial almashtirish» — xodimni qanday topamiz?"""
+    """«🔀 Filial almashtirish» — bitta xodim yoki butun filial?"""
     b = InlineKeyboardBuilder()
-    b.button(text="🔍 Qidirish", callback_data="bch:find")
-    b.button(text="🏢 Filial bo'yicha", callback_data="bch:branch")
+    b.button(text="🔍 Qidirish (bitta xodim)", callback_data="bch:find")
+    b.button(text="🏢 Filial bo'yicha (bitta xodim)", callback_data="bch:branch")
+    b.button(text="👥 Butun filialni ko'chirish", callback_data="bch:allsrc")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def branch_change_all_target_kb(from_bid, branches):
+    """Butun filialni ko'chirish — qaysi filialga? (manba filial ko'rsatilmaydi)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        if br["id"] == from_bid:
+            continue
+        b.button(text=f"🏢 {br['name']}", callback_data=f"bchallto:{from_bid}:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="bch:home")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def branch_change_all_confirm_kb(from_bid, to_bid):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, butun filialni ko'chirish",
+             callback_data=f"bchallgo:{from_bid}:{to_bid}")
+    b.button(text="❌ Yo'q, bekor qilish", callback_data="bch:home")
     b.adjust(1)
     return b.as_markup()
 

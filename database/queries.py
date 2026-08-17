@@ -2083,6 +2083,77 @@ async def fire_employee(user_id):
         await db.close()
 
 
+async def _branch_members(db, branch_id):
+    """Filialdagi xodimlar (user_id, tg_id, full_name) — ichki yordamchi."""
+    cur = await db.execute(
+        """SELECT ep.user_id, u.tg_id, u.full_name
+           FROM employee_profiles ep JOIN users u ON u.id=ep.user_id
+           WHERE ep.branch_id=?""",
+        (branch_id,),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def fire_all_in_branch(branch_id):
+    """Filialdagi BARCHA xodimni ishdan bo'shatadi (profil o'chadi, rol nomzodga
+    qaytadi). Bo'shatilganlar (user_id, tg_id, full_name) ro'yxatini qaytaradi."""
+    db = await _conn()
+    try:
+        victims = await _branch_members(db, branch_id)
+        for v in victims:
+            await db.execute(
+                "DELETE FROM employee_profiles WHERE user_id=?", (v["user_id"],)
+            )
+            await db.execute(
+                "UPDATE users SET role='candidate', branch_id=NULL WHERE id=?",
+                (v["user_id"],),
+            )
+        await db.commit()
+        return victims
+    finally:
+        await db.close()
+
+
+async def set_status_all_in_branch(branch_id, status):
+    """Filialdagi BARCHA xodimga bir xil bandlik maqomini qo'yadi.
+    Ta'sirlangan (user_id, tg_id, full_name) ro'yxatini qaytaradi."""
+    db = await _conn()
+    try:
+        rows = await _branch_members(db, branch_id)
+        await db.execute(
+            "UPDATE employee_profiles SET emp_status=?, "
+            "updated_at=datetime('now','+5 hours') WHERE branch_id=?",
+            (status, branch_id),
+        )
+        await db.commit()
+        return rows
+    finally:
+        await db.close()
+
+
+async def move_all_in_branch(from_branch_id, to_branch_id):
+    """Bir filialning BARCHA xodimini boshqa filialga ko'chiradi.
+    Ko'chirilganlar (user_id, tg_id, full_name) ro'yxatini qaytaradi."""
+    db = await _conn()
+    try:
+        rows = await _branch_members(db, from_branch_id)
+        # users ni AVVAL yangilaymiz (profil hali eski filialda turganda)
+        await db.execute(
+            "UPDATE users SET branch_id=? WHERE id IN "
+            "(SELECT user_id FROM employee_profiles WHERE branch_id=?)",
+            (to_branch_id, from_branch_id),
+        )
+        await db.execute(
+            "UPDATE employee_profiles SET branch_id=?, "
+            "updated_at=datetime('now','+5 hours') WHERE branch_id=?",
+            (to_branch_id, from_branch_id),
+        )
+        await db.commit()
+        return rows
+    finally:
+        await db.close()
+
+
 # ---------------- DUBLIKAT XODIMLAR (2 marta ro'yxatdan o'tganlar) ----------------
 async def find_duplicate_employees():
     """Bir xil ism (yoki telefon) bilan bir nechta marta ro'yxatdan o'tgan

@@ -99,6 +99,67 @@ async def hr_panel(message: Message):
     )
 
 
+# ---------------- BO'LIMLAR (SUBMENU) ----------------
+@router.message(F.text == kb.HR_SEC_REQUESTS)
+async def hr_section_requests(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "📨 <b>So'rovlar</b>\nKerakli so'rov turini tanlang:",
+        reply_markup=kb.hr_requests_menu(),
+    )
+
+
+@router.message(F.text == kb.HR_SEC_APPS)
+async def hr_section_apps(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "📋 <b>Arizalar / nomzodlar</b>\nBo'limni tanlang:",
+        reply_markup=kb.hr_applications_menu(),
+    )
+
+
+@router.message(F.text == kb.HR_SEC_MANAGE)
+async def hr_section_manage(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "🛠 <b>Xodimlarni boshqarish</b>\nAmalni tanlang:",
+        reply_markup=kb.hr_manage_menu(),
+    )
+
+
+@router.message(F.text == kb.HR_SEC_ATT)
+async def hr_section_attendance(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "📍 <b>Davomat / dam olish</b>\nBo'limni tanlang:",
+        reply_markup=kb.hr_attendance_menu(),
+    )
+
+
+@router.message(F.text == kb.HR_SEC_ADVANCE)
+async def hr_section_advance(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "💵 <b>Avans / maosh</b>\nBo'limni tanlang:",
+        reply_markup=kb.hr_advance_menu(),
+    )
+
+
+@router.message(F.text == kb.HR_SEC_BROADCAST)
+async def hr_section_broadcast(message: Message):
+    if not await is_staff(message.from_user.id):
+        return
+    await message.answer(
+        "📢 <b>Xabarnomalar</b>\nBo'limni tanlang:",
+        reply_markup=kb.hr_broadcast_menu(),
+    )
+
+
 # ---------------- DAVOMAT SOZLAMALARI (periodik joylashuv tekshiruvi) ----------------
 async def _att_settings_text():
     enabled = str(await q.get_setting("loc_check_enabled", "1")) == "1"
@@ -1250,9 +1311,129 @@ async def hr_fire_branches(message: Message):
     await message.answer(
         "🚫 <b>Ishdan bo'shatish</b>\n"
         "━━━━━━━━━━━━━\n"
-        "Avval <b>filialni</b> tanlang — so'ng o'sha filial xodimlari ro'yxati "
-        "chiqadi:",
-        reply_markup=kb.hr_fire_branch_kb(branches),
+        "Amalni kimga qo'llaymiz?\n\n"
+        "👤 <b>Bitta xodim</b> — filial tanlanib, undan bitta xodim bo'shatiladi.\n"
+        "👥 <b>Butun filial</b> — tanlangan filialdagi hamma xodim birdan.",
+        reply_markup=kb.hr_fire_mode_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("hrfmode:"))
+async def hr_fire_mode(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    mode = call.data.split(":")[1]
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar yo'q.", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if mode == "all":
+        head = ("👥 <b>Butun filial</b>\n\nQaysi filialning <b>hamma</b> xodimini "
+                "ishdan bo'shatamiz? Filialni tanlang:")
+    else:
+        head = ("👤 <b>Bitta xodim</b>\n\nAvval filialni tanlang — so'ng o'sha "
+                "filial xodimlari ro'yxati chiqadi:")
+    await call.message.answer(head, reply_markup=kb.hr_fire_branch_kb(branches, mode=mode))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("hrfallbr:"))
+async def hr_fire_all_branch(call: CallbackQuery):
+    """Butun filial tanlandi — nechta xodim borligini ko'rsatib tasdiq so'raymiz."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+    employees = await q.list_employee_profiles(branch_id=bid)
+    if not employees:
+        await call.message.answer(f"🏢 <b>{bname}</b> filialida xodim yo'q.")
+        await call.answer()
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    names = "\n".join(
+        f"  • {e.get('full_name') or e.get('tg_id')}" for e in employees[:30]
+    )
+    more = f"\n  … va yana {len(employees) - 30} ta" if len(employees) > 30 else ""
+    await call.message.answer(
+        f"⚠️ <b>DIQQAT — butun filialni ishdan bo'shatish!</b>\n"
+        "━━━━━━━━━━━━━\n"
+        f"🏢 Filial: <b>{bname}</b>\n"
+        f"👥 Ishdan bo'shatiladigan xodimlar: <b>{len(employees)}</b> ta\n\n"
+        f"{names}{more}\n\n"
+        "Bu amalni <b>orqaga qaytarib bo'lmaydi</b>. Hammasini bo'shatasizmi?",
+        reply_markup=kb.hr_fire_all_confirm_kb(bid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "hrfallno")
+async def hr_fire_all_cancel(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer("❌ Bekor qilindi. Hech kim ishdan bo'shatilmadi.")
+    await call.answer("Bekor qilindi")
+
+
+@router.callback_query(F.data.startswith("hrfallyes:"))
+async def hr_fire_all_confirm(call: CallbackQuery, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+    me = await actor(call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Bajarilmoqda…")
+    # Kadrlar harakati yozuvlari — profil o'chishidan OLDIN
+    victims = await q.list_employee_profiles(branch_id=bid)
+    for v in victims:
+        await q.add_hr_event(
+            "left", user_id=v["user_id"], full_name=v.get("full_name"),
+            branch_id=bid, details=f"HR: butun «{bname}» filiali bo'shatildi",
+            created_by=me["id"] if me else None,
+        )
+    fired = await q.fire_all_in_branch(bid)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "butun_filial_ishdan_boshatildi", f"{bname}: {len(fired)} ta",
+    )
+    # Bo'shatilgan xodimlarga xabar
+    for v in fired:
+        if v.get("tg_id"):
+            await safe_send(
+                bot, v["tg_id"],
+                "ℹ️ Siz ishdan bo'shatildingiz. Batafsil ma'lumot uchun HR bilan "
+                "bog'laning.",
+            )
+    # IT/adminlarga xabar
+    await _notify_it_users(
+        bot,
+        f"🚫 <b>Butun filial ishdan bo'shatildi</b>\n"
+        f"🏢 {bname}\n👥 {len(fired)} ta xodim\n"
+        f"👤 Bajardi: {me['full_name'] if me else '?'}",
+    )
+    await call.message.answer(
+        f"✅ <b>{bname}</b> filialidagi <b>{len(fired)}</b> ta xodim ishdan "
+        "bo'shatildi."
     )
 
 

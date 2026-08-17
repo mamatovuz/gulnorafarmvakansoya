@@ -93,6 +93,80 @@ async def emp_manage_by_branch(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+# ---- Butun filialga maqom belgilash (barcha xodimlar) ----
+@router.callback_query(F.data == "emm:allstatus")
+async def emp_manage_allstatus_branches(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        "👥 <b>Butun filialga maqom belgilash</b>\n\n"
+        "Qaysi filial xodimlariga qo'llaymiz? Filialni tanlang:",
+        reply_markup=kb.emp_manage_allstatus_branch_kb(branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmallst:"))
+async def emp_manage_allstatus_pick(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+    profiles = await q.list_employee_profiles(branch_id=bid)
+    if not profiles:
+        await call.message.answer(f"🏢 <b>{bname}</b> filialida xodim yo'q.")
+        await call.answer()
+        return
+    await call.message.answer(
+        f"🏢 <b>{bname}</b> — <b>{len(profiles)}</b> ta xodim.\n\n"
+        "Hammasiga qaysi maqom belgilansin?",
+        reply_markup=kb.emp_manage_allstatus_kb(bid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("emmallsts:"))
+async def emp_manage_allstatus_apply(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, bid_s, status = call.data.split(":")
+    bid = int(bid_s)
+    branch = await q.get_branch(bid)
+    bname = branch["name"] if branch else f"#{bid}"
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Qo'llanmoqda…")
+    rows = await q.set_status_all_in_branch(bid, status)
+    label = EMP_STATUS_LABELS.get(status, status)
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "butun_filial_maqom", f"{bname}: {len(rows)} ta -> {status}",
+    )
+    if status != ES_REGULAR:
+        for r in rows:
+            if r.get("tg_id"):
+                await safe_send(
+                    bot, r["tg_id"],
+                    f"ℹ️ Sizning maqomingiz yangilandi: <b>{label}</b>.",
+                )
+    await call.message.answer(
+        f"✅ <b>{bname}</b> filialidagi <b>{len(rows)}</b> ta xodimga "
+        f"<b>{label}</b> maqomi belgilandi."
+    )
+
+
 @router.callback_query(F.data == "emm:text")
 async def emp_manage_by_text(call: CallbackQuery, state: FSMContext):
     if not await _is_staff(call.from_user.id):
@@ -581,6 +655,106 @@ async def branch_change_by_branch(call: CallbackQuery, state: FSMContext):
         reply_markup=kb.branch_change_branches_kb(branches),
     )
     await call.answer()
+
+
+# ---- Butun filialni ko'chirish (barcha xodimlar) ----
+@router.callback_query(F.data == "bch:allsrc")
+async def branch_change_all_source(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+        return
+    await call.message.answer(
+        "👥 <b>Butun filialni ko'chirish</b>\n\n"
+        "Qaysi filial xodimlarini ko'chiramiz? <b>Manba</b> filialni tanlang:",
+        reply_markup=kb.branch_change_branches_kb(branches, prefix="bchallsrc"),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchallsrc:"))
+async def branch_change_all_pick_target(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    from_bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(from_bid)
+    bname = branch["name"] if branch else f"#{from_bid}"
+    profiles = await q.list_employee_profiles(branch_id=from_bid)
+    if not profiles:
+        await call.message.answer(f"🏢 <b>{bname}</b> filialida xodim yo'q.")
+        await call.answer()
+        return
+    branches = await q.list_branches()
+    await call.message.answer(
+        f"🏢 Manba: <b>{bname}</b> — <b>{len(profiles)}</b> ta xodim.\n\n"
+        "Ular <b>qaysi filialga</b> ko'chirilsin?",
+        reply_markup=kb.branch_change_all_target_kb(from_bid, branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchallto:"))
+async def branch_change_all_confirm_ask(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, from_s, to_s = call.data.split(":")
+    from_bid, to_bid = int(from_s), int(to_s)
+    src = await q.get_branch(from_bid)
+    dst = await q.get_branch(to_bid)
+    sname = src["name"] if src else f"#{from_bid}"
+    dname = dst["name"] if dst else f"#{to_bid}"
+    profiles = await q.list_employee_profiles(branch_id=from_bid)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "⚠️ <b>Butun filialni ko'chirishni tasdiqlaysizmi?</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"🏢 <b>{sname}</b> → <b>{dname}</b>\n"
+        f"👥 Ko'chiriladigan xodimlar: <b>{len(profiles)}</b> ta",
+        reply_markup=kb.branch_change_all_confirm_kb(from_bid, to_bid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("bchallgo:"))
+async def branch_change_all_go(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, from_s, to_s = call.data.split(":")
+    from_bid, to_bid = int(from_s), int(to_s)
+    dst = await q.get_branch(to_bid)
+    src = await q.get_branch(from_bid)
+    dname = dst["name"] if dst else f"#{to_bid}"
+    sname = src["name"] if src else f"#{from_bid}"
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Ko'chirilmoqda…")
+    moved = await q.move_all_in_branch(from_bid, to_bid)
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, me["full_name"] if me else "?",
+        "butun_filial_kochirildi", f"{sname} -> {dname}: {len(moved)} ta",
+    )
+    for m in moved:
+        if m.get("tg_id"):
+            await safe_send(
+                bot, m["tg_id"],
+                f"ℹ️ Siz endi <b>{dname}</b> filialiga biriktirildingiz.",
+            )
+    await call.message.answer(
+        f"✅ <b>{sname}</b> → <b>{dname}</b>: <b>{len(moved)}</b> ta xodim ko'chirildi."
+    )
 
 
 @router.callback_query(F.data.startswith("bchbr:"))
