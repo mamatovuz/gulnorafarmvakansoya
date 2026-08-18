@@ -2591,14 +2591,14 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
         label = f"bitta xodim ({profile.get('full_name') if profile else '-'})"
     elif target == "branch":
         # Filial XODIMLARI (nomzodlar emas) — profil jadvalidan olinadi
-        profiles = await q.search_employees(branch_id=branch)
+        profiles = await q.search_employees(branch_id=branch, limit=None)
         ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
         names = {p["tg_id"]: p.get("full_name") for p in profiles if p.get("tg_id")}
         br = await q.get_branch(branch) if branch else None
         label = f"filial: {br['name'] if br else branch}"
     elif target == "staff":
         # Barcha xodimlar — profili bor hamma
-        profiles = await q.search_employees()
+        profiles = await q.search_employees(limit=None)
         ids = [p["tg_id"] for p in profiles if p.get("tg_id")]
         names = {p["tg_id"]: p.get("full_name") for p in profiles if p.get("tg_id")}
         label = "barcha xodimlar"

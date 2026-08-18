@@ -945,8 +945,9 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50,
         sql += (
             " ORDER BY CASE ep.role WHEN 'manager' THEN 0 "
             "WHEN 'director' THEN 1 ELSE 2 END, u.full_name "
-            f"LIMIT {int(limit)}"
         )
+        if limit is not None:
+            sql += f"LIMIT {int(limit)}"
         cur = await db.execute(sql, params)
         return [dict(r) for r in await cur.fetchall()]
     finally:
