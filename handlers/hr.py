@@ -2783,18 +2783,18 @@ async def rejected_staff_reg_view(call: CallbackQuery):
 
 # ---------------- XODIMLAR VA QIDIRUV ----------------
 @router.message(F.text == "👥 Xodimlar")
-async def hr_employees(message: Message):
+async def hr_employees(message: Message, state: FSMContext):
     if not await is_staff(message.from_user.id):
         return
-    profiles = await q.list_employee_profiles()
-    if not profiles:
+    await state.clear()
+    total = len(await q.list_employee_profiles())
+    if not total:
         await message.answer("👥 Hali xodimlar yo'q.")
         return
     await message.answer(
-        f"👥 <b>Xodimlar</b> — jami <b>{len(profiles)}</b> ta\n\n"
-        "Kerakli xodimni topish uchun «🔍 Xodim qidirish» tugmasidan "
-        "foydalaning yoki ro'yxatdan tanlang:",
-        reply_markup=kb.employee_profiles_list_kb(profiles[:30], search_cb="empsrch"),
+        f"👥 <b>Xodimlar</b> — jami <b>{total}</b> ta\n\n"
+        "Kerakli xodimni qanday topamiz?",
+        reply_markup=kb.employee_search_kb(),
     )
 
 
