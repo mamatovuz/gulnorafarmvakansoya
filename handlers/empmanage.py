@@ -38,6 +38,25 @@ ROLE_NAMES = {
 }
 
 
+def _doc_file_id(message: Message):
+    """Xabardan rasm yoki hujjat file_id sini oladi."""
+    if message.photo:
+        return message.photo[-1].file_id
+    if message.document:
+        return message.document.file_id
+    return None
+
+
+async def _save_passport_edit(target, state: FSMContext, uid, files, actor=None):
+    front = files[0] if len(files) >= 1 else None
+    back = files[1] if len(files) >= 2 else None
+    await q.update_employee_field(uid, "passport_front", front)
+    await q.update_employee_field(uid, "passport_back", back)
+    await state.clear()
+    await _log_edit(actor or target, uid, "🪪 ID karta / pasport")
+    await _show_card(target, uid, prefix="✅ ID karta / pasport yangilandi")
+
+
 async def _is_staff(tg_id):
     u = await q.get_user(tg_id)
     return u and u["role"] in (ROLE_HR, ROLE_ADMIN)
@@ -269,10 +288,11 @@ async def emp_manage_view(call: CallbackQuery, state: FSMContext):
 
 # ---------------- MAYDONMA-MAYDON TAHRIRLASH ----------------
 @router.callback_query(F.data.startswith("emmedit:"))
-async def emp_manage_edit_menu(call: CallbackQuery):
+async def emp_manage_edit_menu(call: CallbackQuery, state: FSMContext):
     if not await _is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
+    await state.clear()
     uid = int(call.data.split(":")[1])
     profile = await q.get_employee_profile(uid)
     if not profile:
@@ -306,6 +326,18 @@ async def emp_manage_field_ask(call: CallbackQuery, state: FSMContext):
         )
         await call.answer()
         return
+    if field == "passport":
+        await state.set_state(EmpEditForm.value)
+        await state.update_data(edit_uid=uid, edit_field=field, passport_files=[])
+        await call.message.answer(
+            "🪪 <b>Pasport yoki ID karta</b>\n"
+            "Hujjatning <b>oldi</b> va <b>orqa</b> tomonini rasm yoki fayl qilib yuboring.\n\n"
+            "Ikkalasi yuborilgach avtomatik saqlanadi. Faqat bitta fayl kerak bo'lsa, "
+            "uni yuborib «✅ Tayyor» tugmasini bosing.",
+            reply_markup=kb.emp_manage_passport_kb(uid),
+        )
+        await call.answer()
+        return
     await state.set_state(EmpEditForm.value)
     await state.update_data(edit_uid=uid, edit_field=field)
     await call.message.answer(prompt)
@@ -335,21 +367,59 @@ async def emp_manage_set_education(call: CallbackQuery, state: FSMContext):
     await _show_card(call.message, uid, prefix=f"✅ Ma'lumoti yangilandi: <b>{value}</b>")
 
 
-@router.message(EmpEditForm.value, F.photo)
-async def emp_manage_field_photo(message: Message, state: FSMContext):
+@router.message(EmpEditForm.value, F.photo | F.document)
+async def emp_manage_field_file(message: Message, state: FSMContext):
     if not await _is_staff(message.from_user.id):
         await state.clear()
         return
     data = await state.get_data()
     uid, field = data.get("edit_uid"), data.get("edit_field")
+    if field == "passport":
+        file_id = _doc_file_id(message)
+        if not file_id:
+            return
+        files = list(data.get("passport_files") or [])
+        files.append(file_id)
+        files = files[:2]
+        await state.update_data(passport_files=files)
+        if len(files) >= 2:
+            await _save_passport_edit(message, state, uid, files)
+        else:
+            await message.answer(
+                "✅ 1-fayl qabul qilindi.\n"
+                "Endi hujjatning orqa tomonini yuboring yoki «✅ Tayyor» tugmasini bosing.",
+                reply_markup=kb.emp_manage_passport_kb(uid),
+            )
+        return
     if field != "photo":
         await message.answer("❗️ Bu maydon uchun rasm emas, matn yuboring.")
+        return
+    if not message.photo:
+        await message.answer("❗️ Profil rasmi uchun hujjat emas, rasm yuboring.")
         return
     file_id = message.photo[-1].file_id
     await q.update_employee_field(uid, "photo_file_id", file_id)
     await state.clear()
     await _log_edit(message, uid, "rasm")
     await _show_card(message, uid, prefix="✅ Rasm yangilandi")
+
+
+@router.callback_query(F.data.startswith("emmpassdone:"))
+async def emp_manage_passport_done(call: CallbackQuery, state: FSMContext):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    data = await state.get_data()
+    if data.get("edit_field") != "passport" or data.get("edit_uid") != uid:
+        await call.answer("Sessiya tugagan. Qayta boshlang.", show_alert=True)
+        return
+    files = list(data.get("passport_files") or [])
+    if not files:
+        await call.answer("Avval rasm yoki fayl yuboring.", show_alert=True)
+        return
+    await call.answer("Saqlandi ✅")
+    await _save_passport_edit(call.message, state, uid, files, actor=call)
 
 
 @router.message(EmpEditForm.value, F.text)
@@ -362,6 +432,23 @@ async def emp_manage_field_value(message: Message, state: FSMContext, bot: Bot):
     value = message.text.strip()
     if field == "photo":
         await message.answer("❗️ Iltimos, matn emas, rasm yuboring.")
+        return
+    if field == "passport":
+        if value == kb.STAFF_DOCS_DONE:
+            files = list(data.get("passport_files") or [])
+            if not files:
+                await message.answer(
+                    "❗️ Avval pasport yoki ID karta rasmini/faylini yuboring.",
+                    reply_markup=kb.emp_manage_passport_kb(uid),
+                )
+                return
+            await _save_passport_edit(message, state, uid, files)
+            return
+        await message.answer(
+            "❗️ Iltimos, pasport yoki ID kartani rasm/fayl ko'rinishida yuboring. "
+            "Tugatgach «✅ Tayyor» tugmasini bosing.",
+            reply_markup=kb.emp_manage_passport_kb(uid),
+        )
         return
     profile = await q.get_employee_profile(uid)
     if not profile:

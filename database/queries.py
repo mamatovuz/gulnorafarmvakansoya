@@ -957,6 +957,7 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50,
 EMP_EDITABLE_FIELDS = {
     "position", "monthly_salary", "birth_date", "address", "work_hours",
     "rest_day", "photo_file_id", "education", "since", "extra_info", "shift",
+    "parent_phone", "passport_front", "passport_back",
 }
 
 

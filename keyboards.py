@@ -1889,11 +1889,13 @@ def emp_manage_edit_kb(uid):
 
 
 # Tahrirlanadigan maydonlar: (kalit, tugma matni, so'rov matni)
-# kalit «name» / «phone» — users jadvali; «photo» — rasm; qolganlari employee_profiles.
+# kalit «name» / «phone» — users jadvali; «photo» / «passport» — fayl; qolganlari employee_profiles.
 EMP_EDIT_FIELDS = [
     ("photo", "🖼 Rasm", "🖼 Xodimning yangi rasmini yuboring:"),
     ("name", "👤 Ism familiya", "👤 Yangi ism familiyani yozing:"),
     ("phone", "📱 Telefon", "📱 Yangi telefon raqamni yozing (masalan +998901234567):"),
+    ("parent_phone", "👪 Ota/ona telefoni", "👪 Ota yoki onasining yangi telefon raqamini yozing:"),
+    ("passport", "🪪 ID karta / pasport", "🪪 Pasport yoki ID karta oldi va orqa tomonini rasm/fayl qilib yuboring:"),
     ("position", "💼 Lavozim", "💼 Yangi lavozimni yozing:"),
     ("birth_date", "📅 Tug'ilgan sana", "📅 Tug'ilgan sanani yozing (kun.oy.yil):"),
     ("address", "📍 Manzil", "📍 Yangi manzilni yozing:"),
@@ -1915,6 +1917,15 @@ def emp_manage_field_kb(uid):
         b.button(text=label, callback_data=f"emmf:{uid}:{key}")
     b.button(text="⬅️ Orqaga", callback_data=f"emmemp:{uid}")
     b.adjust(2)
+    return b.as_markup()
+
+
+def emp_manage_passport_kb(uid):
+    """Pasport/ID tahririda bitta fayl bilan yakunlash uchun inline tugma."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tayyor", callback_data=f"emmpassdone:{uid}")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmedit:{uid}")
+    b.adjust(1)
     return b.as_markup()
 
 
