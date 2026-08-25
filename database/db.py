@@ -65,6 +65,61 @@ def application_status_label(a):
             return label
     return STATUS_LABELS.get(status, status or "-")
 
+
+# Yo'nalish / lavozim nomidan icon aniqlash (kalit so'z bo'yicha).
+# Ro'yxatga faqat ICON chiqadi — nomi emas (kompakt bo'lsin).
+def application_role_icon(a):
+    text = (a.get("vacancy_title") or a.get("position") or "").lower()
+    rules = [
+        (("farmatsevt", "farmasev", "аптек"), "💊"),
+        (("rahbar", "boshliq", "manager"), "👨‍💼"),
+        (("direktor", "director"), "👔"),
+        (("moliya", "buxgalter", "accountant", "hisobchi"), "🧮"),
+        (("ombor", "склад"), "📦"),
+        (("haydov", "logist", "kur'er", "kuryer", "driver", "достав", "курьер"), "🚚"),
+        (("texnik", "tech", "montaj", "usta"), "🔧"),
+        (("hr", "kadr", "inspektor"), "🧑‍💼"),
+        (("it ", "dasturchi", "programmer", "sysadmin"), "💻"),
+    ]
+    for keys, icon in rules:
+        if any(k in text for k in keys):
+            return icon
+    return "💼"  # umumiy
+
+
+# Ariza holati uchun faqat ICON (matnsiz).
+def application_status_icon(a):
+    status = a.get("status")
+    if status == ST_ACCEPTED:
+        kind = a.get("accept_kind")
+        if kind == AK_TRIAL:
+            return "🕒"   # sinov muddati (soat)
+        if kind == AK_LEARNER:
+            return "🎓"   # o'rganuvchi
+        return "✅"       # ishga qabul (galichka)
+    return {
+        ST_NEW: "🆕",
+        ST_INTERVIEW: "📅",
+        ST_REJECTED: "❌",
+        ST_WAITING: "⏳",
+    }.get(status, "•")
+
+
+def application_list_label(a):
+    """Ariza ro'yxati tugmasi uchun qisqa, ICONLI yorliq.
+
+    Format: «#ID · <yo'nalish iconi> · Ism Familiya · 🏢 Filial · <status iconi>».
+    Masalan: «#12 · 💊 · Ali Valiyev · 🏢 Chilonzor · 🆕».
+    HR panel va boshqa barcha ariza ro'yxatlarida bir xil ko'rinishi uchun
+    shu yagona funksiya ishlatiladi."""
+    name = a.get("full_name") or "-"
+    branch = a.get("branch_name")
+    parts = [f"#{a['id']}", application_role_icon(a), name]
+    if branch:
+        parts.append(f"🏢 {branch}")
+    parts.append(application_status_icon(a))
+    return " · ".join(parts)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

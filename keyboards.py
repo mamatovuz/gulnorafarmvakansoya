@@ -11,6 +11,7 @@ from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_TECH, ROLE_CANDIDATE,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED,
+    application_list_label,
 )
 
 
@@ -489,10 +490,8 @@ def vacancies_list_kb(vacancies, prefix="vac"):
 def applications_list_kb(apps, prefix="appview"):
     b = InlineKeyboardBuilder()
     for a in apps:
-        title = a.get("vacancy_title") or a.get("position") or "Ariza"
-        status = a.get("status") or "-"
         b.button(
-            text=f"#{a['id']} · {title} · {status}",
+            text=application_list_label(a),
             callback_data=f"{prefix}:{a['id']}",
         )
     b.adjust(1)
@@ -505,10 +504,8 @@ def waiters_list_kb(apps, page=0, per_page=10):
     pages = max(1, (len(apps) + per_page - 1) // per_page)
     page = max(0, min(page, pages - 1))
     for a in apps[page * per_page:(page + 1) * per_page]:
-        name = a.get("full_name") or "Nomzod"
-        pos = a.get("vacancy_title") or a.get("position") or "-"
         b.row(InlineKeyboardButton(
-            text=f"⏳ {name} · {pos}", callback_data=f"appview:{a['id']}"
+            text=application_list_label(a), callback_data=f"appview:{a['id']}"
         ))
     if pages > 1:
         nav = []
@@ -1587,10 +1584,49 @@ def director_menu():
     b.button(text="🏆 Filiallar reytingi")
     b.button(text="📈 Taqqoslash")
     b.button(text="🔧 Texnik ishlar")
+    b.button(text="💸 Jarima qo'llash")
     b.button(text="📑 Hisobot (Excel)")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+# Direktor «💸 Jarima qo'llash» — bo'lim/yo'nalish tugmalari.
+# (label, kalit) — kalit queries.FINE_TARGET_FILTERS bilan mos.
+DIRECTOR_FINE_TARGETS = [
+    ("🧑‍💼 HR", "hr"),
+    ("👨‍💼 Filial rahbarlari", "manager"),
+    ("🧮 Moliya bo'limi", "accountant"),
+    ("📦 Ombor", "ombor"),
+    ("🚚 Логистика", "logistika"),
+]
+DIRECTOR_FINE_LABELS = {key: label for label, key in DIRECTOR_FINE_TARGETS}
+
+
+def director_fine_target_kb():
+    """Direktor kimni jarima qiladi — bo'lim/yo'nalishni tanlaydi."""
+    b = InlineKeyboardBuilder()
+    for label, key in DIRECTOR_FINE_TARGETS:
+        b.button(text=label, callback_data=f"dfine:cat:{key}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def director_fine_people_kb(people, category):
+    """Tanlangan bo'lim xodimlari — har biri yonida jarima tugmasi."""
+    b = InlineKeyboardBuilder()
+    for p in people:
+        name = p.get("full_name") or "Xodim"
+        branch = p.get("branch_name")
+        pos = p.get("position")
+        extra = f" · 🏢 {branch}" if branch else (f" · {pos}" if pos else "")
+        b.button(
+            text=f"👤 {name}{extra}",
+            callback_data=f"dfine:pick:{p['user_id']}",
+        )
+    b.button(text="⬅️ Bo'limlar", callback_data="dfine:back")
+    b.adjust(1)
+    return b.as_markup()
 
 
 def director_application_status_kb():

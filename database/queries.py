@@ -747,9 +747,11 @@ async def user_applications(user_id):
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT a.*, COALESCE(v.title, a.position) AS vacancy_title
+            """SELECT a.*, COALESCE(v.title, a.position) AS vacancy_title,
+                      b.name AS branch_name
                FROM applications a
                LEFT JOIN vacancies v ON v.id=a.vacancy_id
+               LEFT JOIN branches b ON b.id=a.branch_id
                WHERE a.user_id=? ORDER BY a.id DESC""",
             (user_id,),
         )
@@ -948,6 +950,52 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50,
         )
         if limit is not None:
             sql += f"LIMIT {int(limit)}"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+# Direktor «💸 Jarima qo'llash» — bo'lim/yo'nalish kalitidan filtr sharti.
+# role bo'yicha yoki lavozim (position) LIKE bo'yicha tanlanadi.
+FINE_TARGET_FILTERS = {
+    "hr": ("role", ["hr"]),
+    "manager": ("role", ["manager"]),
+    "accountant": ("role", ["accountant"]),
+    "ombor": ("position", ["%ombor%", "%склад%"]),
+    "logistika": ("position", ["%logist%", "%haydov%", "%достав%", "%курьер%", "%kur'er%"]),
+}
+
+
+async def list_staff_for_fine(category, limit=60):
+    """Direktor jarima qo'llashi uchun bo'lim/yo'nalish xodimlari ro'yxati.
+
+    category: hr / manager / accountant / ombor / logistika."""
+    spec = FINE_TARGET_FILTERS.get(category)
+    if not spec:
+        return []
+    field, values = spec
+    db = await _conn()
+    try:
+        sql = """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
+                        b.name AS branch_name
+                 FROM employee_profiles ep
+                 JOIN users u ON u.id=ep.user_id
+                 LEFT JOIN branches b ON b.id=ep.branch_id
+                 WHERE """
+        params = []
+        if field == "role":
+            sql += "ep.role=?"
+            params.append(values[0])
+        else:
+            likes = " OR ".join(["pylower(COALESCE(ep.position,'')) LIKE ?"] * len(values))
+            sql += f"({likes})"
+            params += values
+        sql += (
+            " ORDER BY CASE ep.role WHEN 'manager' THEN 0 "
+            "WHEN 'director' THEN 1 ELSE 2 END, u.full_name "
+            f"LIMIT {int(limit)}"
+        )
         cur = await db.execute(sql, params)
         return [dict(r) for r in await cur.fetchall()]
     finally:

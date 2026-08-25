@@ -240,6 +240,13 @@ class FineForm(StatesGroup):
     reason = State()
 
 
+class DirectorFineForm(StatesGroup):
+    """Direktor bo'lim/yo'nalish xodimiga jarima qo'llaydi (HR, filial rahbari,
+    moliya, ombor, logistika)."""
+    amount = State()
+    reason = State()
+
+
 class UserManageForm(StatesGroup):
     """Admin foydalanuvchilarni qidiradi."""
     search = State()

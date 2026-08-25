@@ -11,7 +11,7 @@ from database.db import (
 )
 from states import (
     ManagerVacancyForm, TechIssueForm, CommentForm, ManagerMessageForm,
-    TerminationForm, DirectorEmpSearch,
+    TerminationForm, DirectorEmpSearch, DirectorFineForm,
 )
 import keyboards as kb
 from utils import (
@@ -821,6 +821,133 @@ async def _director_branch_id(user):
         return user["branch_id"]
     profile = await q.get_employee_profile(user["id"])
     return profile.get("branch_id") if profile else None
+
+
+# ================= DIREKTOR «💸 JARIMA QO'LLASH» =================
+# Direktor HR, filial rahbarlari, moliya bo'limi, ombor va logistika
+# xodimlariga jarima qo'llaydi. Jarima yakuniy oylikdan avtomatik ayiriladi
+# (moliyaning «🚫 Jarimani bekor qilish» dan bekor qilinishi mumkin).
+async def _is_director(tg_id):
+    user = await q.get_user(tg_id)
+    return user if user and user["role"] in (ROLE_DIRECTOR, ROLE_ADMIN) else None
+
+
+@router.message(F.text == "💸 Jarima qo'llash")
+async def director_fine_menu(message: Message):
+    if not await _is_director(message.from_user.id):
+        await message.answer("⛔ Sizda ruxsat yo'q.")
+        return
+    await message.answer(
+        "💸 <b>Jarima qo'llash</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Qaysi bo'lim / yo'nalish xodimiga jarima qo'llaysiz?",
+        reply_markup=kb.director_fine_target_kb(),
+    )
+
+
+@router.callback_query(F.data == "dfine:back")
+async def director_fine_back(call: CallbackQuery, state: FSMContext):
+    if not await _is_director(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await call.message.answer(
+        "💸 <b>Jarima qo'llash</b>\n\nQaysi bo'lim / yo'nalish xodimiga jarima qo'llaysiz?",
+        reply_markup=kb.director_fine_target_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dfine:cat:"))
+async def director_fine_category(call: CallbackQuery):
+    if not await _is_director(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    category = call.data.split(":")[2]
+    people = await q.list_staff_for_fine(category)
+    label = kb.DIRECTOR_FINE_LABELS.get(category, category)
+    if not people:
+        await call.message.answer(
+            f"{label} bo'yicha xodim topilmadi."
+        )
+        await call.answer()
+        return
+    await call.message.answer(
+        f"{label} — <b>{len(people)}</b> ta xodim.\n"
+        "Jarima qo'llash uchun xodimni tanlang 👇",
+        reply_markup=kb.director_fine_people_kb(people, category),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dfine:pick:"))
+async def director_fine_pick(call: CallbackQuery, state: FSMContext):
+    if not await _is_director(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    uid = int(call.data.split(":")[2])
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await state.update_data(dfine_uid=uid)
+    await state.set_state(DirectorFineForm.amount)
+    name = profile.get("full_name") or f"#{uid}"
+    await call.message.answer(
+        f"👤 <b>{name}</b>\n\n💸 Jarima summasini kiriting. Masalan: <b>200 000 so'm</b>"
+    )
+    await call.answer()
+
+
+@router.message(DirectorFineForm.amount, F.text)
+async def director_fine_amount(message: Message, state: FSMContext):
+    await state.update_data(dfine_amount=message.text.strip())
+    await state.set_state(DirectorFineForm.reason)
+    await message.answer("✍️ Jarima sababini yozing:")
+
+
+@router.message(DirectorFineForm.reason, F.text)
+async def director_fine_save(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    uid = data.get("dfine_uid")
+    amount = data.get("dfine_amount")
+    reason = message.text.strip()
+    await state.clear()
+    me = await q.get_user(message.from_user.id)
+    profile = await q.get_employee_profile(uid)
+    branch_id = (profile or {}).get("branch_id")
+    # Direktor jarimasi — moliyaga tegishli (source='director'), yakuniy oylikdan ayiriladi
+    fid = await q.add_fine(uid, amount, reason, me["id"],
+                           branch_id=branch_id, source="director")
+    await q.add_log(message.from_user.id, me["full_name"],
+                    "jarima_yozildi", f"director {uid}: {amount}")
+    await message.answer(
+        f"✅ Jarima saqlandi (#{fid}).\n\n"
+        "<i>Jarima moliya bo'limiga yuborildi va yakuniy oylikdan ayiriladi.</i>"
+    )
+    # Xodimga xabar
+    if profile and profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
+            "\n\nBu summa oyligingizdan ayiriladi."
+        )
+    # Moliya bo'limiga xabar
+    branch = await q.get_branch(branch_id) if branch_id else None
+    fin_text = (
+        "💸 <b>Direktordan yangi jarima</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{(profile or {}).get('full_name') or uid}</b>\n"
+        f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
+        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
+        f"💰 Summa: <b>{amount}</b>\n"
+        f"✍️ Sabab: {reason}\n"
+        f"👔 Yozdi: {me['full_name']} (Direktor)\n\n"
+        "Bu jarima yakuniy oylikdan avtomatik ayiriladi. Bekor qilish uchun "
+        "moliya panelidagi «🚫 Jarimani bekor qilish» dan foydalaning."
+    )
+    for tid in set(await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)):
+        await safe_send(bot, tid, fin_text)
 
 
 @router.callback_query(F.data.startswith("diremp:"))
