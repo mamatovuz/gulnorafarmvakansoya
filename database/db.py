@@ -1,4 +1,5 @@
 """Ma'lumotlar bazasi ulanishi va jadvallarni yaratish."""
+import re
 import aiosqlite
 from config import DB_PATH, SUPER_ADMINS
 
@@ -105,15 +106,27 @@ def application_status_icon(a):
     }.get(status, "•")
 
 
+def branch_short(name):
+    """Filial nomidan «filiali» (yoki «filial») so'zini olib tashlaydi.
+
+    Ariza ko'rinishlarida filial nomi qisqa chiqishi uchun:
+    «Asaka filiali» → «Asaka», «Yangi bozor filiali №2» → «Yangi bozor №2»."""
+    if not name:
+        return name
+    short = re.sub(r"\s*\bfiliali?\b\s*", " ", name, flags=re.IGNORECASE)
+    short = re.sub(r"\s{2,}", " ", short).strip(" ·-")
+    return short or name
+
+
 def application_list_label(a):
     """Ariza ro'yxati tugmasi uchun qisqa, ICONLI yorliq.
 
     Format: «#ID · <yo'nalish iconi> · Ism Familiya · 🏢 Filial · <status iconi>».
-    Masalan: «#12 · 💊 · Ali Valiyev · 🏢 Chilonzor · 🆕».
+    Masalan: «#12 · 💊 · Ali Valiyev · 🏢 Asaka · 🆕».
     HR panel va boshqa barcha ariza ro'yxatlarida bir xil ko'rinishi uchun
     shu yagona funksiya ishlatiladi."""
     name = a.get("full_name") or "-"
-    branch = a.get("branch_name")
+    branch = branch_short(a.get("branch_name"))
     parts = [f"#{a['id']}", application_role_icon(a), name]
     if branch:
         parts.append(f"🏢 {branch}")

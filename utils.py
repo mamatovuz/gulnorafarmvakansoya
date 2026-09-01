@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, date
 
 from aiogram import Bot
 from database import queries as q
-from database.db import STATUS_LABELS, application_status_label
+from database.db import STATUS_LABELS, application_status_label, branch_short
 
 
 # O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
@@ -232,7 +232,7 @@ def application_text(a, full=False):
         "━━━━━━━━━━━━",
         f"👤 Ism: {_v(a, 'full_name')}",
         f"💼 Lavozim: {_v(a, 'vacancy_title')}",
-        f"🏢 Filial: {_v(a, 'branch_name')}",
+        f"🏢 Filial: {branch_short(_v(a, 'branch_name'))}",
         f"📱 Telefon: {_v(a, 'phone')}",
     ]
     if full:
@@ -1035,7 +1035,7 @@ def application_caption(a, header=None):
         f"📍 Manzil: {_v(a, 'city')}, {_v(a, 'district')}, {_v(a, 'address')}",
         SEP,
         f"💼 Lavozim: {_v(a, 'vacancy_title')}",
-        f"🏢 Filial: {_v(a, 'branch_name')}",
+        f"🏢 Filial: {branch_short(_v(a, 'branch_name'))}",
         f"🕒 Smena: {_v(a, 'shift')}",
         f"🧩 Hujjat/tajriba: {_v(a, 'position_extra')}",
         SEP,
