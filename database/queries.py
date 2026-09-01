@@ -3091,6 +3091,7 @@ async def break_and_check_stats(period="month", branch_id=None):
 # Davr shartlari (SQLite sana)
 _PERIOD_COND = {
     "day": "a.date = date('now','+5 hours')",
+    "yesterday": "a.date = date('now','+5 hours','-1 day')",
     "week": "a.date >= date('now','+5 hours','-6 days')",
     "month": "a.date >= date('now','+5 hours','-29 days')",
 }
@@ -3209,6 +3210,25 @@ async def attendance_branch_summary(period="day"):
                 WHERE a.status='present' AND {cond}
                 GROUP BY a.branch_id
                 ORDER BY check_ins DESC"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def attendance_for_user(user_id, period="day"):
+    """Bitta xodimning davr ichidagi davomat yozuvlari — har bir kun uchun
+    kel/ket vaqti, tanaffus, kech/erta ma'lumoti bilan (yangidan eskiga)."""
+    db = await _conn()
+    try:
+        cond = _period_cond(period)
+        cur = await db.execute(
+            f"""SELECT a.*, b.name AS branch_name
+                FROM attendance a
+                LEFT JOIN branches b ON b.id=a.branch_id
+                WHERE a.user_id=? AND a.status='present' AND {cond}
+                ORDER BY a.date DESC, a.time DESC""",
+            (user_id,),
         )
         return [dict(r) for r in await cur.fetchall()]
     finally:

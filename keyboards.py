@@ -607,6 +607,8 @@ def hr_applications_menu():
 def hr_attendance_menu():
     return _hr_section_kb([
         "📍 Davomat",
+        "🏢 Filial davomati",
+        "👤 Xodim davomati",
         "🛌 Kunlik dam olish",
         "🧪 Sinov muddati",
         "⚙️ Davomat sozlamalari",
@@ -2339,6 +2341,57 @@ def late_early_kb():
     b.button(text="🗓 Hafta", callback_data="le:week")
     b.button(text="📆 Oy", callback_data="le:month")
     b.adjust(3)
+    return b.as_markup()
+
+
+# ---- HR: filial bo'yicha / bitta xodim bo'yicha davomat ----
+# Davr tugmalari ikkala oqimda ham bir xil: bugun / kecha / 1 hafta / 1 oy
+_ATT_PICK_PERIODS = [
+    ("day", "📅 Bugun"),
+    ("yesterday", "📅 Kecha"),
+    ("week", "🗓 1 hafta"),
+    ("month", "📆 1 oy"),
+]
+
+
+def att_pick_branches_kb(branches, action):
+    """Filial tanlash ro'yxati.
+    action: 'hbatt' — filial davomati, 'heatt' — bitta xodim davomati."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"{action}:br:{br['id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def att_branch_period_pick_kb(branch_id):
+    """Tanlangan filial uchun davr tugmalari."""
+    b = InlineKeyboardBuilder()
+    for p, txt in _ATT_PICK_PERIODS:
+        b.button(text=txt, callback_data=f"hbatt:p:{branch_id}:{p}")
+    b.button(text="⬅️ Filiallar", callback_data="hbatt:back")
+    b.adjust(2, 2, 1)
+    return b.as_markup()
+
+
+def att_emp_list_kb(employees, branch_id):
+    """Tanlangan filialdagi xodimlar ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for e in employees:
+        name = e.get("full_name") or e.get("tg_id")
+        b.button(text=f"👤 {name}", callback_data=f"heatt:emp:{e['user_id']}")
+    b.button(text="⬅️ Filiallar", callback_data="heatt:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def att_emp_period_pick_kb(user_id):
+    """Tanlangan xodim uchun davr tugmalari."""
+    b = InlineKeyboardBuilder()
+    for p, txt in _ATT_PICK_PERIODS:
+        b.button(text=txt, callback_data=f"heatt:p:{user_id}:{p}")
+    b.button(text="⬅️ Xodimlar", callback_data=f"heatt:eback:{user_id}")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 

@@ -36,7 +36,12 @@ def _fmt_hms(seconds):
         parts.append(f"{s} soniya")
     return " ".join(parts)
 
-PERIOD_TITLES = {"day": "📅 Bugun", "week": "🗓 Oxirgi 7 kun", "month": "📆 Oxirgi 30 kun"}
+PERIOD_TITLES = {
+    "day": "📅 Bugun",
+    "yesterday": "📅 Kecha",
+    "week": "🗓 Oxirgi 7 kun",
+    "month": "📆 Oxirgi 30 kun",
+}
 
 
 def _is_mobile_worker(user, profile=None):
@@ -797,3 +802,264 @@ async def late_early_report(call: CallbackQuery):
     for chunk in _split("\n".join(lines)):
         await call.message.answer(chunk)
     await call.answer()
+
+
+# ================= FILIAL / BITTA XODIM BO'YICHA DAVOMAT (HR) =================
+def _att_pick_allowed(user):
+    """Faqat HR/admin/buxgalter bu bo'limni ko'ra oladi."""
+    return _scope_for_user(user) == "hr"
+
+
+def _one_day_lines(d, show_date=False):
+    """Bitta kun davomatini o'qib bo'ladigan qilib chizadi:
+    kelgan → ketgan vaqt, tanaffus, kech/erta."""
+    out = d.get("out_time") or "…"
+    date_part = f"📅 {d.get('date')} · " if show_date else ""
+    ls = [f"   {date_part}🟢 <b>{d.get('time') or '-'}</b> → 🔴 <b>{out}</b>"]
+    if d.get("break_seconds"):
+        ls.append(f"   ⏸ Tanaffus: {_fmt_hms(d.get('break_seconds'))}")
+    marks = []
+    if d.get("late"):
+        marks.append(
+            f"⏰ kech {_fmt_hms(d.get('late_seconds'))}" if d.get("late_seconds")
+            else "⏰ kech keldi"
+        )
+    if d.get("early"):
+        marks.append(
+            f"🏃 erta {_fmt_hms(d.get('early_seconds'))}" if d.get("early_seconds")
+            else "🏃 erta ketdi"
+        )
+    if marks:
+        ls.append("   " + " · ".join(marks))
+    return ls
+
+
+def _group_by_user(rows):
+    """Yozuvlarni xodim bo'yicha guruhlaydi (tartibni saqlab)."""
+    groups, order = {}, []
+    for r in rows:
+        uid = r.get("user_id")
+        if uid not in groups:
+            groups[uid] = []
+            order.append(uid)
+        groups[uid].append(r)
+    return [(uid, groups[uid]) for uid in order]
+
+
+# ---- «🏢 Filial davomati»: filial → davr → hisobot ----
+@router.message(F.text == "🏢 Filial davomati")
+async def branch_att_menu(message: Message):
+    user = await q.get_user(message.from_user.id)
+    if not _att_pick_allowed(user):
+        await message.answer("⛔ Sizda bu bo'limni ko'rish huquqi yo'q.")
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await message.answer("🏢 Hozircha filiallar mavjud emas.")
+        return
+    await message.answer(
+        "🏢 <b>Filial bo'yicha davomat</b>\nQaysi filialni ko'rasiz?",
+        reply_markup=kb.att_pick_branches_kb(branches, "hbatt"),
+    )
+
+
+@router.callback_query(F.data.startswith("hbatt:"))
+async def branch_att_cb(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not _att_pick_allowed(user):
+        await call.answer("⛔", show_alert=True)
+        return
+    parts = call.data.split(":")
+    action = parts[1]
+
+    if action == "back":
+        branches = await q.list_branches()
+        await call.message.edit_text(
+            "🏢 <b>Filial bo'yicha davomat</b>\nQaysi filialni ko'rasiz?",
+            reply_markup=kb.att_pick_branches_kb(branches, "hbatt"),
+        )
+        await call.answer()
+        return
+
+    if action == "br":
+        branch = await q.get_branch(int(parts[2]))
+        if not branch:
+            await call.answer("Filial topilmadi", show_alert=True)
+            return
+        await call.message.edit_text(
+            f"🏢 <b>{branch['name']}</b>\nDavrni tanlang:",
+            reply_markup=kb.att_branch_period_pick_kb(branch["id"]),
+        )
+        await call.answer()
+        return
+
+    if action == "p":
+        branch = await q.get_branch(int(parts[2]))
+        period = parts[3]
+        if not branch:
+            await call.answer("Filial topilmadi", show_alert=True)
+            return
+        await _render_branch_attendance(call.message, branch, period)
+        await call.answer()
+
+
+async def _render_branch_attendance(target, branch, period):
+    detail = await q.attendance_detail(period=period, branch_id=branch["id"], limit=300)
+    title = PERIOD_TITLES.get(period, period)
+    show_date = period != "day"
+    groups = _group_by_user(detail)
+    lines = [
+        f"🏢 <b>{branch['name']}</b> — davomat",
+        f"🗓 {title}",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+    if not groups:
+        lines.append("Bu davrda davomat yozuvi yo'q.")
+    else:
+        lines.append(f"👥 Kelgan xodimlar: <b>{len(groups)}</b>")
+        for i, (_uid, recs) in enumerate(groups, 1):
+            name = recs[0].get("full_name") or recs[0].get("tg_id")
+            lines.append("")
+            lines.append(f"<b>{i}. 👤 {name}</b>")
+            for d in recs:
+                lines += _one_day_lines(d, show_date=show_date)
+
+    if period == "day":
+        absent = await q.attendance_absent_today(branch_id=branch["id"])
+        lines.append("")
+        lines.append(f"❌ <b>Kelmaganlar</b> — {len(absent)} ta")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        if absent:
+            for i, a in enumerate(absent, 1):
+                lines.append(f"<b>{i}.</b> {a.get('full_name') or a.get('tg_id')}")
+        else:
+            lines.append("🎉 Hamma kelgan!")
+
+    for chunk in _split("\n".join(lines)):
+        await target.answer(chunk)
+
+
+# ---- «👤 Xodim davomati»: filial → xodim → davr → hisobot ----
+@router.message(F.text == "👤 Xodim davomati")
+async def emp_att_menu(message: Message):
+    user = await q.get_user(message.from_user.id)
+    if not _att_pick_allowed(user):
+        await message.answer("⛔ Sizda bu bo'limni ko'rish huquqi yo'q.")
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await message.answer("🏢 Hozircha filiallar mavjud emas.")
+        return
+    await message.answer(
+        "👤 <b>Bitta xodim davomati</b>\nAvval filialni tanlang:",
+        reply_markup=kb.att_pick_branches_kb(branches, "heatt"),
+    )
+
+
+async def _show_emp_list(target, branch_id, edit=False):
+    branch = await q.get_branch(branch_id)
+    emps = await q.list_employee_profiles(branch_id=branch_id)
+    if not emps:
+        text = f"🏢 <b>{branch['name'] if branch else '—'}</b>\nBu filialda xodim yo'q."
+        if edit:
+            await target.edit_text(text)
+        else:
+            await target.answer(text)
+        return
+    text = (f"🏢 <b>{branch['name'] if branch else '—'}</b>\n"
+            "Xodimni tanlang:")
+    markup = kb.att_emp_list_kb(emps, branch_id)
+    if edit:
+        await target.edit_text(text, reply_markup=markup)
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("heatt:"))
+async def emp_att_cb(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not _att_pick_allowed(user):
+        await call.answer("⛔", show_alert=True)
+        return
+    parts = call.data.split(":")
+    action = parts[1]
+
+    if action == "back":
+        branches = await q.list_branches()
+        await call.message.edit_text(
+            "👤 <b>Bitta xodim davomati</b>\nAvval filialni tanlang:",
+            reply_markup=kb.att_pick_branches_kb(branches, "heatt"),
+        )
+        await call.answer()
+        return
+
+    if action == "br":
+        await _show_emp_list(call.message, int(parts[2]), edit=True)
+        await call.answer()
+        return
+
+    if action == "eback":
+        prof = await q.get_employee_profile(int(parts[2]))
+        if prof and prof.get("branch_id"):
+            await _show_emp_list(call.message, prof["branch_id"], edit=True)
+        else:
+            branches = await q.list_branches()
+            await call.message.edit_text(
+                "👤 <b>Bitta xodim davomati</b>\nAvval filialni tanlang:",
+                reply_markup=kb.att_pick_branches_kb(branches, "heatt"),
+            )
+        await call.answer()
+        return
+
+    if action == "emp":
+        prof = await q.get_employee_profile(int(parts[2]))
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        await call.message.edit_text(
+            f"👤 <b>{prof.get('full_name')}</b>\n"
+            f"🏢 {prof.get('branch_name') or '—'}\n"
+            "Davrni tanlang:",
+            reply_markup=kb.att_emp_period_pick_kb(prof["user_id"]),
+        )
+        await call.answer()
+        return
+
+    if action == "p":
+        prof = await q.get_employee_profile(int(parts[2]))
+        period = parts[3]
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        await _render_employee_attendance(call.message, prof, period)
+        await call.answer()
+
+
+async def _render_employee_attendance(target, prof, period):
+    rows = await q.attendance_for_user(prof["user_id"], period=period)
+    title = PERIOD_TITLES.get(period, period)
+    lates = sum(1 for r in rows if r.get("late"))
+    earlies = sum(1 for r in rows if r.get("early"))
+    total_break = sum(int(r.get("break_seconds") or 0) for r in rows)
+    pos = f" · 💼 {prof.get('position')}" if prof.get("position") else ""
+    lines = [
+        f"👤 <b>{prof.get('full_name')}</b>",
+        f"🏢 {prof.get('branch_name') or '—'}{pos}",
+        f"🗓 {title}",
+        "━━━━━━━━━━━━━━━━━━",
+        f"✅ Kelgan kunlar: <b>{len(rows)}</b>   "
+        f"⏰ kech: <b>{lates}</b>   🏃 erta: <b>{earlies}</b>",
+    ]
+    if total_break:
+        lines.append(f"⏸ Umumiy tanaffus: <b>{_fmt_hms(total_break)}</b>")
+    lines.append("")
+    if not rows:
+        lines.append("Bu davrda davomat yozuvi yo'q.")
+    else:
+        show_date = period != "day"
+        for i, d in enumerate(rows, 1):
+            lines.append(f"<b>{i}.</b>")
+            lines += _one_day_lines(d, show_date=show_date)
+
+    for chunk in _split("\n".join(lines)):
+        await target.answer(chunk)
