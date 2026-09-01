@@ -886,13 +886,14 @@ async def director_fine_pick(call: CallbackQuery, state: FSMContext):
         await call.answer("⛔", show_alert=True)
         return
     uid = int(call.data.split(":")[2])
-    profile = await q.get_employee_profile(uid)
-    if not profile:
+    # HR/rahbar kabi xodimlarda profil bo'lmasligi mumkin — users'dan ham qidiramiz
+    target = await q.get_employee_profile(uid) or await q.get_user_by_id(uid)
+    if not target:
         await call.answer("Xodim topilmadi.", show_alert=True)
         return
     await state.update_data(dfine_uid=uid)
     await state.set_state(DirectorFineForm.amount)
-    name = profile.get("full_name") or f"#{uid}"
+    name = target.get("full_name") or f"#{uid}"
     await call.message.answer(
         f"👤 <b>{name}</b>\n\n💸 Jarima summasini kiriting. Masalan: <b>200 000 so'm</b>"
     )
@@ -915,7 +916,10 @@ async def director_fine_save(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     me = await q.get_user(message.from_user.id)
     profile = await q.get_employee_profile(uid)
-    branch_id = (profile or {}).get("branch_id")
+    u = await q.get_user_by_id(uid)
+    branch_id = (profile or {}).get("branch_id") or (u or {}).get("branch_id")
+    target_tg = (profile or {}).get("tg_id") or (u or {}).get("tg_id")
+    target_name = (profile or {}).get("full_name") or (u or {}).get("full_name") or uid
     # Direktor jarimasi — moliyaga tegishli (source='director'), yakuniy oylikdan ayiriladi
     fid = await q.add_fine(uid, amount, reason, me["id"],
                            branch_id=branch_id, source="director")
@@ -926,9 +930,9 @@ async def director_fine_save(message: Message, state: FSMContext, bot: Bot):
         "<i>Jarima moliya bo'limiga yuborildi va yakuniy oylikdan ayiriladi.</i>"
     )
     # Xodimga xabar
-    if profile and profile.get("tg_id"):
+    if target_tg:
         await safe_send(
-            bot, profile["tg_id"],
+            bot, target_tg,
             f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
             "\n\nBu summa oyligingizdan ayiriladi."
         )
@@ -937,7 +941,7 @@ async def director_fine_save(message: Message, state: FSMContext, bot: Bot):
     fin_text = (
         "💸 <b>Direktordan yangi jarima</b>\n"
         "━━━━━━━━━━━━\n"
-        f"👤 Xodim: <b>{(profile or {}).get('full_name') or uid}</b>\n"
+        f"👤 Xodim: <b>{target_name}</b>\n"
         f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
         f"🏢 Filial: {branch['name'] if branch else '-'}\n"
         f"💰 Summa: <b>{amount}</b>\n"

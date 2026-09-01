@@ -977,26 +977,33 @@ async def list_staff_for_fine(category, limit=60):
     field, values = spec
     db = await _conn()
     try:
-        sql = """SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
-                        b.name AS branch_name
-                 FROM employee_profiles ep
-                 JOIN users u ON u.id=ep.user_id
-                 LEFT JOIN branches b ON b.id=ep.branch_id
-                 WHERE """
-        params = []
         if field == "role":
-            sql += "ep.role=?"
-            params.append(values[0])
+            # Rol bo'yicha — foydalanuvchilar jadvalidan olamiz, chunki HR/
+            # rahbar kabi xodimlarda alohida employee_profiles yozuvi
+            # bo'lmasligi mumkin (ular baribir ro'yxatda chiqishi kerak).
+            sql = """SELECT u.id AS user_id, u.tg_id, u.full_name, u.username,
+                            u.phone,
+                            COALESCE(ep.position, '') AS position,
+                            COALESCE(b.name, b2.name) AS branch_name
+                     FROM users u
+                     LEFT JOIN employee_profiles ep ON ep.user_id=u.id
+                     LEFT JOIN branches b  ON b.id=ep.branch_id
+                     LEFT JOIN branches b2 ON b2.id=u.branch_id
+                     WHERE u.role=? AND COALESCE(u.blocked,0)=0
+                     ORDER BY u.full_name
+                     LIMIT ?"""
+            cur = await db.execute(sql, (values[0], int(limit)))
         else:
             likes = " OR ".join(["pylower(COALESCE(ep.position,'')) LIKE ?"] * len(values))
-            sql += f"({likes})"
-            params += values
-        sql += (
-            " ORDER BY CASE ep.role WHEN 'manager' THEN 0 "
-            "WHEN 'director' THEN 1 ELSE 2 END, u.full_name "
-            f"LIMIT {int(limit)}"
-        )
-        cur = await db.execute(sql, params)
+            sql = f"""SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
+                             b.name AS branch_name
+                      FROM employee_profiles ep
+                      JOIN users u ON u.id=ep.user_id
+                      LEFT JOIN branches b ON b.id=ep.branch_id
+                      WHERE ({likes})
+                      ORDER BY u.full_name
+                      LIMIT ?"""
+            cur = await db.execute(sql, (*values, int(limit)))
         return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
@@ -3231,6 +3238,56 @@ async def attendance_for_user(user_id, period="day"):
             (user_id,),
         )
         return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_attendance_by_date(user_id, date):
+    """Xodimning aniq bir kundagi davomat yozuvi (yoki None)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT a.*, b.name AS branch_name
+               FROM attendance a
+               LEFT JOIN branches b ON b.id=a.branch_id
+               WHERE a.user_id=? AND a.date=?
+               ORDER BY a.id DESC LIMIT 1""",
+            (user_id, date),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def upsert_attendance_time(user_id, date, field, value, branch_id=None):
+    """HR tomonidan kelgan («time») yoki ketgan («out_time») vaqtni qo'lda
+    o'rnatadi/tahrirlaydi. Yozuv bo'lmasa — yangi 'present' yozuv yaratadi."""
+    if field not in ("time", "out_time"):
+        raise ValueError("Faqat 'time' yoki 'out_time' tahrirlanadi")
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT id, branch_id FROM attendance WHERE user_id=? AND date=? "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, date),
+        )
+        row = await cur.fetchone()
+        if row:
+            await db.execute(
+                f"UPDATE attendance SET {field}=? WHERE id=?", (value, row["id"])
+            )
+            att_id = row["id"]
+        else:
+            await db.execute(
+                f"""INSERT INTO attendance (user_id, branch_id, date, {field}, status)
+                    VALUES (?,?,?,?, 'present')""",
+                (user_id, branch_id, date, value),
+            )
+            cur2 = await db.execute("SELECT last_insert_rowid() AS id")
+            att_id = (await cur2.fetchone())["id"]
+        await db.commit()
+        return att_id
     finally:
         await db.close()
 

@@ -23,6 +23,25 @@ def now_tk_hm():
     return now_tk().strftime("%H:%M")
 
 
+def fmt_date(value):
+    """Sanani foydalanuvchiga 'kun.oy.yil' (DD.MM.YYYY) ko'rinishida chizadi.
+
+    Baza ichida sanalar 'YYYY-MM-DD' saqlanadi; bu funksiya faqat ko'rsatish
+    uchun. Vaqt qismi bo'lsa (YYYY-MM-DD HH:MM) — u ham saqlanadi.
+    None yoki notanish format o'zgarishsiz qaytadi."""
+    if not value:
+        return value or "-"
+    s = str(value).strip()
+    # Vaqt qismini ajratib olamiz (bo'lsa)
+    datepart, sep, rest = s.partition(" ")
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", datepart)
+    if not m:
+        return s
+    y, mo, d = m.groups()
+    out = f"{d}.{mo}.{y}"
+    return f"{out} {rest}" if sep and rest else out
+
+
 # ---------------- TELEFON RAQAM ----------------
 # Majburiy format: +998 va 9 ta raqam, orada bo'sh joysiz, faqat BITTA raqam.
 PHONE_RE = re.compile(r"^\+998\d{9}$")

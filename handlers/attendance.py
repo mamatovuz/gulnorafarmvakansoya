@@ -1,6 +1,9 @@
 """Davomat (attendance): «📍 Ishga keldim» / «🏁 Ishdan ketdim» — GPS orqali
 ofisda ekanini tekshirish va HR/Direktor/Filial rahbari/Buxgalter uchun
 davomat hisobotlari (kelgan/ketgan vaqt, kech qolgan/erta ketgan)."""
+import re
+from datetime import timedelta
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -11,13 +14,13 @@ from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_PHARMACIST,
     ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
 )
-from states import AttendanceForm
+from states import AttendanceForm, AttendanceEditForm
 from services import export
 import keyboards as kb
 from i18n import t, tf
 from utils import (
     haversine_m, employee_profile_text, safe_send, now_tk_hm, fmt_duration,
-    send_employee_profile, now_tk,
+    send_employee_profile, now_tk, fmt_date,
 )
 
 router = Router()
@@ -584,7 +587,7 @@ async def my_profile(message: Message):
     if history:
         extra += "\n\n<b>Oxirgi kelishlar:</b>\n"
         for h in history:
-            extra += f"  • {h.get('date')} {h.get('time') or ''}\n"
+            extra += f"  • {fmt_date(h.get('date'))} {h.get('time') or ''}\n"
     # Profil rasmi bo'lsa — rasm bilan birga chiqadi
     await send_employee_profile(message, profile, suffix=extra)
 
@@ -794,7 +797,7 @@ async def late_early_report(call: CallbackQuery):
             br = f" · 🏢 {r['branch_name']}" if r.get("branch_name") else ""
             lines.append(f"<b>{i}.</b> {r.get('full_name')}{br}")
             lines.append(
-                f"     📅 {r.get('date')} · "
+                f"     📅 {fmt_date(r.get('date'))} · "
                 f"🟢 {r.get('time') or '-'} → 🔴 {r.get('out_time') or '…'}"
             )
             lines.append(f"     {' · '.join(tag)}")
@@ -833,7 +836,7 @@ def _one_day_lines(d, show_date=False):
     out = d.get("out_time") or "⏳ ishda"
     ls = []
     if show_date:
-        ls.append(f"   📅 <b>{d.get('date')}</b>")
+        ls.append(f"   📅 <b>{fmt_date(d.get('date'))}</b>")
     ls.append(f"   🟢 Keldi: <b>{d.get('time') or '-'}</b>   "
               f"🔴 Ketdi: <b>{out}</b>")
     if d.get("break_seconds"):
@@ -985,7 +988,7 @@ def _branch_excel_rows(groups, show_date):
                 "no": gi if j == 0 else "",
                 "grp": gi,
                 "name": name if j == 0 else "",
-                "date": d.get("date") if (show_date or True) else "",
+                "date": fmt_date(d.get("date")),
                 "came": d.get("time") or "-",
                 "out": d.get("out_time") or "…",
                 "brk": _fmt_hms(d.get("break_seconds")) if d.get("break_seconds") else "-",
@@ -1150,7 +1153,7 @@ async def _render_employee_attendance(target, prof, period):
     else:
         show_date = period != "day"
         for i, d in enumerate(rows, 1):
-            head = f"<b>{i}.</b> 📅 <b>{d.get('date')}</b>" if show_date else f"<b>{i}.</b>"
+            head = f"<b>{i}.</b> 📅 <b>{fmt_date(d.get('date'))}</b>" if show_date else f"<b>{i}.</b>"
             lines.append(head)
             lines += _one_day_lines(d, show_date=False)
             lines.append("")
@@ -1166,7 +1169,7 @@ async def _send_employee_excel(call, prof, period):
     s = _emp_summary(rows)
     title = PERIOD_TITLES.get(period, period)
     rows_data = [{
-        "date": d.get("date") or "-",
+        "date": fmt_date(d.get("date")),
         "came": d.get("time") or "-",
         "out": d.get("out_time") or "…",
         "brk": _fmt_hms(d.get("break_seconds")) if d.get("break_seconds") else "-",
@@ -1185,3 +1188,221 @@ async def _send_employee_excel(call, prof, period):
         caption=(f"📊 <b>{prof.get('full_name')}</b> davomati\n"
                  f"🗓 {title} · ✅ {s['days']} kun"),
     )
+
+
+# ================= DAVOMATNI TAHRIRLASH (HR) =================
+def _parse_hhmm(text):
+    """Kiritilgan vaqtni 'HH:MM:00' ko'rinishiga keltiradi. Xato bo'lsa None.
+    Qabul qiladi: 9:00, 09:00, 9.00, 9-00, 0900, 9."""
+    t = (text or "").strip()
+    m = re.match(r"^(\d{1,2})[:.\-\s]?(\d{2})$", t)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+    else:
+        m2 = re.match(r"^(\d{1,2})$", t)
+        if not m2:
+            return None
+        h, mi = int(m2.group(1)), 0
+    if h > 23 or mi > 59:
+        return None
+    return f"{h:02d}:{mi:02d}:00"
+
+
+def _period_dates(period):
+    """Hafta/oy uchun ISO sanalar ro'yxati (bugundan orqaga)."""
+    today = now_tk().date()
+    n = 7 if period == "week" else 30
+    return [(today - timedelta(days=i)).isoformat() for i in range(n)]
+
+
+@router.message(F.text == "✏️ Davomatni tahrirlash")
+async def att_edit_menu(message: Message, state: FSMContext):
+    await state.clear()
+    user = await q.get_user(message.from_user.id)
+    if not _att_pick_allowed(user):
+        await message.answer("⛔ Sizda bu bo'limni ko'rish huquqi yo'q.")
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await message.answer("🏢 Hozircha filiallar mavjud emas.")
+        return
+    await message.answer(
+        "✏️ <b>Davomatni tahrirlash</b>\nAvval filialni tanlang:",
+        reply_markup=kb.att_pick_branches_kb(branches, "hedit"),
+    )
+
+
+async def _edit_show_emps(target, branch_id, edit=False):
+    branch = await q.get_branch(branch_id)
+    emps = await q.list_employee_profiles(branch_id=branch_id)
+    send = target.edit_text if edit else target.answer
+    if not emps:
+        await send(f"🏢 <b>{branch['name'] if branch else '—'}</b>\n"
+                   "Bu filialda xodim yo'q.")
+        return
+    await send(
+        f"🏢 <b>{branch['name'] if branch else '—'}</b>\n"
+        "Tahrirlash uchun xodimni tanlang:",
+        reply_markup=kb.att_edit_emp_list_kb(emps, branch_id),
+    )
+
+
+async def _edit_show_period(target, prof, edit=True):
+    send = target.edit_text if edit else target.answer
+    await send(
+        f"✏️ <b>{prof.get('full_name')}</b>\n"
+        f"🏢 {prof.get('branch_name') or '—'}\n"
+        "Qaysi davr davomatini tahrirlaysiz?",
+        reply_markup=kb.att_edit_period_kb(prof["user_id"]),
+    )
+
+
+async def _edit_show_day(target, prof, period, iso, edit=True):
+    rec = await q.get_attendance_by_date(prof["user_id"], iso)
+    came = (rec or {}).get("time") or "— belgilanmagan"
+    out = (rec or {}).get("out_time") or "— belgilanmagan"
+    send = target.edit_text if edit else target.answer
+    await send(
+        f"✏️ <b>{prof.get('full_name')}</b>\n"
+        f"📅 Sana: <b>{fmt_date(iso)}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🟢 Kelgan vaqt: <b>{came}</b>\n"
+        f"🔴 Ketgan vaqt: <b>{out}</b>\n\n"
+        "Qaysi vaqtni o'zgartirasiz?",
+        reply_markup=kb.att_edit_day_kb(prof["user_id"], period, iso),
+    )
+
+
+@router.callback_query(F.data.startswith("hedit:"))
+async def att_edit_cb(call: CallbackQuery, state: FSMContext):
+    user = await q.get_user(call.from_user.id)
+    if not _att_pick_allowed(user):
+        await call.answer("⛔", show_alert=True)
+        return
+    parts = call.data.split(":")
+    action = parts[1]
+
+    if action == "back":
+        await state.clear()
+        branches = await q.list_branches()
+        await call.message.edit_text(
+            "✏️ <b>Davomatni tahrirlash</b>\nAvval filialni tanlang:",
+            reply_markup=kb.att_pick_branches_kb(branches, "hedit"),
+        )
+        await call.answer()
+        return
+
+    if action == "br":
+        await _edit_show_emps(call.message, int(parts[2]), edit=True)
+        await call.answer()
+        return
+
+    if action == "eback":
+        prof = await q.get_employee_profile(int(parts[2]))
+        if prof and prof.get("branch_id"):
+            await _edit_show_emps(call.message, prof["branch_id"], edit=True)
+        else:
+            branches = await q.list_branches()
+            await call.message.edit_text(
+                "✏️ <b>Davomatni tahrirlash</b>\nAvval filialni tanlang:",
+                reply_markup=kb.att_pick_branches_kb(branches, "hedit"),
+            )
+        await call.answer()
+        return
+
+    if action == "emp":
+        prof = await q.get_employee_profile(int(parts[2]))
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        await _edit_show_period(call.message, prof)
+        await call.answer()
+        return
+
+    if action == "pd":
+        uid = int(parts[2])
+        period = parts[3]
+        prof = await q.get_employee_profile(uid)
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        if period in ("day", "yesterday"):
+            day = now_tk().date()
+            if period == "yesterday":
+                day = day - timedelta(days=1)
+            await _edit_show_day(call.message, prof, period, day.isoformat())
+        else:
+            recs = await q.attendance_for_user(uid, period=period)
+            have = {r.get("date") for r in recs}
+            days = [(iso, fmt_date(iso), iso in have) for iso in _period_dates(period)]
+            title = "1 hafta" if period == "week" else "1 oy"
+            await call.message.edit_text(
+                f"✏️ <b>{prof.get('full_name')}</b> · {title}\n"
+                "Tahrirlash uchun kunni tanlang:\n"
+                "✅ — davomat bor · ▫️ — bo'sh",
+                reply_markup=kb.att_edit_days_kb(uid, period, days),
+            )
+        await call.answer()
+        return
+
+    if action == "day":
+        uid = int(parts[2])
+        period = parts[3]
+        iso = parts[4]
+        prof = await q.get_employee_profile(uid)
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        await _edit_show_day(call.message, prof, period, iso)
+        await call.answer()
+        return
+
+    if action == "set":
+        uid = int(parts[2])
+        period = parts[3]
+        iso = parts[4]
+        which = parts[5]
+        prof = await q.get_employee_profile(uid)
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        field = "time" if which == "in" else "out_time"
+        await state.set_state(AttendanceEditForm.value)
+        await state.update_data(
+            edit_uid=uid, edit_period=period, edit_iso=iso,
+            edit_field=field, edit_branch=prof.get("branch_id"),
+        )
+        label = "🟢 kelgan" if which == "in" else "🔴 ketgan"
+        await call.message.answer(
+            f"✏️ <b>{prof.get('full_name')}</b> · 📅 {fmt_date(iso)}\n\n"
+            f"{label} vaqtni kiriting. Masalan: <b>09:00</b>"
+        )
+        await call.answer()
+        return
+
+
+@router.message(AttendanceEditForm.value, F.text)
+async def att_edit_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    hhmm = _parse_hhmm(message.text)
+    if not hhmm:
+        await message.answer(
+            "❗️ Vaqt formati noto'g'ri. Masalan: <b>09:00</b>. Qayta kiriting:"
+        )
+        return
+    uid = data["edit_uid"]
+    iso = data["edit_iso"]
+    field = data["edit_field"]
+    period = data.get("edit_period", "day")
+    await q.upsert_attendance_time(
+        uid, iso, field, hhmm, branch_id=data.get("edit_branch")
+    )
+    await state.clear()
+    prof = await q.get_employee_profile(uid)
+    label = "🟢 Kelgan" if field == "time" else "🔴 Ketgan"
+    await message.answer(
+        f"✅ {label} vaqt saqlandi: <b>{hhmm}</b>\n"
+        f"👤 {prof.get('full_name') if prof else uid} · 📅 {fmt_date(iso)}"
+    )
+    if prof:
+        await _edit_show_day(message, prof, period, iso, edit=False)

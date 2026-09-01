@@ -161,6 +161,11 @@ class AttendanceForm(StatesGroup):
     checkout = State()      # Ishdan ketdim
 
 
+class AttendanceEditForm(StatesGroup):
+    """HR bitta xodim davomatini tahrirlaydi — kelgan/ketgan vaqtni yozadi."""
+    value = State()   # HH:MM ko'rinishida vaqt kiritiladi
+
+
 class DayoffForm(StatesGroup):
     """Dam olish kunini almashtirish so'rovi."""
     from_day = State()

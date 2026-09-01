@@ -609,6 +609,7 @@ def hr_attendance_menu():
         "📍 Davomat",
         "🏢 Filial davomati",
         "👤 Xodim davomati",
+        "✏️ Davomatni tahrirlash",
         "🛌 Kunlik dam olish",
         "🧪 Sinov muddati",
         "⚙️ Davomat sozlamalari",
@@ -2410,6 +2411,57 @@ def att_emp_report_kb(user_id, period):
     b.button(text="📊 Excel yuklab olish", callback_data=f"heatt:xl:{user_id}:{period}")
     b.button(text="🔁 Boshqa davr", callback_data=f"heatt:emp:{user_id}")
     b.adjust(1)
+    return b.as_markup()
+
+
+# ---- HR: davomatni tahrirlash (filial → xodim → davr → kun) ----
+def att_edit_emp_list_kb(employees, branch_id):
+    """Tahrirlash uchun filialdagi xodimlar ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for e in employees:
+        name = e.get("full_name") or e.get("tg_id")
+        b.button(text=f"👤 {name}", callback_data=f"hedit:emp:{e['user_id']}")
+    b.button(text="⬅️ Filiallar", callback_data="hedit:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def att_edit_period_kb(user_id):
+    """Tahrirlash — davr tanlash (bugun/kecha to'g'ridan kun, hafta/oy kunlar ro'yxati)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="📅 Bugun", callback_data=f"hedit:pd:{user_id}:day")
+    b.button(text="📅 Kecha", callback_data=f"hedit:pd:{user_id}:yesterday")
+    b.button(text="🗓 1 hafta", callback_data=f"hedit:pd:{user_id}:week")
+    b.button(text="📆 1 oy", callback_data=f"hedit:pd:{user_id}:month")
+    b.button(text="⬅️ Xodimlar", callback_data=f"hedit:eback:{user_id}")
+    b.adjust(2, 2, 1)
+    return b.as_markup()
+
+
+def att_edit_days_kb(user_id, period, days):
+    """Hafta/oy kunlari ro'yxati. days: [(iso, 'DD.MM.YYYY', has_record)]."""
+    b = InlineKeyboardBuilder()
+    for iso, label, has in days:
+        mark = "✅" if has else "▫️"
+        b.button(text=f"{mark} {label}", callback_data=f"hedit:day:{user_id}:{period}:{iso}")
+    b.button(text="⬅️ Davr", callback_data=f"hedit:emp:{user_id}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def att_edit_day_kb(user_id, period, iso_date):
+    """Bitta kun uchun: kelgan / ketgan vaqtni tahrirlash tugmalari."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🟢 Kelgan vaqt", callback_data=f"hedit:set:{user_id}:{period}:{iso_date}:in")
+    b.button(text="🔴 Ketgan vaqt", callback_data=f"hedit:set:{user_id}:{period}:{iso_date}:out")
+    if period in ("week", "month"):
+        back_cb = f"hedit:pd:{user_id}:{period}"
+        back_txt = "⬅️ Kunlar"
+    else:
+        back_cb = f"hedit:emp:{user_id}"
+        back_txt = "⬅️ Davr"
+    b.button(text=back_txt, callback_data=back_cb)
+    b.adjust(2, 1)
     return b.as_markup()
 
 
