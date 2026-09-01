@@ -12,6 +12,7 @@ from database.db import (
     ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
 )
 from states import AttendanceForm
+from services import export
 import keyboards as kb
 from i18n import t, tf
 from utils import (
@@ -810,14 +811,8 @@ def _att_pick_allowed(user):
     return _scope_for_user(user) == "hr"
 
 
-def _one_day_lines(d, show_date=False):
-    """Bitta kun davomatini o'qib bo'ladigan qilib chizadi:
-    kelgan → ketgan vaqt, tanaffus, kech/erta."""
-    out = d.get("out_time") or "…"
-    date_part = f"📅 {d.get('date')} · " if show_date else ""
-    ls = [f"   {date_part}🟢 <b>{d.get('time') or '-'}</b> → 🔴 <b>{out}</b>"]
-    if d.get("break_seconds"):
-        ls.append(f"   ⏸ Tanaffus: {_fmt_hms(d.get('break_seconds'))}")
+def _att_marks(d):
+    """Kech/erta belgilarini ro'yxat qilib qaytaradi (emoji bilan)."""
     marks = []
     if d.get("late"):
         marks.append(
@@ -829,9 +824,33 @@ def _one_day_lines(d, show_date=False):
             f"🏃 erta {_fmt_hms(d.get('early_seconds'))}" if d.get("early_seconds")
             else "🏃 erta ketdi"
         )
+    return marks
+
+
+def _one_day_lines(d, show_date=False):
+    """Bitta kun davomatini o'qib bo'ladigan qilib chizadi:
+    kelgan / ketgan vaqt, tanaffus, kech/erta."""
+    out = d.get("out_time") or "⏳ ishda"
+    ls = []
+    if show_date:
+        ls.append(f"   📅 <b>{d.get('date')}</b>")
+    ls.append(f"   🟢 Keldi: <b>{d.get('time') or '-'}</b>   "
+              f"🔴 Ketdi: <b>{out}</b>")
+    if d.get("break_seconds"):
+        ls.append(f"   ⏸ Tanaffus: {_fmt_hms(d.get('break_seconds'))}")
+    marks = _att_marks(d)
     if marks:
         ls.append("   " + " · ".join(marks))
     return ls
+
+
+async def _send_chunks(target, text, markup=None):
+    """Uzun matnni bo'lib yuboradi; tugmalarni oxirgi bo'lakka biriktiradi."""
+    chunks = _split(text)
+    for i, chunk in enumerate(chunks):
+        await target.answer(
+            chunk, reply_markup=markup if i == len(chunks) - 1 else None
+        )
 
 
 def _group_by_user(rows):
@@ -901,6 +920,16 @@ async def branch_att_cb(call: CallbackQuery):
             return
         await _render_branch_attendance(call.message, branch, period)
         await call.answer()
+        return
+
+    if action == "xl":
+        branch = await q.get_branch(int(parts[2]))
+        period = parts[3]
+        if not branch:
+            await call.answer("Filial topilmadi", show_alert=True)
+            return
+        await call.answer("📊 Excel tayyorlanmoqda…")
+        await _send_branch_excel(call, branch, period)
 
 
 async def _render_branch_attendance(target, branch, period):
@@ -908,35 +937,80 @@ async def _render_branch_attendance(target, branch, period):
     title = PERIOD_TITLES.get(period, period)
     show_date = period != "day"
     groups = _group_by_user(detail)
-    lines = [
-        f"🏢 <b>{branch['name']}</b> — davomat",
-        f"🗓 {title}",
-        "━━━━━━━━━━━━━━━━━━",
-    ]
-    if not groups:
-        lines.append("Bu davrda davomat yozuvi yo'q.")
-    else:
-        lines.append(f"👥 Kelgan xodimlar: <b>{len(groups)}</b>")
-        for i, (_uid, recs) in enumerate(groups, 1):
-            name = recs[0].get("full_name") or recs[0].get("tg_id")
-            lines.append("")
-            lines.append(f"<b>{i}. 👤 {name}</b>")
-            for d in recs:
-                lines += _one_day_lines(d, show_date=show_date)
 
+    absent = []
     if period == "day":
         absent = await q.attendance_absent_today(branch_id=branch["id"])
-        lines.append("")
-        lines.append(f"❌ <b>Kelmaganlar</b> — {len(absent)} ta")
-        lines.append("━━━━━━━━━━━━━━━━━━")
-        if absent:
-            for i, a in enumerate(absent, 1):
-                lines.append(f"<b>{i}.</b> {a.get('full_name') or a.get('tg_id')}")
-        else:
-            lines.append("🎉 Hamma kelgan!")
 
-    for chunk in _split("\n".join(lines)):
-        await target.answer(chunk)
+    lines = [
+        f"🏢 <b>{branch['name']}</b>",
+        f"📊 Davomat hisoboti · {title}",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        f"👥 Kelgan: <b>{len(groups)}</b>"
+        + (f"    ❌ Kelmagan: <b>{len(absent)}</b>" if period == "day" else ""),
+        "",
+    ]
+    if not groups:
+        lines.append("😴 Bu davrda hech kim kelmagan.")
+    else:
+        for i, (_uid, recs) in enumerate(groups, 1):
+            name = recs[0].get("full_name") or recs[0].get("tg_id")
+            lines.append(f"<b>{i}.</b> 👤 <b>{name}</b>")
+            for d in recs:
+                lines += _one_day_lines(d, show_date=show_date)
+            lines.append("")
+
+    if period == "day":
+        lines.append("━━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"❌ <b>Kelmaganlar</b> ({len(absent)})")
+        if absent:
+            for a in absent:
+                lines.append(f"   • {a.get('full_name') or a.get('tg_id')}")
+        else:
+            lines.append("   🎉 Hamma kelgan!")
+
+    await _send_chunks(
+        target, "\n".join(lines),
+        markup=kb.att_branch_report_kb(branch["id"], period),
+    )
+
+
+def _branch_excel_rows(groups, show_date):
+    """attendance_detail guruhlaridan Excel qatorlarini tayyorlaydi."""
+    rows_data = []
+    for gi, (_uid, recs) in enumerate(groups, 1):
+        name = recs[0].get("full_name") or recs[0].get("tg_id") or "-"
+        for j, d in enumerate(recs):
+            rows_data.append({
+                "no": gi if j == 0 else "",
+                "grp": gi,
+                "name": name if j == 0 else "",
+                "date": d.get("date") if (show_date or True) else "",
+                "came": d.get("time") or "-",
+                "out": d.get("out_time") or "…",
+                "brk": _fmt_hms(d.get("break_seconds")) if d.get("break_seconds") else "-",
+                "note": " · ".join(_att_marks(d)) or "-",
+            })
+    return rows_data
+
+
+async def _send_branch_excel(call, branch, period):
+    detail = await q.attendance_detail(period=period, branch_id=branch["id"], limit=300)
+    groups = _group_by_user(detail)
+    rows_data = _branch_excel_rows(groups, period != "day")
+    absent_names = None
+    if period == "day":
+        absent = await q.attendance_absent_today(branch_id=branch["id"])
+        absent_names = [a.get("full_name") or a.get("tg_id") for a in absent]
+    title = PERIOD_TITLES.get(period, period)
+    doc = export.build_branch_attendance_xlsx(
+        branch["name"], title, rows_data, absent_names,
+    )
+    await call.message.answer_document(
+        doc,
+        caption=(f"📊 <b>{branch['name']}</b> davomati\n"
+                 f"🗓 {title} · 👥 {len(groups)} xodim"),
+    )
 
 
 # ---- «👤 Xodim davomati»: filial → xodim → davr → hisobot ----
@@ -1033,33 +1107,81 @@ async def emp_att_cb(call: CallbackQuery):
             return
         await _render_employee_attendance(call.message, prof, period)
         await call.answer()
+        return
+
+    if action == "xl":
+        prof = await q.get_employee_profile(int(parts[2]))
+        period = parts[3]
+        if not prof:
+            await call.answer("Xodim topilmadi", show_alert=True)
+            return
+        await call.answer("📊 Excel tayyorlanmoqda…")
+        await _send_employee_excel(call, prof, period)
+
+
+def _emp_summary(rows):
+    return {
+        "days": len(rows),
+        "lates": sum(1 for r in rows if r.get("late")),
+        "earlies": sum(1 for r in rows if r.get("early")),
+        "total_break_sec": sum(int(r.get("break_seconds") or 0) for r in rows),
+    }
 
 
 async def _render_employee_attendance(target, prof, period):
     rows = await q.attendance_for_user(prof["user_id"], period=period)
     title = PERIOD_TITLES.get(period, period)
-    lates = sum(1 for r in rows if r.get("late"))
-    earlies = sum(1 for r in rows if r.get("early"))
-    total_break = sum(int(r.get("break_seconds") or 0) for r in rows)
+    s = _emp_summary(rows)
     pos = f" · 💼 {prof.get('position')}" if prof.get("position") else ""
     lines = [
         f"👤 <b>{prof.get('full_name')}</b>",
         f"🏢 {prof.get('branch_name') or '—'}{pos}",
-        f"🗓 {title}",
-        "━━━━━━━━━━━━━━━━━━",
-        f"✅ Kelgan kunlar: <b>{len(rows)}</b>   "
-        f"⏰ kech: <b>{lates}</b>   🏃 erta: <b>{earlies}</b>",
+        f"📊 Davomat · {title}",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        f"✅ Kelgan kunlar: <b>{s['days']}</b>",
+        f"⏰ Kech: <b>{s['lates']}</b>    🏃 Erta: <b>{s['earlies']}</b>",
     ]
-    if total_break:
-        lines.append(f"⏸ Umumiy tanaffus: <b>{_fmt_hms(total_break)}</b>")
+    if s["total_break_sec"]:
+        lines.append(f"⏸ Umumiy tanaffus: <b>{_fmt_hms(s['total_break_sec'])}</b>")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     if not rows:
-        lines.append("Bu davrda davomat yozuvi yo'q.")
+        lines.append("😴 Bu davrda davomat yozuvi yo'q.")
     else:
         show_date = period != "day"
         for i, d in enumerate(rows, 1):
-            lines.append(f"<b>{i}.</b>")
-            lines += _one_day_lines(d, show_date=show_date)
+            head = f"<b>{i}.</b> 📅 <b>{d.get('date')}</b>" if show_date else f"<b>{i}.</b>"
+            lines.append(head)
+            lines += _one_day_lines(d, show_date=False)
+            lines.append("")
 
-    for chunk in _split("\n".join(lines)):
-        await target.answer(chunk)
+    await _send_chunks(
+        target, "\n".join(lines),
+        markup=kb.att_emp_report_kb(prof["user_id"], period),
+    )
+
+
+async def _send_employee_excel(call, prof, period):
+    rows = await q.attendance_for_user(prof["user_id"], period=period)
+    s = _emp_summary(rows)
+    title = PERIOD_TITLES.get(period, period)
+    rows_data = [{
+        "date": d.get("date") or "-",
+        "came": d.get("time") or "-",
+        "out": d.get("out_time") or "…",
+        "brk": _fmt_hms(d.get("break_seconds")) if d.get("break_seconds") else "-",
+        "note": " · ".join(_att_marks(d)) or "-",
+    } for d in rows]
+    summary = {
+        "days": s["days"], "lates": s["lates"], "earlies": s["earlies"],
+        "total_break": _fmt_hms(s["total_break_sec"]) if s["total_break_sec"] else None,
+    }
+    doc = export.build_employee_attendance_xlsx(
+        prof.get("full_name") or "Xodim", prof.get("branch_name"),
+        prof.get("position"), title, summary, rows_data,
+    )
+    await call.message.answer_document(
+        doc,
+        caption=(f"📊 <b>{prof.get('full_name')}</b> davomati\n"
+                 f"🗓 {title} · ✅ {s['days']} kun"),
+    )

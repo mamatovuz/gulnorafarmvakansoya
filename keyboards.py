@@ -2395,6 +2395,24 @@ def att_emp_period_pick_kb(user_id):
     return b.as_markup()
 
 
+def att_branch_report_kb(branch_id, period):
+    """Filial davomati hisoboti ostida: Excel + davrni almashtirish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="📊 Excel yuklab olish", callback_data=f"hbatt:xl:{branch_id}:{period}")
+    b.button(text="🔁 Boshqa davr", callback_data=f"hbatt:br:{branch_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def att_emp_report_kb(user_id, period):
+    """Xodim davomati hisoboti ostida: Excel + davrni almashtirish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="📊 Excel yuklab olish", callback_data=f"heatt:xl:{user_id}:{period}")
+    b.button(text="🔁 Boshqa davr", callback_data=f"heatt:emp:{user_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 # ---- Admin: filialga koordinata biriktirish ----
 def branch_location_request_kb():
     b = ReplyKeyboardBuilder()
