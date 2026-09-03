@@ -250,8 +250,10 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
         dist = haversine_m(branch["latitude"], branch["longitude"], lat, lon)
     radius = (branch.get("radius") if branch else None) or 150
 
-    # Harakatdagi xodim uchun masofa tekshirilmaydi — istalgan joyda qabul qilinadi
-    accepted = mobile or (dist is not None and dist <= radius)
+    # Harakatdagi xodim (HR/haydovchi/texnik) istalgan FILIALdan ishga kelishi
+    # mumkin, biroq o'sha filialning radiusi (odatda 150 m) ICHIDA bo'lishi shart.
+    # Oddiy xodim esa faqat o'z filiali radiusi ichida qabul qilinadi.
+    accepted = dist is not None and dist <= radius
 
     if accepted:
         now_hms = now_tk().strftime("%H:%M:%S")
@@ -294,12 +296,22 @@ async def checkin_location(message: Message, state: FSMContext, bot: Bot):
             f"{branch['name'] if branch else 'harakatda'} · "
             f"{dist if dist is not None else '—'}m{' · kech' if late else ''}"
         )
-    else:
+    elif branch is None:
+        # Harakatdagi xodim, lekin hech qaysi filialning joylashuvi sozlanmagan
         await message.answer(
-            "❌ <b>Siz ofisda emassiz.</b>\n\n"
-            f"🏢 Filial: {branch['name']}\n"
-            f"📏 Ofisdan masofa: ~{dist} m (ruxsat: {radius} m)\n\n"
-            "Ofisga yaqinlashib, qaytadan «📍 Ishga keldim» tugmasini bosing.",
+            "⛔ Hozircha birorta filialning joylashuvi (koordinatasi) sozlanmagan, "
+            "shu sabab davomat qabul qilinmadi.\n"
+            "Administrator filial koordinatasini kiritgach qayta urinib ko'ring.",
+            reply_markup=menu,
+        )
+    else:
+        near_label = "Eng yaqin filial" if mobile else "Filial"
+        await message.answer(
+            "❌ <b>Siz filialga yetarlicha yaqin emassiz.</b>\n\n"
+            f"🏢 {near_label}: {branch['name']}\n"
+            f"📏 Masofa: ~{dist} m (ruxsat: {radius} m)\n\n"
+            "Biror filialga (radius ichiga) yaqinlashib, qaytadan "
+            "«📍 Ishga keldim» tugmasini bosing.",
             reply_markup=menu,
         )
 
