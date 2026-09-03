@@ -12,7 +12,7 @@ from aiogram.filters import StateFilter
 from database import queries as q
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_DIRECTOR, ROLE_PHARMACIST,
-    ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
+    ROLE_EMPLOYEE, ROLE_ACCOUNTANT, ROLE_TECH,
 )
 from states import AttendanceForm, AttendanceEditForm
 from services import export
@@ -49,10 +49,10 @@ PERIOD_TITLES = {
 
 
 def _is_mobile_worker(user, profile=None):
-    """HR va haydovchilar «harakatdagi» xodimlar — ular istalgan filial/lokatsiyada
-    ishga kelib-ketishi mumkin (ofisdan masofa tekshirilmaydi)."""
+    """HR, texnik xodim va haydovchilar «harakatdagi» xodimlar — ular istalgan
+    filial/lokatsiyada ishga kelib-ketishi mumkin (ofisdan masofa tekshirilmaydi)."""
     role = (user or {}).get("role") if isinstance(user, dict) else None
-    if role in (ROLE_HR,):
+    if role in (ROLE_HR, ROLE_TECH):
         return True
     pos = ((profile or {}).get("position") or "").lower()
     return "haydovchi" in pos or "driver" in pos

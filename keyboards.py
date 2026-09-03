@@ -93,7 +93,10 @@ def main_menu(role, has_applied=False, lang=None):
     if role == ROLE_IT:
         b.button(text="🖥 IT xodim panel")
     if role == ROLE_TECH:
-        # Texnik xodim davomatga bog'lanmaydi (filialma-filial yuradi) — o'z paneli
+        # Texnik xodim ham HR kabi harakatdagi xodim — istalgan filialdan
+        # ishga keladi/ketadi (masofa cheklovsiz), o'z texnik paneli bilan.
+        b.button(text=t("btn.checkin", lang))
+        b.button(text=t("btn.checkout", lang))
         b.button(text="🔧 Texnik xodim panel")
         b.button(text=t("btn.profile", lang))
         b.button(text=t("btn.hr_request", lang))
@@ -2794,6 +2797,8 @@ def advance_amount_kb(options):
             text=f"💵 {_fmt_amount(amount)} so'm",
             callback_data=f"avns_amt:{int(amount)}",
         )
+    # «Boshqa» — xodim o'zi summa yozadi (oylik miqdoridan oshmasligi tekshiriladi)
+    b.button(text="✏️ Boshqa (o'zim yozaman)", callback_data="avns_amt_other")
     b.adjust(1)
     return b.as_markup()
 

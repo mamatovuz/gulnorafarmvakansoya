@@ -81,7 +81,12 @@ ADVANCE_AMOUNTS_SETTING = "avans_amounts"
 
 def _parse_money_value(text):
     """Erkin matndagi summani butun songa (so'm) aylantiradi."""
-    return int(re.sub(r"\D", "", text or "") or 0)
+    return int(re.sub(r"\D", "", str(text) if text is not None else "") or 0)
+
+
+def _profile_salary(profile):
+    """Xodim profilidagi oylikni butun songa (so'm) aylantiradi (0 — noma'lum)."""
+    return _parse_money_value((profile or {}).get("monthly_salary"))
 
 
 def _normalize_amounts(amounts):
@@ -230,6 +235,66 @@ async def advance_amount_manual(message: Message, state: FSMContext):
     if amount not in amounts:
         await message.answer(
             "❌ Iltimos, avans miqdorini pastdagi tugmalardan tanlang."
+        )
+        return
+    await state.update_data(avns_amount=amount)
+    await message.answer(f"✅ Tanlangan avans: <b>{_fmt_sum(amount)} so'm</b>")
+    await _ask_card(message, state)
+
+
+@router.callback_query(AdvanceForm.amount, F.data == "avns_amt_other")
+async def advance_amount_other(call: CallbackQuery, state: FSMContext):
+    """«✏️ Boshqa» — xodim o'zi summa yozadi. Oylik miqdoridan oshib ketolmaydi."""
+    profile = await q.get_employee_profile_by_tg(call.from_user.id)
+    salary = _profile_salary(profile)
+    if salary <= 0:
+        # Oylik tizimda yo'q — cheklovni qo'llay olmaymiz, tayyor tugmalarga qaytamiz
+        await call.answer()
+        await call.message.answer(
+            "⚠️ Oylik miqdoringiz tizimda ko'rsatilmagan, shu sabab o'zingiz summa "
+            "yoza olmaysiz. Iltimos, quyidagi tayyor miqdorlardan birini tanlang "
+            "yoki HR bo'limi bilan bog'laning."
+        )
+        await _ask_amount(call.message, state)
+        return
+    await state.update_data(avns_salary=salary)
+    await state.set_state(AdvanceForm.custom_amount)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "✏️ <b>Avans summasini o'zingiz yozing</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"💰 Sizning oyligingiz: <b>{_fmt_sum(salary)} so'm</b>\n\n"
+        "Bu oy qancha avans olmoqchisiz? Summani <b>aniq</b> yozing.\n"
+        "Masalan: <code>3000000</code>\n\n"
+        f"⚠️ Oyligingizdan ({_fmt_sum(salary)} so'm) ko'p summa yoza olmaysiz."
+    )
+    await call.answer()
+
+
+@router.message(AdvanceForm.custom_amount, F.text)
+async def advance_custom_amount(message: Message, state: FSMContext):
+    """«Boshqa» summa: 0 dan katta va oylikdan oshmasligi shart."""
+    data = await state.get_data()
+    salary = int(data.get("avns_salary") or 0)
+    if salary <= 0:
+        # Xavfsizlik uchun — oylik yo'qolgan bo'lsa tayyor tugmalarga qaytamiz
+        await _ask_amount(message, state)
+        return
+    amount = _parse_money_value(message.text)
+    if amount <= 0:
+        await message.answer(
+            "❌ Summani faqat raqam bilan yozing. Masalan: <code>3000000</code>"
+        )
+        return
+    if amount > salary:
+        await message.answer(
+            f"❌ Siz oyligingizdan ko'p avans yoza olmaysiz.\n"
+            f"💰 Oyligingiz: <b>{_fmt_sum(salary)} so'm</b>\n"
+            f"✍️ Siz yozgan summa: <b>{_fmt_sum(amount)} so'm</b>\n\n"
+            "Iltimos, oyligingizdan oshmaydigan summani yozing."
         )
         return
     await state.update_data(avns_amount=amount)

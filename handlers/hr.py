@@ -51,6 +51,8 @@ def role_from_position(position):
         return ROLE_DIRECTOR
     if "buxgalter" in p or "bugalter" in p or "hisobchi" in p:
         return ROLE_ACCOUNTANT
+    if "texnik" in p or "tehnik" in p or "montyor" in p or "montaj" in p:
+        return ROLE_TECH
     return ROLE_EMPLOYEE
 
 
