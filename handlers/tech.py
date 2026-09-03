@@ -18,7 +18,11 @@ from database.db import (
 )
 import keyboards as kb
 from states import TechReplyForm, TechCancelForm, TechRatingForm
-from utils import safe_send, tech_task_text, close_request_notices
+from utils import (
+    safe_send, tech_task_text, close_request_notices,
+    mark_request_notices_taken, post_open_tech_task_to_channel,
+    update_tech_channel_card, reply_tech_channel_rating,
+)
 
 router = Router()
 
@@ -147,6 +151,19 @@ async def _task_taken(call: CallbackQuery):
     )
 
 
+async def _on_task_taken(bot: Bot, tid, me, keep_chat_id):
+    """Topshiriq egallangach: qolgan texniklardagi xabarni «boshqa oldi» matniga
+    almashtiradi va kanaldagi ochiq kartochkani (kim olgani) yangilaydi."""
+    taken_text = (
+        f"🔧 <b>Texnik topshiriq #{tid}</b>\n\n"
+        f"ℹ️ Bu ishni <b>{me.get('full_name') or '-'}</b> oldi."
+    )
+    await mark_request_notices_taken(
+        bot, "tech_task", tid, taken_text, keep_chat_id=keep_chat_id
+    )
+    await update_tech_channel_card(bot, tid)
+
+
 @router.callback_query(F.data.startswith("ttaccept:"))
 async def tech_task_accept(call: CallbackQuery, bot: Bot):
     """✅ Qabul qilish — topshiriqni ATOMIK egallaydi (assigned -> accepted)."""
@@ -158,8 +175,8 @@ async def tech_task_accept(call: CallbackQuery, bot: Bot):
     if not await q.accept_tech_task(tid, me["id"]):
         await _task_taken(call)
         return
-    # Qolgan texniklardagi shu topshiriq xabarini o'chiramiz (o'zimnikini qoldiramiz)
-    await close_request_notices(bot, "tech_task", tid, keep_chat_id=call.from_user.id)
+    # Qolgan texniklardagi xabar «boshqa oldi» ga o'zgaradi + kanal kartochkasi yangilanadi
+    await _on_task_taken(bot, tid, me, keep_chat_id=call.from_user.id)
     try:
         await call.message.edit_reply_markup(
             reply_markup=kb.tech_task_actions_kb(tid, "accepted")
@@ -175,6 +192,39 @@ async def tech_task_accept(call: CallbackQuery, bot: Bot):
     )
 
 
+async def _dismiss_for_me(call: CallbackQuery, toast: str):
+    """Topshiriqni FAQAT shu texnik xodimdan olib tashlaydi (umumiy topshiriqqa
+    tegmaydi — boshqa texniklarga qoladi)."""
+    if not await _is_tech(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    tid = int(call.data.split(":")[1])
+    try:
+        await q.delete_request_notice("tech_task", tid, call.from_user.id)
+    except Exception:
+        pass
+    try:
+        await call.message.delete()
+    except Exception:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    await call.answer(toast, show_alert=True)
+
+
+@router.callback_query(F.data.startswith("ttbusy:"))
+async def tech_task_busy(call: CallbackQuery):
+    """🙅 Men bandman — topshiriq shu xodimdan olib tashlanadi."""
+    await _dismiss_for_me(call, "Band ekaningiz belgilandi — topshiriq sizdan olib tashlandi.")
+
+
+@router.callback_query(F.data.startswith("ttignore:"))
+async def tech_task_ignore(call: CallbackQuery):
+    """🙈 E'tiborsiz qoldirish — topshiriq shu xodimdan olib tashlanadi."""
+    await _dismiss_for_me(call, "E'tiborsiz qoldirildi — topshiriq sizdan olib tashlandi.")
+
+
 @router.callback_query(F.data.startswith("tttom:"))
 async def tech_task_tomorrow(call: CallbackQuery, bot: Bot):
     """🕗 Ertaga boshlayman — topshiriqni egallaydi, boshlashni ertaga rejalaydi."""
@@ -186,8 +236,8 @@ async def tech_task_tomorrow(call: CallbackQuery, bot: Bot):
     if not await q.claim_tech_task(tid, me["id"], "tomorrow"):
         await _task_taken(call)
         return
-    # Qolgan texniklardagi shu topshiriq xabarini o'chiramiz (o'zimnikini qoldiramiz)
-    await close_request_notices(bot, "tech_task", tid, keep_chat_id=call.from_user.id)
+    # Qolgan texniklardagi xabar «boshqa oldi» ga o'zgaradi + kanal kartochkasi yangilanadi
+    await _on_task_taken(bot, tid, me, keep_chat_id=call.from_user.id)
     task = await q.get_tech_task(tid)
     try:
         await call.message.edit_reply_markup(
@@ -214,7 +264,7 @@ async def tech_task_start(call: CallbackQuery, bot: Bot):
     # 1) hali egasiz bo'lsa — egallab boshlaymiz
     claimed = await q.claim_tech_task(tid, me["id"], "in_progress")
     if claimed:
-        await close_request_notices(bot, "tech_task", tid, keep_chat_id=call.from_user.id)
+        await _on_task_taken(bot, tid, me, keep_chat_id=call.from_user.id)
     else:
         # 2) allaqachon o'zimnikida (qabul qilingan / ertaga) bo'lsa — boshlashga o'tkazamiz
         ok = await q.set_tech_task_status(
@@ -225,6 +275,7 @@ async def tech_task_start(call: CallbackQuery, bot: Bot):
         if not ok:
             await _task_taken(call)
             return
+        await update_tech_channel_card(bot, tid)
     task = await q.get_tech_task(tid)
     try:
         await call.message.edit_reply_markup(
@@ -261,6 +312,7 @@ async def tech_task_done(call: CallbackQuery, bot: Bot):
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+    await update_tech_channel_card(bot, tid)
     await call.message.answer(
         f"✅ Topshiriq #{tid} <b>bajarildi</b> deb belgilandi.\n"
         "Filial rahbariga ishingizni baholash so'rovi yuborildi. Rahmat!"
@@ -413,6 +465,180 @@ async def tech_task_cancel_finish(message: Message, state: FSMContext, bot: Bot)
     await _notify_hr_admin(bot, notice)
 
 
+# ==================== ISHNI BOSHQA TEXNIKKA O'TKAZISH ====================
+@router.callback_query(F.data.startswith("ttxfer:"))
+async def tech_task_transfer_start(call: CallbackQuery):
+    """🔁 Boshqaga o'tkazish — ega texnik boshqa texnik xodimni tanlaydi."""
+    if not await _is_tech(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    tid = int(call.data.split(":")[1])
+    me = await q.get_user(call.from_user.id)
+    task = await q.get_tech_task(tid)
+    if not task or task.get("tech_user_id") != me["id"]:
+        await call.answer("Bu topshiriq sizniki emas.", show_alert=True)
+        return
+    if task.get("status") not in ("accepted", "tomorrow", "in_progress"):
+        await call.answer("Bu bosqichda o'tkazib bo'lmaydi.", show_alert=True)
+        return
+    techs = [u for u in await q.list_users_by_role(ROLE_TECH) if u["id"] != me["id"]]
+    if not techs:
+        await call.answer("Boshqa texnik xodim yo'q.", show_alert=True)
+        return
+    await call.message.answer(
+        f"🔁 <b>Topshiriq #{tid} ni boshqa texnik xodimga o'tkazish</b>\n\n"
+        "Kimga o'tkazmoqchisiz? Tanlang:",
+        reply_markup=kb.tech_transfer_list_kb(tid, techs),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ttxfercancel:"))
+async def tech_task_transfer_cancel(call: CallbackQuery):
+    tid = int(call.data.split(":")[1])
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await call.answer("O'tkazish bekor qilindi.")
+
+
+@router.callback_query(F.data.startswith("ttxferto:"))
+async def tech_task_transfer_to(call: CallbackQuery, bot: Bot):
+    """Ega texnik qabul qiluvchini tanladi — taklif yuboriladi."""
+    if not await _is_tech(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    parts = call.data.split(":")
+    tid, to_id = int(parts[1]), int(parts[2])
+    me = await q.get_user(call.from_user.id)
+    task = await q.get_tech_task(tid)
+    if not task or task.get("tech_user_id") != me["id"]:
+        await call.answer("Bu topshiriq sizniki emas.", show_alert=True)
+        return
+    if not await q.set_tech_transfer(tid, me["id"], to_id):
+        await call.answer("O'tkazib bo'lmadi (holat o'zgargan).", show_alert=True)
+        return
+    target = await q.get_user_by_id(to_id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    sent = False
+    if target and target.get("tg_id"):
+        sent = await safe_send(
+            bot, target["tg_id"],
+            f"🔁 <b>Sizga texnik ish o'tkazilmoqda</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"👷 O'tkazayotgan xodim: <b>{me.get('full_name') or '-'}</b>\n\n"
+            + tech_task_text(task, for_tech=True) +
+            "\n\n❓ Bu ishni qabul qilasizmi? Tasdiqlasangiz — ishni siz bajarasiz.",
+            reply_markup=kb.tech_transfer_confirm_kb(tid),
+        )
+    if sent:
+        await call.message.answer(
+            f"✅ Taklif <b>{target.get('full_name') or '-'}</b> ga yuborildi. "
+            "U tasdiqlaguncha ish sizda qoladi."
+        )
+    else:
+        await q.clear_tech_transfer(tid)
+        await call.message.answer(
+            "⚠️ Qabul qiluvchiga yuborib bo'lmadi (u botni ishga tushirmagan bo'lishi mumkin)."
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ttxferok:"))
+async def tech_task_transfer_ok(call: CallbackQuery, bot: Bot):
+    """Qabul qiluvchi texnik o'tkazishni tasdiqladi — egalik unga o'tadi."""
+    if not await _is_tech(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    tid = int(call.data.split(":")[1])
+    me = await q.get_user(call.from_user.id)
+    task = await q.get_tech_task(tid)
+    if not task:
+        await call.answer("Topshiriq topilmadi.", show_alert=True)
+        return
+    if task.get("pending_transfer_to") != me["id"]:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu taklif endi mavjud emas.", show_alert=True)
+        return
+    prev_name = task.get("tech_name") or "-"
+    prev_tg = task.get("tech_tg")
+    if not await q.apply_tech_transfer(tid, me["id"], prev_name):
+        await call.answer("O'tkazib bo'lmadi (holat o'zgargan).", show_alert=True)
+        return
+    task = await q.get_tech_task(tid)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ Siz topshiriq #{tid} ni qabul qildingiz. Endi bu ishni siz bajarasiz.",
+        reply_markup=kb.tech_task_actions_kb(tid, task.get("status")),
+    )
+    # Muammo media
+    if task.get("src_chat_id") and task.get("src_message_id"):
+        try:
+            await bot.copy_message(
+                chat_id=call.from_user.id,
+                from_chat_id=task["src_chat_id"],
+                message_id=task["src_message_id"],
+            )
+        except Exception:
+            pass
+    await update_tech_channel_card(bot, tid)
+    if prev_tg:
+        await safe_send(
+            bot, prev_tg,
+            f"✅ <b>{me.get('full_name') or '-'}</b> topshiriq #{tid} ni qabul qildi — "
+            "ish unga o'tkazildi."
+        )
+    await _notify_hr_admin(
+        bot,
+        f"🔁 <b>Texnik ish o'tkazildi</b>\n"
+        f"🔧 Topshiriq: #{tid}\n"
+        f"🏢 Filial: {task.get('branch_name') or '-'}\n"
+        f"👷 {prev_name} → <b>{me.get('full_name') or '-'}</b>"
+    )
+    await call.answer("Qabul qilindi ✅")
+
+
+@router.callback_query(F.data.startswith("ttxferno:"))
+async def tech_task_transfer_no(call: CallbackQuery, bot: Bot):
+    """Qabul qiluvchi texnik o'tkazishni rad etdi — ish boshlang'ich egada qoladi."""
+    if not await _is_tech(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    tid = int(call.data.split(":")[1])
+    me = await q.get_user(call.from_user.id)
+    task = await q.get_tech_task(tid)
+    if not task or task.get("pending_transfer_to") != me["id"]:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu taklif endi mavjud emas.", show_alert=True)
+        return
+    await q.clear_tech_transfer(tid)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"❌ Siz topshiriq #{tid} ni rad etdingiz.")
+    if task.get("tech_tg"):
+        await safe_send(
+            bot, task["tech_tg"],
+            f"❌ <b>{me.get('full_name') or '-'}</b> topshiriq #{tid} ni rad etdi. "
+            "Ish sizda qoladi — o'zingiz bajarasiz yoki boshqa xodimga o'tkazasiz."
+        )
+    await call.answer("Rad etildi")
+
+
 # ==================== FILIAL RAHBARI BAHOLASHI ====================
 @router.callback_query(F.data.startswith("ttrate:"))
 async def tech_task_rate(call: CallbackQuery, bot: Bot, state: FSMContext):
@@ -479,9 +705,14 @@ async def _finalize_rating(bot: Bot, tid, review=None):
         f"👤 Baholadi (rahbar): {task.get('manager_name') or '-'}\n"
         f"⭐ Baho: {'⭐' * stars} ({stars}/5)" + review_line
     )
-    # Texnik ishlar kanaliga — to'liq statistika (sozlamalardan ulangan bo'lsa).
-    # Bu kanal HR/Direktor nazorati uchun; texnik xodimga shaxsan baho bormaydi.
-    await _post_task_to_channel(bot, tid)
+    # Texnik ishlar kanali: ochiq kartochka bo'lsa — uni yakunlangan holatga
+    # yangilaymiz va AYNAN shu murojaatga REPLY qilib baho + sharhni joylaymiz.
+    # Eski (kartochkasiz) topshiriqlar uchun — to'liq statistikali post (zaxira).
+    if task.get("channel_message_id"):
+        await update_tech_channel_card(bot, tid)
+        await reply_tech_channel_rating(bot, tid, review=review)
+    else:
+        await _post_task_to_channel(bot, tid)
 
 
 async def _post_task_to_channel(bot: Bot, tid):

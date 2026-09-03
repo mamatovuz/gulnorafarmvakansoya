@@ -697,6 +697,156 @@ async def close_request_notices(bot: Bot, kind, ref_id, keep_chat_id=None):
     return removed
 
 
+async def mark_request_notices_taken(bot: Bot, kind, ref_id, text, keep_chat_id=None):
+    """So'rov egallangach — qolgan xodimlardagi xabarni O'CHIRMAY, «boshqa oldi»
+    matniga almashtiradi (tugmalar olib tashlanadi). `keep_chat_id` — egallagan
+    xodim (uning xabarini handlerning o'zi yangilaydi)."""
+    try:
+        rows = await q.pop_request_notices(kind, ref_id)
+    except Exception:
+        return 0
+    changed = 0
+    for row in rows:
+        chat_id, message_id = row["chat_id"], row["message_id"]
+        if keep_chat_id is not None and int(chat_id) == int(keep_chat_id):
+            continue
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+            changed += 1
+            continue
+        except Exception:
+            pass
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except Exception:
+            pass
+    return changed
+
+
+# ---------------- TEXNIK ISHLAR KANALIDAGI OCHIQ KARTOCHKA ----------------
+# Topshiriq HR tomonidan tasdiqlanib texniklarga yuborilganda kanalga OCHIQ
+# kartochka joylanadi. Kim olgani/holati keyin text-edit bilan yangilanadi.
+# Rahbar baho + sharh bergach — shu kartochkaga REPLY qilib javob beriladi.
+def _tech_channel_owner_line(task):
+    tech_name = task.get("tech_name")
+    if not tech_name:
+        return "🕓 Ishni olgan: <i>hali hech kim olmagan</i>"
+    prev = task.get("prev_tech_name")
+    if prev:
+        return f"✅ Ishni olgan: <s>{prev}</s> → <b>{tech_name}</b>"
+    return f"✅ Ishni olgan: <b>{tech_name}</b>"
+
+
+def _tech_channel_status_line(status):
+    labels = {
+        "assigned": "🆕 Kutilmoqda",
+        "accepted": "🔧 Bajarilmoqda",
+        "tomorrow": "🔧 Bajarilmoqda",
+        "in_progress": "🔧 Bajarilmoqda",
+        "done": "✅ Bajarildi (baho kutilmoqda)",
+        "rated": "⭐ Yakunlandi",
+        "cancelled": "🚫 Bekor qilindi",
+        "closed": "🔒 Yopildi",
+    }
+    return f"📌 Holati: {labels.get(status, status or '-')}"
+
+
+def tech_channel_text(task):
+    """Kanaldagi ochiq kartochka matni (kim olgani + holati bilan)."""
+    lines = [
+        f"🔧 <b>Texnik ish #{task['id']}</b>",
+        "━━━━━━━━━━━━",
+        f"🏢 Filial: {_v(task, 'branch_name')}",
+        f"👤 Rahbar: {_v(task, 'manager_name')}",
+        f"🗂 Turi: {_v(task, 'kind')}",
+    ]
+    if task.get("details"):
+        lines.append(f"📝 Muammo: {task['details']}")
+    lines.append(f"⏰ Muddat: {_v(task, 'deadline')}")
+    lines.append("━━━━━━━━━━━━")
+    lines.append(_tech_channel_owner_line(task))
+    lines.append(_tech_channel_status_line(task.get("status")))
+    lines.append(f"🕐 So'rov sanasi: {_v(task, 'created_at')}")
+    return "\n".join(lines)
+
+
+async def post_open_tech_task_to_channel(bot: Bot, tid):
+    """Topshiriq texniklarga yuborilganda — texnik ishlar kanaliga OCHIQ kartochka
+    joylaydi (kim olgani keyin text-edit bilan yangilanadi)."""
+    channel = await q.get_setting("tech_channel")
+    if not channel:
+        return
+    task = await q.get_tech_task(tid)
+    if not task:
+        return
+    try:
+        msg = await bot.send_message(channel, tech_channel_text(task))
+    except Exception:
+        return
+    try:
+        await q.set_tech_task_channel(tid, channel, msg.message_id)
+    except Exception:
+        pass
+    # Muammo media (rasm/video) — kartochka tagiga bir marta ko'chiramiz
+    if task.get("src_chat_id") and task.get("src_message_id"):
+        try:
+            await bot.copy_message(
+                chat_id=channel,
+                from_chat_id=task["src_chat_id"],
+                message_id=task["src_message_id"],
+                reply_to_message_id=msg.message_id,
+            )
+        except Exception:
+            pass
+
+
+async def update_tech_channel_card(bot: Bot, tid):
+    """Kanaldagi ochiq kartochkani (kim olgani / holati) yangilaydi."""
+    task = await q.get_tech_task(tid)
+    if not task or not task.get("channel_chat_id") or not task.get("channel_message_id"):
+        return
+    try:
+        await bot.edit_message_text(
+            tech_channel_text(task),
+            chat_id=task["channel_chat_id"],
+            message_id=task["channel_message_id"],
+        )
+    except Exception:
+        pass
+
+
+async def reply_tech_channel_rating(bot: Bot, tid, review=None):
+    """Rahbar baho + sharh bergach — kanaldagi asl kartochkaga REPLY qilib
+    baho/sharhni joylaydi (aynan shu murojaatga bog'lab)."""
+    task = await q.get_tech_task(tid)
+    if not task:
+        return
+    channel = task.get("channel_chat_id") or await q.get_setting("tech_channel")
+    if not channel:
+        return
+    stars = int(task.get("rating") or 0)
+    text = (
+        "⭐ <b>Baho qo'yildi</b>\n"
+        f"👷 Texnik xodim: <b>{_v(task, 'tech_name')}</b>\n"
+        f"👤 Baholadi (rahbar): {_v(task, 'manager_name')}\n"
+        f"⭐ Baho: {'⭐' * stars} ({stars}/5)"
+    )
+    if review:
+        text += f"\n💬 Sharh: {review}"
+    kwargs = {}
+    if task.get("channel_message_id"):
+        kwargs["reply_to_message_id"] = task["channel_message_id"]
+    try:
+        await bot.send_message(channel, text, **kwargs)
+    except Exception:
+        try:
+            await bot.send_message(channel, text)
+        except Exception:
+            pass
+
+
 async def send_application_resume(bot: Bot, chat_id: int, app):
     """Ariza rezyume (CV/diplom) fayli bo'lsa yuboradi."""
     file_id = app.get("resume_file_id")

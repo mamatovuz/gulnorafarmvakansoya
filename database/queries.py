@@ -44,6 +44,27 @@ async def add_request_notice(kind, ref_id, chat_id, message_id):
         await db.close()
 
 
+async def delete_request_notice(kind, ref_id, chat_id):
+    """Bitta xodimdagi so'rov yozuvini o'chiradi (masalan «men bandman» / «e'tiborsiz»).
+    Xabarni Telegramdan o'chirish uchun (chat_id, message_id) ro'yxatini qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT chat_id, message_id FROM request_notices "
+            "WHERE kind=? AND ref_id=? AND chat_id=?",
+            (kind, int(ref_id), int(chat_id)),
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+        await db.execute(
+            "DELETE FROM request_notices WHERE kind=? AND ref_id=? AND chat_id=?",
+            (kind, int(ref_id), int(chat_id)),
+        )
+        await db.commit()
+        return rows
+    finally:
+        await db.close()
+
+
 async def pop_request_notices(kind, ref_id):
     """So'rovga tegishli barcha yuborilgan xabarlarni qaytaradi va yozuvni o'chiradi.
 
@@ -2066,6 +2087,67 @@ async def tech_task_counts(tech_user_id=None):
                   + rows.get("tomorrow", 0))
         done = rows.get("done", 0) + rows.get("rated", 0)
         return {"new": new, "active": active, "done": done}
+    finally:
+        await db.close()
+
+
+async def set_tech_task_channel(tid, chat_id, message_id):
+    """Kanaldagi ochiq kartochka xabar id sini saqlaydi (keyin edit/reply uchun)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_tasks SET channel_chat_id=?, channel_message_id=? WHERE id=?",
+            (int(chat_id), int(message_id), tid),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_tech_transfer(tid, from_tech_id, to_tech_id):
+    """Ishni boshqa texnikka o'tkazish taklifi: pending_transfer_to belgilanadi
+    (faqat hozirgi egasi va faol holatda). True/False."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET pending_transfer_to=? "
+            "WHERE id=? AND tech_user_id=? AND status IN "
+            "('accepted','tomorrow','in_progress')",
+            (int(to_tech_id), tid, int(from_tech_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def clear_tech_transfer(tid):
+    """O'tkazish taklifini bekor qiladi (rad etilganda)."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_tasks SET pending_transfer_to=NULL WHERE id=?", (tid,)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def apply_tech_transfer(tid, to_tech_id, prev_name):
+    """O'tkazishni tasdiqlash (ATOMIK): faqat taklif qilingan texnik
+    (pending_transfer_to) qabul qila oladi. Egalik yangi texnikka o'tadi,
+    oldingi egasi prev_tech_name ga yoziladi. True/False."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET tech_user_id=?, prev_tech_name=?, "
+            "pending_transfer_to=NULL "
+            "WHERE id=? AND pending_transfer_to=? AND status IN "
+            "('accepted','tomorrow','in_progress')",
+            (int(to_tech_id), prev_name, tid, int(to_tech_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
     finally:
         await db.close()
 

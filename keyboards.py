@@ -1395,20 +1395,45 @@ def tech_task_actions_kb(task_id, status):
     """Texnik xodim topshiriq tagidagi tugmalar — holatga qarab progressiv."""
     b = InlineKeyboardBuilder()
     if status == "assigned":
-        # Hali qabul qilinmagan — avval qabul qilinadi yoki bekor qilinadi
+        # Hali egasiz — qabul qilish / men bandman / e'tiborsiz qoldirish
+        # («men bandman» va «e'tiborsiz» — faqat shu xodimdan olib tashlaydi,
+        #  umumiy topshiriq bekor bo'lmaydi).
         b.button(text="✅ Qabul qilish", callback_data=f"ttaccept:{task_id}")
-        b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
+        b.button(text="🙅 Men bandman", callback_data=f"ttbusy:{task_id}")
+        b.button(text="🙈 E'tiborsiz qoldirish", callback_data=f"ttignore:{task_id}")
     elif status in ("accepted", "tomorrow"):
         b.button(text="▶️ Ishni boshladim", callback_data=f"ttstart:{task_id}")
+        b.button(text="🔁 Boshqaga o'tkazish", callback_data=f"ttxfer:{task_id}")
         b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
         b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
     elif status == "in_progress":
         b.button(text="✅ Tugatdim", callback_data=f"ttdone:{task_id}")
+        b.button(text="🔁 Boshqaga o'tkazish", callback_data=f"ttxfer:{task_id}")
         b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
         b.button(text="🚫 Bekor qilish", callback_data=f"ttcancel:{task_id}")
     elif status in ("done", "rated"):
         b.button(text="💬 Javob berish", callback_data=f"ttreply:{task_id}")
     b.adjust(1)
+    return b.as_markup()
+
+
+def tech_transfer_list_kb(task_id, techs):
+    """Ishni o'tkazish uchun boshqa texnik xodimlar ro'yxati (ism-familiya bilan)."""
+    b = InlineKeyboardBuilder()
+    for u in techs:
+        name = u.get("full_name") or f"ID {u.get('id')}"
+        b.button(text=f"👷 {name}", callback_data=f"ttxferto:{task_id}:{u['id']}")
+    b.button(text="⬅️ Bekor qilish", callback_data=f"ttxfercancel:{task_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_transfer_confirm_kb(task_id):
+    """Qabul qiluvchi texnik: ishni o'tkazishni tasdiqlash / rad etish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Tasdiqlayman", callback_data=f"ttxferok:{task_id}")
+    b.button(text="❌ Rad etaman", callback_data=f"ttxferno:{task_id}")
+    b.adjust(2)
     return b.as_markup()
 
 

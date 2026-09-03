@@ -656,6 +656,10 @@ CREATE TABLE IF NOT EXISTS tech_tasks (
     started_at TEXT,
     done_at TEXT,
     rated_at TEXT,
+    channel_chat_id INTEGER,          -- texnik ishlar kanalidagi ochiq kartochka
+    channel_message_id INTEGER,       -- (kim olgani text-edit bilan yangilanadi)
+    pending_transfer_to INTEGER,      -- boshqa texnikka o'tkazish taklifi (users.id)
+    prev_tech_name TEXT,              -- o'tkazishdan oldingi ega ismi (kartochkada)
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
@@ -714,6 +718,10 @@ TECH_TASK_COLUMNS = {
     "cancelled_at": "TEXT",
     "cancelled_by": "INTEGER",   # bekor qilgan (users.id)
     "manager_review": "TEXT",    # filial rahbari otzivi (baho bilan birga)
+    "channel_chat_id": "INTEGER",     # texnik ishlar kanalidagi ochiq kartochka
+    "channel_message_id": "INTEGER",  # (kim olgani text-edit bilan yangilanadi)
+    "pending_transfer_to": "INTEGER", # boshqa texnikka o'tkazish taklifi (users.id)
+    "prev_tech_name": "TEXT",         # o'tkazishdan oldingi ega ismi
 }
 
 APP_COLUMNS = {

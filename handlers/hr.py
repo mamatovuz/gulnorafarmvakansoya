@@ -25,7 +25,7 @@ from utils import (
     close_request_notices, post_interview_to_channel, update_interview_channel,
     interview_confirm_label, interview_attendance_label, REJECT_TEMPLATES,
     effective_reject_template, broadcast_trust,
-    staff_reg_text, tech_task_text,
+    staff_reg_text, tech_task_text, post_open_tech_task_to_channel,
 )
 from services import export
 
@@ -1872,6 +1872,8 @@ async def _assign_tech_task(call: CallbackQuery, bot: Bot, req, me, rid):
                 pass
     await q.add_log(call.from_user.id, me["full_name"], "texnik_topshiriq_yuborildi",
                     f"#{rid} -> {delivered} texnik")
+    # Texnik ishlar kanaliga — OCHIQ kartochka (kim olgani keyin yangilanadi)
+    await post_open_tech_task_to_channel(bot, tid)
     await call.message.answer(
         f"✅ So'rov #{rid} tasdiqlandi va <b>{delivered} ta texnik xodimga</b> yuborildi.\n"
         "Ular ishni boshlab/tugatgach sizga xabar keladi."
