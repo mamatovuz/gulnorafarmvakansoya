@@ -775,13 +775,11 @@ async def hr_salary_offer_start(call: CallbackQuery, state: FSMContext):
         return
     await state.set_state(SalaryNegoForm.hr_amount)
     await state.update_data(sal_aid=aid)
-    exp = a.get("expected_salary")
-    hint = f"\n\n💵 Nomzod kutgan oylik: <b>{exp}</b>" if exp else ""
     await call.message.answer(
         f"💰 <b>Oylik taklifi</b>\n\n"
         f"👤 {a.get('full_name')} (ariza #{aid})\n"
         f"Nomzodga taklif qilinadigan oylik summasini yozing "
-        f"(masalan: <b>4 500 000 so'm</b>):{hint}"
+        f"(masalan: <b>4 500 000 so'm</b>):"
     )
     await call.answer()
 

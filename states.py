@@ -27,7 +27,6 @@ class Apply(StatesGroup):
     marital = State()          # 13
     children = State()         # 13b
     prev_salary = State()      # 14
-    expected_salary = State()  # 15
     computer_level = State()   # 16 kompyuter savodxonligi (Word/Excel o'rniga)
     languages = State()        # 18
     work_intent = State()      # 19

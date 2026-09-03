@@ -253,7 +253,6 @@ def application_text(a, full=False):
             f"👨‍👩‍👧 Oilaviy holati: {_v(a, 'marital')}",
             f"👶 Farzandlari: {_v(a, 'children')}",
             f"💰 Oldingi maosh: {_v(a, 'prev_salary')}",
-            f"💵 Kutilayotgan maosh: {_v(a, 'expected_salary')}",
             f"💻 Kompyuter savodxonligi: {computer_level_label(a)}",
             f"🌍 Tillar: {_v(a, 'languages')}",
             f"📅 Ishlash niyati: {_v(a, 'work_intent')}",
@@ -286,7 +285,6 @@ APPLICATION_REQUIRED = [
     ("marital", "marital", "👨‍👩‍👧 Oilaviy holati"),
     ("children", "children", "👶 Farzandlari"),
     ("prev_salary", "prev_salary", "💰 Oldingi maosh"),
-    ("expected_salary", "expected_salary", "💵 Kutilayotgan maosh"),
     ("computer_level", "computer_level", "💻 Kompyuter savodxonligi"),
     ("languages", "languages", "🌍 Tillar"),
     ("work_intent", "work_intent", "📅 Ishlash niyati"),
@@ -342,7 +340,6 @@ def application_summary(d):
         f"👨‍👩‍👧 Oilaviy holati: {g('marital')}\n"
         f"👶 Farzandlari: {g('children')}\n"
         f"💰 Oldingi maosh: {g('prev_salary')}\n"
-        f"💵 Kutilayotgan maosh: {g('expected_salary')}\n"
         f"💻 Kompyuter savodxonligi: {g('computer_level')}\n"
         f"🌍 Tillar: {g('languages')}\n"
         f"📅 Ishlash niyati: {g('work_intent')}\n"
@@ -1050,7 +1047,6 @@ def application_caption(a, header=None):
         f"👶 Farzandlari: {_v(a, 'children')}",
         SEP,
         f"💰 Oldingi maosh: {_v(a, 'prev_salary')}",
-        f"💵 Kutayotgan maosh: {_v(a, 'expected_salary')}",
         f"📅 Ishlash niyati: {_v(a, 'work_intent')}",
         f"✍️ Sababi: {_clip(a.get('reason'))}",
     ]

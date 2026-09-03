@@ -233,7 +233,7 @@ async def apply_from_vacancy(call: CallbackQuery, state: FSMContext, lang: str =
     Apply.address,
     Apply.branch, Apply.position, Apply.position_extra, Apply.uniform, Apply.shift,
     Apply.education, Apply.exp_years, Apply.prev_years, Apply.criminal,
-    Apply.marital, Apply.children, Apply.prev_salary, Apply.expected_salary,
+    Apply.marital, Apply.children, Apply.prev_salary,
     Apply.computer_level, Apply.languages, Apply.work_intent,
     Apply.reason, Apply.phone, Apply.photo, Apply.resume, Apply.edit_field,
     Apply.edit_photo,
@@ -506,25 +506,14 @@ async def a_children(message: Message, state: FSMContext, lang: str = None):
 @router.message(Apply.prev_salary, F.text)
 async def a_prevsalary(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(prev_salary=message.text.strip())
-    await state.set_state(Apply.expected_salary)
-    await message.answer(
-        f"{q_head(17, lang)}\n{t('apply.expected_salary', lang)}",
-        reply_markup=kb.cancel_kb(lang),
-    )
-
-
-# 17) Kutilayotgan maosh
-@router.message(Apply.expected_salary, F.text)
-async def a_expsalary(message: Message, state: FSMContext, lang: str = None):
-    await state.update_data(expected_salary=message.text.strip())
     await state.set_state(Apply.computer_level)
     await message.answer(
-        f"{q_head(18, lang)}\n{t('apply.computer', lang)}",
+        f"{q_head(17, lang)}\n{t('apply.computer', lang)}",
         reply_markup=kb.apply_computer_kb(lang),
     )
 
 
-# 18) Kompyuter savodxonligi (Word va Excel savollari o'rniga bitta savol)
+# 17) Kompyuter savodxonligi (Word va Excel savollari o'rniga bitta savol)
 @router.message(Apply.computer_level, F.text)
 async def a_computer(message: Message, state: FSMContext, lang: str = None):
     value = canon("computer", message.text)
@@ -537,7 +526,7 @@ async def a_computer(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(computer_level=value)
     await state.set_state(Apply.languages)
     await message.answer(
-        f"{q_head(19, lang)}\n{t('apply.languages', lang)}",
+        f"{q_head(18, lang)}\n{t('apply.languages', lang)}",
         reply_markup=kb.cancel_kb(lang),
     )
 
@@ -548,7 +537,7 @@ async def a_languages(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(languages=message.text.strip())
     await state.set_state(Apply.work_intent)
     await message.answer(
-        f"{q_head(20, lang)}\n{t('apply.work_intent', lang)}",
+        f"{q_head(19, lang)}\n{t('apply.work_intent', lang)}",
         reply_markup=kb.apply_work_intent_kb(lang),
     )
 
@@ -559,7 +548,7 @@ async def a_intent(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(work_intent=canon("work_intent", message.text))
     await state.set_state(Apply.reason)
     await message.answer(
-        f"{q_head(21, lang)}\n{t('apply.reason', lang)}",
+        f"{q_head(20, lang)}\n{t('apply.reason', lang)}",
         reply_markup=kb.cancel_kb(lang),
     )
 
@@ -570,7 +559,7 @@ async def a_reason(message: Message, state: FSMContext, lang: str = None):
     await state.update_data(reason=message.text.strip())
     await state.set_state(Apply.phone)
     await message.answer(
-        f"{q_head(22, lang)}\n{t('apply.phone', lang)}",
+        f"{q_head(21, lang)}\n{t('apply.phone', lang)}",
         reply_markup=kb.apply_phone_kb(lang),
     )
 
@@ -604,7 +593,7 @@ async def _ask_photo(message: Message, state: FSMContext, lang=None):
     """Oxirgi 10 kunda tushgan rasm — majburiy."""
     await state.set_state(Apply.photo)
     await message.answer(
-        f"{q_head(23, lang)}\n{t('apply.photo', lang)}",
+        f"{q_head(22, lang)}\n{t('apply.photo', lang)}",
         reply_markup=kb.cancel_kb(lang),
     )
 
@@ -626,7 +615,7 @@ async def a_photo_invalid(message: Message, lang: str = None):
 async def _ask_resume(message: Message, state: FSMContext, lang=None):
     await state.set_state(Apply.resume)
     await message.answer(
-        f"{q_head(24, lang)}\n{t('apply.resume', lang)}",
+        f"{q_head(23, lang)}\n{t('apply.resume', lang)}",
         reply_markup=kb.apply_resume_kb(lang),
     )
 
@@ -699,7 +688,6 @@ EDIT_PROMPTS = {
     "exp_years": "💼 Umumiy tajriba (yil):",
     "prev_years": "🏢 Oldingi ish joyida (yil):",
     "prev_salary": "💰 Oldingi maosh:",
-    "expected_salary": "💵 Kutilayotgan maosh:",
     "languages": "🌍 Tillar:",
     "work_intent": "📅 Ishlash niyati:",
     "reason": "✍️ Sabab:",
@@ -883,7 +871,7 @@ async def app_confirm_cb(call: CallbackQuery, state: FSMContext, bot: Bot):
         "full_name", "birth_date", "gender", "city", "district", "address", "position",
         "position_extra", "uniform_status", "shift", "education", "exp_years",
         "prev_years", "criminal", "marital", "children", "prev_salary",
-        "expected_salary", "computer_level", "languages",
+        "computer_level", "languages",
         "work_intent", "reason", "phone",
         "resume_file_id", "resume_type", "photo_file_id",
     ]

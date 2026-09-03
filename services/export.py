@@ -51,7 +51,7 @@ def build_applications_xlsx(apps):
     headers = [
         "#", "Ism-sharif", "Lavozim", "Filial", "Status", "Telefon",
         "Shahar", "Tuman", "Tug'ilgan sana", "Ma'lumot", "Tajriba",
-        "Forma", "Kutilayotgan maosh", "Sana",
+        "Forma", "Sana",
     ]
     uniform = {"yes": "Bor", "no": "Yo'q"}
     rows = []
@@ -69,7 +69,6 @@ def build_applications_xlsx(apps):
             a.get("education") or "-",
             a.get("exp_years") or "-",
             uniform.get(a.get("uniform_status"), "Noma'lum"),
-            a.get("expected_salary") or "-",
             a.get("created_at") or "-",
         ])
     _write_sheet(ws, headers, rows)

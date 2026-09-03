@@ -394,7 +394,6 @@ EDIT_FIELDS = [
     ("marital", "👨‍👩‍👧 Oilaviy holat"),
     ("children", "👶 Farzand"),
     ("prev_salary", "💰 Oldingi maosh"),
-    ("expected_salary", "💵 Kutilayotgan maosh"),
     ("computer_level", "💻 Kompyuter savodxonligi"),
     ("languages", "🌍 Tillar"),
     ("work_intent", "📅 Ishlash niyati"),

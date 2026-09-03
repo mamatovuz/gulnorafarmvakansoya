@@ -211,10 +211,6 @@ TEXTS = {
         "uz": "💰 Oxirgi ish joyingizdagi maoshingiz qancha edi?",
         "ru": "💰 Какая была зарплата на последнем месте работы?",
     },
-    "apply.expected_salary": {
-        "uz": "💵 Qancha maoshga ishlashni xohlaysiz?",
-        "ru": "💵 На какую зарплату вы рассчитываете?",
-    },
     "apply.computer": {
         "uz": "💻 Kompyuter savodxonligingiz bormi?",
         "ru": "💻 Владеете ли вы компьютером?",
