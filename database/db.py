@@ -533,6 +533,25 @@ CREATE TABLE IF NOT EXISTS termination_requests (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS dismissed_employees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,                     -- ishdan bo'shatilgan xodim (users.id)
+    tg_id INTEGER,
+    full_name TEXT,
+    phone TEXT,
+    branch_id INTEGER,                   -- oldingi ishlagan filiali
+    branch_name TEXT,
+    position TEXT,
+    monthly_salary TEXT,                 -- oldingi maoshi
+    role TEXT,                           -- oldingi roli (pharmacist/employee...)
+    profile_json TEXT,                   -- profil ma'lumotlarining to'liq nusxasi (JSON)
+    reason TEXT,                         -- bo'shatish sababi (bo'lsa)
+    dismissed_by INTEGER,                -- kim bo'shatgani (users.id)
+    dismissed_at TEXT DEFAULT (datetime('now','+5 hours')),
+    rehired INTEGER NOT NULL DEFAULT 0,  -- ishga qayta olingan bo'lsa 1
+    rehired_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT

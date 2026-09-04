@@ -647,7 +647,7 @@ async def sr_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"✅ <b>So'rovingiz HR bo'limiga yuborildi!</b>\n\n"
         f"So'rov raqami: #{rid}\n\n"
         "HR bo'limi ma'lumotlaringizni tekshirib, tasdiqlaydi. Tasdiqlangach sizga "
-        "«📍 Ishga keldim» davomat paneli ochiladi."
+        "xodim menyusi ochiladi."
     )
     await call.answer("Yuborildi ✅")
 
@@ -849,8 +849,7 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         bot, reg["user_tg"],
         "🎉 <b>Tabriklaymiz!</b>\n\n"
         "Siz <b>Gulnora Farm hodimi</b> sifatida tasdiqlandingiz.\n"
-        f"Sizga <b>{ROLE_LABELS.get(role, role)}</b> paneli va «📍 Ishga keldim» "
-        "davomat tugmasi ochildi.\n"
+        f"Sizga <b>{ROLE_LABELS.get(role, role)}</b> paneli ochildi.\n"
         "Yangilangan menyuni ko'rish uchun /start bosing.",
         reply_markup=kb.main_menu(role),
     )

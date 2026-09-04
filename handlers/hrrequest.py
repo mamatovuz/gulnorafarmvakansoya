@@ -358,8 +358,7 @@ async def hr_work_hours_approve(call: CallbackQuery, bot: Bot):
             bot, req["user_tg"],
             "✅ <b>Ish vaqtingiz o'zgartirildi!</b>\n\n"
             f"🕒 Yangi ish vaqtingiz: <b>{new_hours}</b>\n\n"
-            "Endi «📍 Ishga keldim» va «🏁 Ishdan ketdim» aynan shu vaqtdan "
-            "hisoblanadi.",
+            "Ish vaqti eslatmalari shu vaqtga moslashtiriladi.",
         )
 
 

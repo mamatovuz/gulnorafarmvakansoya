@@ -259,7 +259,9 @@ def application_text(a, full=False):
             f"✍️ Sababi: {_v(a, 'reason')}",
         ]
         if a.get("hr_comment"):
-            parts.append(f"🗒 HR izohi: {a['hr_comment']}")
+            is_rejected = (a.get("status") == "rejected")
+            heading = "❌ <b>Rad etish javobi</b>" if is_rejected else "🗒 <b>HR izohi</b>"
+            parts.append(f"\n━━━━━━━━━━━━\n{heading}\n{a['hr_comment']}")
     parts.append(f"\n🗓 Yuborilgan: {_v(a, 'created_at')}")
     return "\n".join(parts)
 
@@ -994,6 +996,14 @@ REJECT_REASON_TEMPLATES = {
         "to'liq bo'lmagani sababli arizangiz rad etildi.\n\nMa'lumotlaringizni "
         "to'ldirib, qayta murojaat qilishingiz mumkin. Rahmat!",
     ),
+    "diploma_mismatch": (
+        "🎓 Diplom mutaxassisligi mos emas",
+        "Assalomu alaykum!\n\n"
+        "Arizangizni ko'rib chiqdik. Afsuski, diplomingizdagi mutaxassislik "
+        "murojaat qilgan lavozim talablariga mos kelmagani sababli arizangiz "
+        "rad etildi.\n\nMos mutaxassislik bo'yicha o'rin bo'lsa, sizni yana "
+        "ko'rib chiqishdan mamnun bo'lamiz. Omad tilaymiz!",
+    ),
     "location": (
         "📍 Manzil mos emas",
         "Assalomu alaykum!\n\n"
@@ -1529,7 +1539,10 @@ def days_left_until(iso):
 
 
 def probation_text(p, stats=None):
-    """Sinov / o'rganuvchi muddati kartochkasi (ixtiyoriy davomat statistikasi bilan)."""
+    """Sinov / o'rganuvchi muddati kartochkasi.
+
+    Eslatma: `stats` parametri eskilik uchun qoldirilgan, lekin endi ishlatilmaydi
+    (kunlik davomat tizimi olib tashlangan)."""
     left = days_left_until(p.get("end_date"))
     if p.get("status") == "finished" or (left is not None and left < 0):
         state = "🏁 Tugagan"
@@ -1550,21 +1563,6 @@ def probation_text(p, stats=None):
         f"📅 Boshlanishi: {iso_to_display(p.get('start_date'))}",
         f"🏁 Tugashi: {iso_to_display(p.get('end_date'))} ({p.get('days', 15)} kun)",
     ]
-    if stats is not None:
-        present = stats.get("present_days", 0) or 0
-        total = p.get("days", 15) or 15
-        # o'tgan kunlar (bugungacha), sinov davridan oshib ketmasin
-        elapsed = total
-        dl = days_left_until(p.get("end_date"))
-        if dl is not None and dl > 0:
-            elapsed = max(0, total - dl)
-        absent = max(0, elapsed - present)
-        lines += [
-            "\n📊 <b>Davomat statistikasi</b>",
-            f"✅ Kelgan kunlari: <b>{present}</b>",
-            f"❌ Kelmagan kunlari: <b>{absent}</b>",
-            f"⏰ Kechikkan: {stats.get('lates', 0) or 0} marta · 🏃 Erta ketgan: {stats.get('earlies', 0) or 0} marta",
-        ]
     return "\n".join(lines)
 
 

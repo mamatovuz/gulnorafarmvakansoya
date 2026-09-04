@@ -62,14 +62,10 @@ async def acc_branch_view(call: CallbackQuery):
     bid = int(call.data.split(":")[1])
     branch = await q.get_branch(bid)
     employees = await q.list_employee_profiles(branch_id=bid)
-    present = await q.attendance_present_by_employee(period="day", branch_id=bid)
-    absent = await q.attendance_absent_today(branch_id=bid)
     lines = [
         f"🏢 <b>{branch['name'] if branch else 'Filial'}</b>",
         "━━━━━━━━━━━━",
         f"👥 Xodimlar: <b>{len(employees)}</b>",
-        f"✅ Bugun kelgan: <b>{len(present)}</b>",
-        f"❌ Bugun kelmagan: <b>{len(absent)}</b>",
         "",
         "Xodimni tanlab oylik/jarima kiritishingiz mumkin 👇",
     ]
@@ -654,52 +650,27 @@ def _fmt_hms(seconds):
 
 
 async def _compute_final_salary(uid):
-    """Yakuniy oylikni barcha chegirmalar bilan hisoblaydi. Dict qaytaradi.
+    """Yakuniy oylikni chegirmalar bilan hisoblaydi. Dict qaytaradi.
 
-    Kunlik stavka = oylik ÷ oydagi ish kunlari (dam kunlari chiqarib tashlangan).
-    Kelmagan kun = kunlik × kunlar. Kechikish = jami kechikkan sekund × (kunlik
-    ÷ kunlik ish sekundi) — ya'ni ishlamagan vaqt uchun ayiriladi."""
+    Chegirmalar: jarimalar, olingan avans, dorilar va KPI kesish. Davomat
+    (kelmagan kun / kechikish) tizimdan olib tashlangani uchun endi
+    hisobga olinmaydi."""
     profile = await q.get_employee_profile(uid)
     period = _period_now()
     base = parse_money((profile or {}).get("monthly_salary")) or 0
-    rest_wd = _rest_weekday((profile or {}).get("rest_day"))
-    today = now_tk()
-
-    # Kunlik stavka — butun oydagi ish kunlariga bo'linadi
-    full_workdays = _month_workdays(period, rest_wd, today, upto_today=False)
-    workdays_so_far = _month_workdays(period, rest_wd, today, upto_today=True)
-    daily = base / full_workdays if (base and full_workdays) else 0
-
-    stats = await q.attendance_month_stats(uid, period)
-    present = stats.get("present_days", 0) or 0
-    late_days = stats.get("late_days", 0) or 0
-    late_seconds = stats.get("late_seconds", 0) or 0
-
-    absent_days = max(0, workdays_so_far - present)
-    absent_sum = round(absent_days * daily)
-
-    # Kechikish: har sekund narxi = kunlik ÷ kunlik ish sekundi
-    day_secs = _workday_seconds((profile or {}).get("work_hours"))
-    per_second = daily / day_secs if (daily and day_secs) else 0
-    late_sum = round(late_seconds * per_second)
-    attendance_ded = absent_sum + late_sum
 
     fines_sum = await q.fines_total(uid, period)
     advance_sum = await q.advance_total(uid, period)
     med_sum, med_cnt = await q.medicines_total(uid, period)
     kpi_sum, kpi_cnt = await q.deductions_total(uid, period)
 
-    final = base - attendance_ded - fines_sum - advance_sum - med_sum - kpi_sum
+    final = base - fines_sum - advance_sum - med_sum - kpi_sum
     return {
         "profile": profile, "period": period, "base": base,
-        "present": present, "absent_days": absent_days, "late_days": late_days,
-        "late_seconds": late_seconds,
-        "absent_sum": absent_sum, "late_sum": late_sum,
         "fines_sum": fines_sum, "advance_sum": advance_sum,
         "med_sum": med_sum, "med_cnt": med_cnt,
         "kpi_sum": kpi_sum, "kpi_cnt": kpi_cnt,
-        "daily": round(daily), "full_workdays": full_workdays,
-        "workdays": workdays_so_far, "final": max(0, round(final)),
+        "final": max(0, round(final)),
     }
 
 
@@ -735,25 +706,14 @@ def _final_salary_text(r, name, for_employee=False):
     def line(label, value):
         return f"➖ {label}: <b>{fmt_money(value)}</b>" if value else None
 
-    late_note = ""
-    if r.get("late_seconds"):
-        late_note = f" (jami {_fmt_hms(r['late_seconds'])})"
-
     head = "🧮 <b>Oylik hisobi</b>" if not for_employee else "🧾 <b>Oylik hisobotingiz</b>"
     parts = [
         head,
         f"👤 {name} · 📆 {r['period']}",
         "━━━━━━━━━━━━",
         f"💰 Asosiy oylik: <b>{fmt_money(r['base'])}</b>",
-        f"📈 Kunlik stavka: <b>{fmt_money(r['daily'])}</b> "
-        f"(oylik ÷ {r['full_workdays']} ish kuni)",
-        "",
-        f"📊 Davomat: kelgan <b>{r['present']}</b> / ish kuni <b>{r['workdays']}</b> · "
-        f"kelmagan <b>{r['absent_days']}</b> · kechikkan <b>{r['late_days']}</b>{late_note}",
     ]
     ded_lines = [
-        line("Kelmagan kunlar", r["absent_sum"]),
-        line("Kechikishlar", r["late_sum"]),
         line("Jarimalar", r["fines_sum"]),
         line("Olingan avans", r["advance_sum"]),
         line("Dorilar", r["med_sum"]),
@@ -770,15 +730,10 @@ def _final_salary_text(r, name, for_employee=False):
         "━━━━━━━━━━━━",
         f"✅ <b>Qo'lga tegadigan oylik: {fmt_money(r['final'])}</b>",
     ]
-    if not for_employee:
+    if for_employee:
         parts.append(
-            "\n<i>Kelmagan/kechikish davomatdan avtomatik hisoblangan "
-            "(kunlik = oylik ÷ ish kunlari; dam kunlari hisobga olinmaydi).</i>"
-        )
-    else:
-        parts.append(
-            "\n<i>Kechikish sekundlab, kelmagan kunlar esa kunlik stavka bo'yicha "
-            "hisoblandi. Savollar bo'lsa moliya bo'limiga murojaat qiling.</i>"
+            "\n<i>Jarima, avans, dori va KPI kesish hisobga olindi. "
+            "Savollar bo'lsa moliya bo'limiga murojaat qiling.</i>"
         )
     return "\n".join(parts)
 

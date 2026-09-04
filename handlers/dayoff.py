@@ -127,13 +127,22 @@ async def dayoff_list(message: Message):
         profile = await q.get_employee_profile_by_tg(message.from_user.id)
         branch_id = user.get("branch_id") or (profile.get("branch_id") if profile else None)
     reqs = await q.list_dayoff_requests(status="new", branch_id=branch_id, limit=30)
-    if not reqs:
-        await message.answer("🛌 Yangi dam olish so'rovlari yo'q.")
+    approved = await q.list_dayoff_requests(status="approved", branch_id=branch_id, limit=20)
+    if not reqs and not approved:
+        await message.answer("🛌 Dam olish so'rovlari yo'q.")
         return
-    await message.answer(
-        f"🛌 <b>Dam olish so'rovlari</b>\n\nJami: <b>{len(reqs)}</b> ta\nTanlang:",
-        reply_markup=kb.dayoff_list_kb(reqs),
-    )
+    if reqs:
+        await message.answer(
+            f"🛌 <b>Yangi dam olish so'rovlari</b>\n\nJami: <b>{len(reqs)}</b> ta\nTanlang:",
+            reply_markup=kb.dayoff_list_kb(reqs),
+        )
+    if approved:
+        await message.answer(
+            "✅ <b>Tasdiqlangan so'rovlar</b>\n\n"
+            "Xodim ishga qaytsa yoki kun o'zgarsa — tanlab, dam kunini tahrirlashingiz "
+            "mumkin:",
+            reply_markup=kb.dayoff_list_kb(approved),
+        )
 
 
 @router.callback_query(F.data.startswith("doview:"))
@@ -146,9 +155,81 @@ async def dayoff_view(call: CallbackQuery):
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
-    markup = kb.dayoff_actions_kb(req["id"]) if req.get("status") == "new" else None
+    if req.get("status") == "new":
+        markup = kb.dayoff_actions_kb(req["id"])
+    elif req.get("status") == "approved":
+        markup = kb.dayoff_edit_actions_kb(req["id"])
+    else:
+        markup = None
     await call.message.answer(_req_text(req), reply_markup=markup)
     await call.answer()
+
+
+# ---------------- TASDIQLANGAN SO'ROVNI TAHRIRLASH (HR) ----------------
+@router.callback_query(F.data.startswith("doedit:"))
+async def dayoff_edit_start(call: CallbackQuery):
+    user = await q.get_user(call.from_user.id)
+    if not await _can_handle(user):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    req = await q.get_dayoff_request(rid)
+    if not req:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"✏️ <b>Dam kunini o'zgartirish</b> — {req.get('full_name') or '-'}\n"
+        f"📆 Hozirgi (tasdiqlangan) dam kuni: <b>{req.get('to_day') or '-'}</b>\n\n"
+        "Xodim ishga qaytsa — <b>oldingi ish kunini</b>, kun o'zgarsa — yangi dam "
+        "kunini tanlang:",
+        reply_markup=kb.dayoff_edit_days_kb(rid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("doeday:"))
+async def dayoff_edit_apply(call: CallbackQuery, bot: Bot):
+    user = await q.get_user(call.from_user.id)
+    if not await _can_handle(user):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, rid, idx = call.data.split(":")
+    rid = int(rid)
+    req = await q.get_dayoff_request(rid)
+    if not req:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    try:
+        new_day = kb.WEEK_DAYS[int(idx)]
+    except (ValueError, IndexError):
+        await call.answer("Kun noto'g'ri.", show_alert=True)
+        return
+    old_day = req.get("to_day")
+    # Xodim profilidagi dam olish kunini yangilaymiz
+    await q.update_rest_day(req["user_id"], new_day)
+    # So'rovning tasdiqlangan dam kunini ham yangilab qo'yamiz
+    await q.update_dayoff_request_day(rid, new_day)
+    await q.add_log(
+        call.from_user.id, user.get("full_name"), "dam_olish_tahrir",
+        f"#{rid}: {old_day} -> {new_day}",
+    )
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>Dam olish kuni yangilandi</b>\n"
+        f"👤 {req.get('full_name') or '-'}\n"
+        f"📆 {old_day or '-'} → <b>{new_day}</b>"
+    )
+    await call.answer("Yangilandi ✅")
+    if req.get("user_tg"):
+        await safe_send(
+            bot, req["user_tg"],
+            "🔄 <b>Dam olish kuningiz yangilandi</b>\n\n"
+            f"📆 Yangi dam olish kuningiz: <b>{new_day}</b>\n"
+            "Savollar bo'lsa HR bo'limiga murojaat qiling.",
+        )
 
 
 # ---------------- TASDIQLASH / RAD ----------------

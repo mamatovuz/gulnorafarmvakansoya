@@ -88,6 +88,12 @@ class SearchForm(StatesGroup):
     query = State()
 
 
+class DismissedForm(StatesGroup):
+    """Ishdan bo'shaganlarni ism bo'yicha qidirish va ishga qayta olish."""
+    search = State()          # ism bo'yicha qidiruv
+    rehire_salary = State()   # ishga qayta olishda yangi maosh
+
+
 class EmployeeSearchForm(StatesGroup):
     """HR/admin xodimlarni ism, username, telefon yoki lavozim bo'yicha izlaydi."""
     query = State()

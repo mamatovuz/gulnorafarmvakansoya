@@ -129,11 +129,8 @@ async def _check_probations(bot: Bot):
 
         # Sinov muddati tugadi — HR ga statistika bilan xabar
         elif left <= 0 and not p.get("hr_end_sent"):
-            stats = await q.probation_attendance_stats(
-                p["user_id"], p.get("start_date"), p.get("end_date")
-            )
             header = f"🏁 <b>{noun} tugadi</b>\n\n"
-            body = probation_text({**p, "status": "finished"}, stats=stats)
+            body = probation_text({**p, "status": "finished"})
             for tid in hr_ids:
                 await safe_send(bot, tid, header + body)
             await q.mark_probation_flag(p["id"], "hr_end_sent")
@@ -148,51 +145,6 @@ async def probation_reminder_loop(bot: Bot, interval_seconds=3600):
             raise
         except Exception:
             logger.exception("Sinov muddati eslatmalarini yuborishda xatolik")
-        await asyncio.sleep(interval_seconds)
-
-
-# ---------------- PERIODIK JOYLASHUV TEKSHIRUVI ----------------
-async def _run_location_checks(bot: Bot):
-    enabled = await q.get_setting("loc_check_enabled", "1")
-    if str(enabled) != "1":
-        return
-    try:
-        interval = float(await q.get_setting("loc_check_interval_hours", "2") or 2)
-    except (TypeError, ValueError):
-        interval = 2.0
-    # Javobsiz qolgan eski tekshiruvlarni 'missed' qilamiz
-    await q.mark_stale_location_checks(minutes=30)
-    now_hm = now_tk().strftime("%H:%M")
-    due = await q.attendance_due_for_check(interval)
-    for row in due:
-        tg_id = row.get("tg_id")
-        if not tg_id:
-            continue
-        # Faqat ish vaqti ichida so'raymiz (masalan 08:00–17:00).
-        # Ish vaqtidan keyin xodimni bezovta qilmaymiz.
-        start, end = _parse_work_hours(row.get("work_hours"))
-        if start and end and not (start <= now_hm <= end):
-            continue
-        await q.add_location_check(row["id"], row["user_id"], row.get("branch_id"), kind="auto")
-        await q.touch_attendance_prompt(row["id"])
-        await safe_send(
-            bot, tg_id,
-            "📍 <b>Ish joyi tekshiruvi</b>\n\n"
-            "Hozir siz ish joyingizda ekaningizni tasdiqlash uchun joriy "
-            "<b>joylashuvingizni</b> yuboring.\n"
-            "Pastdagi «📍 Joylashuvni yuborish» tugmasidan foydalaning.",
-            reply_markup=kb.attendance_location_kb(),
-        )
-
-
-async def location_check_loop(bot: Bot, interval_seconds=60):
-    while True:
-        try:
-            await _run_location_checks(bot)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Periodik joylashuv tekshiruvida xatolik")
         await asyncio.sleep(interval_seconds)
 
 
@@ -433,71 +385,7 @@ async def dayoff_report_loop(bot: Bot, interval_seconds=60):
         await asyncio.sleep(interval_seconds)
 
 
-# ---------------- KUNLIK DAVOMAT: 20:00 DIREKTORGA EXCEL ----------------
-async def _run_director_report(bot: Bot):
-    now = now_tk()
-    hhmm = await q.get_setting("director_report_time", "20:00")
-    if not _time_reached(now, hhmm, "20:00"):
-        return
-    date_iso = now.strftime("%Y-%m-%d")
-    flag_key = f"director_report_sent:{date_iso}"
-    if str(await q.get_setting(flag_key, "0")) == "1":
-        return
-    from services import export
-    branches = await q.list_branches()
-    branches_data = []
-    for br in branches:
-        profiles = await q.list_employee_profiles(branch_id=br["id"])
-        total = len(profiles)
-        if total == 0:
-            continue
-        detail = await q.attendance_detail(period="day", branch_id=br["id"], limit=200)
-        absent = await q.attendance_absent_today(branch_id=br["id"])
-        present = max(total - len(absent), 0)
-        rows = [{
-            "full_name": d.get("full_name"), "came": d.get("time"),
-            "out": d.get("out_time"), "late": d.get("late"), "early": d.get("early"),
-        } for d in detail]
-        branches_data.append({
-            "branch_name": br["name"], "total": total, "present": present,
-            "absent": len(absent), "detail": rows,
-        })
-    if not branches_data:
-        await q.set_setting(flag_key, "1")
-        return
-    xlsx = export.build_daily_attendance_xlsx(branches_data, iso_to_display(date_iso))
-    tot_e = sum(b["total"] for b in branches_data)
-    tot_p = sum(b["present"] for b in branches_data)
-    tot_a = sum(b["absent"] for b in branches_data)
-    caption = (
-        "📊 <b>Kunlik davomat hisoboti</b>\n"
-        f"📆 Sana: <b>{iso_to_display(date_iso)}</b>\n"
-        f"🏢 Filiallar: <b>{len(branches_data)}</b>\n"
-        f"👥 Jami xodim: <b>{tot_e}</b>\n"
-        f"✅ Kelgan: <b>{tot_p}</b> · ❌ Kelmagan: <b>{tot_a}</b>"
-    )
-    ids = set(await q.all_user_tg_ids(role=ROLE_DIRECTOR)) | set(await q.all_user_tg_ids(role=ROLE_ADMIN))
-    for tid in ids:
-        try:
-            await bot.send_document(tid, xlsx, caption=caption)
-        except Exception:
-            await safe_send(bot, tid, caption)
-    await q.set_setting(flag_key, "1")
-    logger.info("Kunlik davomat hisoboti direktorga yuborildi (%s)", date_iso)
-
-
-async def director_report_loop(bot: Bot, interval_seconds=60):
-    while True:
-        try:
-            await _run_director_report(bot)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Direktor kunlik hisobotida xatolik")
-        await asyncio.sleep(interval_seconds)
-
-
-# ---------------- DAVOMAT ESLATMALARI (ish boshi / ish oxiri) ----------------
+# ---------------- ISH VAQTI ESLATMALARI (ish boshi / ish oxiri) ----------------
 def _parse_work_hours(work_hours):
     """«09:00 - 18:00» dan (start, end) HH:MM. Aniqlanmasa (None, None)."""
     if not work_hours:
@@ -526,17 +414,16 @@ def _within_window(now_hm, target_hm, window_min=30):
 
 _ATT_IN_TEXT = (
     "⏰ <b>Ish vaqtingiz boshlandi!</b>\n\n"
-    "Ishga <b>kelgan</b> bo'lsangiz, pastdagi «📍 Ishga keldim» tugmasini bosing "
-    "va joylashuvingizni yuboring 👇"
+    "Xayrli, barakali ish tilaymiz! 🌿"
 )
 _ATT_OUT_TEXT = (
     "🌇 <b>Ish vaqtingiz tugadi!</b>\n\n"
-    "Ishdan <b>ketayotgan</b> bo'lsangiz, pastdagi «🏁 Ishdan ketdim» tugmasini "
-    "bosib, joylashuvingizni yuboring 👇"
+    "Mehnatingiz uchun rahmat. Xayrli dam oling! 🌙"
 )
 
 
 async def _run_attendance_reminders(bot: Bot):
+    """Ish boshi/oxiri eslatmasi — faqat oddiy xabar (davomat belgilanmaydi)."""
     if str(await q.get_setting("att_reminder_enabled", "1")) != "1":
         return
     now = now_tk()
@@ -563,30 +450,18 @@ async def _run_attendance_reminders(bot: Bot):
             wh = branch_wh[bid]
         start, end = _parse_work_hours(wh)
 
-        # --- Ish boshi: «Ishga keldim» eslatmasi ---
+        # --- Ish boshi eslatmasi ---
         if start and _within_window(now_hm, start):
             flag = f"att_in_rem:{date_iso}:{tg}"
             if str(await q.get_setting(flag, "0")) != "1":
-                today_att = await q.get_attendance_today(tg)
-                already_in = today_att and today_att.get("time")
-                if not already_in:
-                    await safe_send(
-                        bot, tg, _ATT_IN_TEXT,
-                        reply_markup=kb.attendance_reminder_kb("in"),
-                    )
+                await safe_send(bot, tg, _ATT_IN_TEXT)
                 await q.set_setting(flag, "1")
 
-        # --- Ish oxiri: «Ishdan ketdim» eslatmasi ---
+        # --- Ish oxiri eslatmasi ---
         if end and _within_window(now_hm, end):
             flag = f"att_out_rem:{date_iso}:{tg}"
             if str(await q.get_setting(flag, "0")) != "1":
-                open_shift = await q.get_open_attendance(tg)
-                # Faqat ishga kelib, hali ketmaganlarga eslatma
-                if open_shift:
-                    await safe_send(
-                        bot, tg, _ATT_OUT_TEXT,
-                        reply_markup=kb.attendance_reminder_kb("out"),
-                    )
+                await safe_send(bot, tg, _ATT_OUT_TEXT)
                 await q.set_setting(flag, "1")
 
 

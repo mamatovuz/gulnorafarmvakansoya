@@ -40,7 +40,6 @@ EMP_MANAGE_BTN = "🛠 Ma'lumotlarni o'zgartirish"
 # Asosiy menyu tugmalari — bosilganda yarim qolgan FSM oqimi bekor qilinadi
 # (aks holda tugma matni ochiq anketa savoliga javob sifatida ketib qoladi).
 MENU_ESCAPE_BUTTONS = {
-    "📍 Ishga keldim", "🏁 Ishdan ketdim", "⏸ Tanaffus", "▶️ Ishni davom ettirish",
     "👤 Mening profilim", "🔄 Dam olish kunini almashtirish", HR_REQUEST_BTN,
     "💸 HR ga so'rov",  # eski nomdagi tugma (kesh qolgan klaviaturalar uchun)
     "💼 Vakansiyalar", "📄 Mening arizalarim", "🏠 Asosiy menyu",
@@ -50,7 +49,7 @@ MENU_ESCAPE_BUTTONS = {
     "🖥 IT xodim panel", "🏢 Filial rahbari panel", "💊 Farmatsevt panel",
     "🔧 Texnik xodim panel", "🆕 Yangi topshiriqlar", "🔧 Jarayondagi ishlar",
     "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
-    EMP_MANAGE_BTN, "🔀 Filial almashtirish",
+    EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
 }
 
 
@@ -72,12 +71,8 @@ def main_menu(role, has_applied=False, lang=None):
             b.adjust(1)
             return b.as_markup(resize_keyboard=True)
     b.button(text=t("btn.vacancies", lang))
-    # Ro'yxatdan o'tgan (tasdiqlangan) xodimlar uchun davomat
+    # Ro'yxatdan o'tgan (tasdiqlangan) xodimlar uchun asosiy tugmalar
     if role in EMPLOYEE_ROLES:
-        b.button(text=t("btn.checkin", lang))
-        b.button(text=t("btn.checkout", lang))
-        b.button(text=t("btn.break", lang))
-        b.button(text=t("btn.resume", lang))
         b.button(text=t("btn.profile", lang))
         b.button(text=t("btn.dayoff", lang))
         b.button(text=t("btn.hr_request", lang))
@@ -93,18 +88,11 @@ def main_menu(role, has_applied=False, lang=None):
     if role == ROLE_IT:
         b.button(text="🖥 IT xodim panel")
     if role == ROLE_TECH:
-        # Texnik xodim ham HR kabi harakatdagi xodim — istalgan filialdan
-        # ishga keladi/ketadi (masofa cheklovsiz), o'z texnik paneli bilan.
-        b.button(text=t("btn.checkin", lang))
-        b.button(text=t("btn.checkout", lang))
         b.button(text="🔧 Texnik xodim panel")
         b.button(text=t("btn.profile", lang))
         b.button(text=t("btn.hr_request", lang))
         b.button(text=t("btn.lang", lang))
     if role == ROLE_HR:
-        # HR ham davomat belgilaydi — istalgan filialdan (masofa cheklovsiz)
-        b.button(text=t("btn.checkin", lang))
-        b.button(text=t("btn.checkout", lang))
         b.button(text="👨‍💼 HR panel")
     if role == ROLE_ADMIN:
         b.button(text="👨‍💼 HR panel")
@@ -543,7 +531,7 @@ def confirm_interview_kb(interview_id):
 # HR panelidagi bo'lim (submenu) tugmalari — bosilganda ichki tugmalar chiqadi
 HR_SEC_REQUESTS = "📨 So'rovlar"
 HR_SEC_APPS = "📋 Arizalar / nomzodlar"
-HR_SEC_ATT = "📍 Davomat / dam olish"
+HR_SEC_ATT = "🛌 Dam olish / sinov"
 HR_SEC_ADVANCE = "💵 Avans / maosh"
 HR_SEC_BROADCAST = "📢 Xabarnomalar"
 HR_SEC_MANAGE = "🛠 Xodimlarni boshqarish"
@@ -608,13 +596,9 @@ def hr_applications_menu():
 
 def hr_attendance_menu():
     return _hr_section_kb([
-        "📍 Davomat",
-        "🏢 Filial davomati",
-        "👤 Xodim davomati",
-        "✏️ Davomatni tahrirlash",
+        "🛌 Dam olish so'rovlari",
         "🛌 Kunlik dam olish",
         "🧪 Sinov muddati",
-        "⚙️ Davomat sozlamalari",
     ])
 
 
@@ -641,6 +625,7 @@ def hr_manage_menu():
         EMP_MANAGE_BTN,
         "🔀 Filial almashtirish",
         "🚫 Ishdan bo'shatish",
+        "🧑‍💼 Ishdan bo'shaganlar",
     ])
 
 
@@ -1349,6 +1334,62 @@ def hr_fire_confirm_kb(user_id):
     return b.as_markup()
 
 
+# ---------------- ISHDAN BO'SHAGANLAR (arxiv + ishga qayta olish) ----------------
+def dismissed_root_kb():
+    """Ishdan bo'shaganlar bosh menyusi — qidiruv turi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔍 Ism bo'yicha qidirish", callback_data="dis:search")
+    b.button(text="🏢 Filial bo'yicha", callback_data="dis:branches")
+    b.button(text="🗂 Barchasi", callback_data="dis:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dismissed_branches_kb(branches):
+    """Bo'shatilganlar bor filiallar ro'yxati."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        name = br.get("branch_name") or "—"
+        b.button(
+            text=f"🏢 {name} · {br.get('cnt', 0)} ta",
+            callback_data=f"dis:br:{br.get('branch_id') or 0}",
+        )
+    b.button(text="⬅️ Orqaga", callback_data="dis:root")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dismissed_list_kb(rows, back_cb="dis:root"):
+    """Bo'shatilgan xodimlar ro'yxati — har biri kartochkaga o'tadi."""
+    b = InlineKeyboardBuilder()
+    for r in rows:
+        name = r.get("full_name") or "Xodim"
+        br = r.get("branch_name") or "—"
+        b.button(text=f"👤 {name} · 🏢 {br}", callback_data=f"dis:view:{r['id']}")
+    b.button(text="⬅️ Orqaga", callback_data=back_cb)
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dismissed_view_kb(did):
+    """Bo'shatilgan xodim kartochkasi tagida «Ishga qayta olish»."""
+    b = InlineKeyboardBuilder()
+    b.button(text="♻️ Ishga qayta olish", callback_data=f"dis:rehire:{did}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dismissed_rehire_branch_kb(did, branches, prev_branch_id=None):
+    """Ishga qayta olishda yangi filialni tanlash (oldingisi ✅ bilan)."""
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        mark = "✅ " if prev_branch_id and br["id"] == prev_branch_id else ""
+        b.button(text=f"{mark}🏢 {br['name']}", callback_data=f"dis:rb:{did}:{br['id']}")
+    b.button(text="❌ Bekor qilish", callback_data=f"dis:view:{did}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def manager_request_actions_kb(request_id, kind):
     b = InlineKeyboardBuilder()
     if kind == "vacancy":
@@ -1576,18 +1617,14 @@ def manager_menu():
     b.button(text="📢 Mening vakansiyalarim")
     b.button(text="🔧 Texnik nosozlik")
     b.button(text="👥 Filial xodimlari")
-    b.button(text="📊 Bugungi davomat")
     b.button(text="📊 Filial statistikasi")
-    b.button(text="📍 Davomat")
-    b.button(text="⏰ Kech/erta hisobot")
-    b.button(text="⏸ Tanaffus hisoboti")
     b.button(text="👕 Formasi yo'q xodimlar")
     b.button(text="📋 Filial arizalari")
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="📋 Mening so'rovlarim")
     b.button(text="💬 HR ga xabar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 1, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1608,9 +1645,6 @@ def director_menu():
     b.button(text="👥 Filial xodimlari")
     b.button(text="🏢 Filiallar kesimi")
     b.button(text="📥 Arizalar kesimi")
-    b.button(text="📍 Davomat")
-    b.button(text="⏰ Kech/erta hisobot")
-    b.button(text="⏸ Tanaffus hisoboti")
     b.button(text="🏆 Filiallar reytingi")
     b.button(text="📈 Taqqoslash")
     b.button(text="🔧 Texnik ishlar")
@@ -1624,9 +1658,12 @@ def director_menu():
 # Direktor «💸 Jarima qo'llash» — bo'lim/yo'nalish tugmalari.
 # (label, kalit) — kalit queries.FINE_TARGET_FILTERS bilan mos.
 DIRECTOR_FINE_TARGETS = [
-    ("🧑‍💼 HR", "hr"),
+    ("💊 Farmatsevtlar", "pharmacist"),
+    ("🧑‍💼 HR bo'limi", "hr"),
     ("👨‍💼 Filial rahbarlari", "manager"),
     ("🧮 Moliya bo'limi", "accountant"),
+    ("🖥 IT bo'limi", "it"),
+    ("🔧 Texnik xodimlar", "tech"),
     ("📦 Ombor", "ombor"),
     ("🚚 Логистика", "logistika"),
 ]
@@ -2513,8 +2550,6 @@ def branch_setloc_kb(branches):
 # ================= BUXGALTER PANELI =================
 def accountant_menu():
     b = ReplyKeyboardBuilder()
-    b.button(text="📍 Davomat")
-    b.button(text="⏰ Kech/erta hisobot")
     b.button(text="🏢 Filial tanlab ko'rish")
     b.button(text="👥 Xodimlar (oylik/jarima)")
     b.button(text="✂️ Oylik kesish")
@@ -2522,7 +2557,7 @@ def accountant_menu():
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 1, 1, 1, 1)
+    b.adjust(2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -2883,6 +2918,24 @@ def dayoff_list_kb(reqs, prefix="doview"):
             callback_data=f"{prefix}:{r['id']}",
         )
     b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_edit_actions_kb(rid):
+    """Tasdiqlangan dam olish so'rovi tagida — dam kunini o'zgartirish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Dam kunini o'zgartirish", callback_data=f"doedit:{rid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_edit_days_kb(rid):
+    """Ishga qaytarish / yangi dam olish kunini tanlash (inline)."""
+    b = InlineKeyboardBuilder()
+    for i, day in enumerate(WEEK_DAYS):
+        b.button(text=day, callback_data=f"doeday:{rid}:{i}")
+    b.button(text="⬅️ Orqaga", callback_data=f"doview:{rid}")
+    b.adjust(2)
     return b.as_markup()
 
 

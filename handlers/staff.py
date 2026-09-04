@@ -623,47 +623,6 @@ async def manager_branch_stats(message: Message):
     await message.answer(text)
 
 
-# ---------------- BUGUNGI DAVOMAT (rahbar) ----------------
-@router.message(F.text == "📊 Bugungi davomat")
-async def manager_today_attendance(message: Message):
-    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
-    if not user:
-        return
-    branch_id = await _manager_branch_id(user)
-    if not branch_id:
-        await message.answer("Sizga filial biriktirilmagan.")
-        return
-    branch = await q.get_branch(branch_id)
-    employees = await q.list_employee_profiles(branch_id=branch_id)
-    present = await q.attendance_detail(period="day", branch_id=branch_id, limit=200)
-    absent = await q.attendance_absent_today(branch_id=branch_id)
-    name = branch["name"] if branch else "Filial"
-    lines = [
-        f"📊 <b>{name} — bugungi davomat</b>",
-        "━━━━━━━━━━━━",
-        f"👥 Jami xodim: <b>{len(employees)}</b>",
-        f"✅ Kelgan: <b>{len(present)}</b>",
-        f"❌ Kelmagan: <b>{len(absent)}</b>",
-    ]
-    if present:
-        lines.append("\n<b>✅ Kelganlar:</b>")
-        for a in present:
-            came = a.get("time") or "-"
-            out = a.get("out_time")
-            out_txt = f"ketdi {out}" if out else "hali ishda"
-            marks = ""
-            if a.get("late"):
-                marks += " ⏰kech"
-            if a.get("early"):
-                marks += " 🏃erta"
-            lines.append(f"• {a.get('full_name') or '-'} — keldi {came}, {out_txt}{marks}")
-    if absent:
-        lines.append("\n<b>❌ Kelmaganlar:</b>")
-        for a in absent[:50]:
-            lines.append(f"• {a.get('full_name') or '-'}")
-    await message.answer("\n".join(lines))
-
-
 # ---------------- FORMASI YO'Q XODIMLAR ----------------
 @router.message(F.text == "👕 Formasi yo'q xodimlar")
 async def manager_no_uniform(message: Message):

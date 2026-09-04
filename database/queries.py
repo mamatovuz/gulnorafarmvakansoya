@@ -1,4 +1,5 @@
 """Ma'lumotlar bazasi bilan ishlash uchun yordamchi funksiyalar."""
+import json
 import aiosqlite
 from config import DB_PATH, SUPER_ADMINS
 from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER, ROLE_HR, ROLE_IT
@@ -980,9 +981,12 @@ async def search_employees(text=None, role=None, branch_id=None, limit=50,
 # Direktor «💸 Jarima qo'llash» — bo'lim/yo'nalish kalitidan filtr sharti.
 # role bo'yicha yoki lavozim (position) LIKE bo'yicha tanlanadi.
 FINE_TARGET_FILTERS = {
+    "pharmacist": ("role", ["pharmacist"]),
     "hr": ("role", ["hr"]),
     "manager": ("role", ["manager"]),
     "accountant": ("role", ["accountant"]),
+    "it": ("role", ["it"]),
+    "tech": ("role", ["tech"]),
     "ombor": ("position", ["%ombor%", "%склад%"]),
     "logistika": ("position", ["%logist%", "%haydov%", "%достав%", "%курьер%", "%kur'er%"]),
 }
@@ -1389,6 +1393,18 @@ async def update_rest_day(user_id, rest_day):
                SET rest_day=?, updated_at=datetime('now','+5 hours')
                WHERE user_id=?""",
             (rest_day, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def update_dayoff_request_day(rid, to_day):
+    """Tasdiqlangan dam olish so'rovining dam kunini (to_day) yangilaydi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE dayoff_requests SET to_day=? WHERE id=?", (to_day, rid)
         )
         await db.commit()
     finally:
@@ -2211,11 +2227,44 @@ async def set_termination_request_status(rid, status, handled_by=None, comment=N
         await db.close()
 
 
-async def fire_employee(user_id):
-    """Xodimni ishdan bo'shatadi: profilini o'chiradi va rolini nomzodga qaytaradi
-    (shu bilan xodim paneli va «Ishga keldim» tugmalari yo'qoladi)."""
+async def _archive_dismissed(db, user_id, reason=None, dismissed_by=None):
+    """Ishdan bo'shatishdan OLDIN xodim profilini «dismissed_employees» arxiviga
+    ko'chiradi (oldingi filial, maosh, rol va boshqa ma'lumotlar saqlanadi).
+
+    Shu ochiq `db` ulanishida ishlaydi — profil o'chirilishidan oldin chaqirilishi
+    shart. Arxiv yozuvining id sini qaytaradi (profil bo'lmasa None)."""
+    cur = await db.execute(
+        """SELECT ep.*, u.tg_id, u.full_name, u.phone, u.role AS user_role,
+                  b.name AS branch_name
+           FROM employee_profiles ep
+           JOIN users u ON u.id=ep.user_id
+           LEFT JOIN branches b ON b.id=ep.branch_id
+           WHERE ep.user_id=?""",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    if not row:
+        return None
+    p = dict(row)
+    cur = await db.execute(
+        """INSERT INTO dismissed_employees
+           (user_id, tg_id, full_name, phone, branch_id, branch_name, position,
+            monthly_salary, role, profile_json, reason, dismissed_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (user_id, p.get("tg_id"), p.get("full_name"), p.get("phone"),
+         p.get("branch_id"), p.get("branch_name"), p.get("position"),
+         p.get("monthly_salary"), p.get("role") or p.get("user_role"),
+         json.dumps(p, ensure_ascii=False), reason, dismissed_by),
+    )
+    return cur.lastrowid
+
+
+async def fire_employee(user_id, reason=None, dismissed_by=None):
+    """Xodimni ishdan bo'shatadi: profil ma'lumotlari arxivga ko'chiriladi,
+    profil o'chadi va rol nomzodga qaytadi (xodim paneli yo'qoladi)."""
     db = await _conn()
     try:
+        await _archive_dismissed(db, user_id, reason, dismissed_by)
         await db.execute("DELETE FROM employee_profiles WHERE user_id=?", (user_id,))
         await db.execute(
             "UPDATE users SET role='candidate', branch_id=NULL WHERE id=?",
@@ -2244,6 +2293,7 @@ async def fire_all_in_branch(branch_id):
     try:
         victims = await _branch_members(db, branch_id)
         for v in victims:
+            await _archive_dismissed(db, v["user_id"], reason="Butun filial bo'shatildi")
             await db.execute(
                 "DELETE FROM employee_profiles WHERE user_id=?", (v["user_id"],)
             )
@@ -2253,6 +2303,80 @@ async def fire_all_in_branch(branch_id):
             )
         await db.commit()
         return victims
+    finally:
+        await db.close()
+
+
+async def list_dismissed_employees(branch_id=None, search=None, limit=100):
+    """Ishdan bo'shatilgan (hali ishga qayta olinmagan) xodimlar arxivi.
+
+    branch_id — oldingi filial bo'yicha filtr; search — ism bo'yicha qidiruv."""
+    db = await _conn()
+    try:
+        sql = ("SELECT * FROM dismissed_employees WHERE rehired=0")
+        params = []
+        if branch_id:
+            sql += " AND branch_id=?"
+            params.append(branch_id)
+        if search:
+            sql += " AND pylower(COALESCE(full_name,'')) LIKE ?"
+            params.append(f"%{search.strip().lower()}%")
+        sql += " ORDER BY dismissed_at DESC LIMIT ?"
+        params.append(int(limit))
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def dismissed_branches():
+    """Arxivda bo'shatilgan xodimlari bor filiallar ro'yxati (filtr menyusi uchun)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT branch_id, COALESCE(branch_name,'—') AS branch_name,
+                      COUNT(*) AS cnt
+               FROM dismissed_employees
+               WHERE rehired=0
+               GROUP BY branch_id, branch_name
+               ORDER BY branch_name"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_dismissed_record(did):
+    """Bitta bo'shatilgan xodim arxiv yozuvi. profile_json «profile» kaliti sifatida
+    dict ko'rinishida qaytariladi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM dismissed_employees WHERE id=?", (did,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        try:
+            rec["profile"] = json.loads(rec.get("profile_json") or "{}")
+        except (ValueError, TypeError):
+            rec["profile"] = {}
+        return rec
+    finally:
+        await db.close()
+
+
+async def mark_dismissed_rehired(did):
+    """Arxiv yozuvini «ishga qayta olingan» deb belgilaydi."""
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE dismissed_employees SET rehired=1, "
+            "rehired_at=datetime('now','+5 hours') WHERE id=?",
+            (did,),
+        )
+        await db.commit()
     finally:
         await db.close()
 

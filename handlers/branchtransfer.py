@@ -311,8 +311,7 @@ async def hr_transfer_approve(call: CallbackQuery, bot: Bot):
         await safe_send(
             bot, req["user_tg"],
             "✅ <b>Filialingiz o'zgartirildi!</b>\n\n"
-            f"🏢 Yangi filialingiz: <b>{req.get('to_branch_name')}</b>\n\n"
-            "Endi davomat (kelish-ketish) shu filial manzili bo'yicha hisoblanadi.",
+            f"🏢 Yangi filialingiz: <b>{req.get('to_branch_name')}</b>",
         )
     # Ikkala filial rahbariga ham xabar beramiz
     await _notify_branch_managers(bot, req)

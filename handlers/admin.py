@@ -339,7 +339,7 @@ async def br_addr(message: Message, state: FSMContext):
     await state.set_state(BranchForm.location)
     await message.answer(
         "📍 <b>Filial joylashuvi (GPS)</b>\n\n"
-        "Davomat (Ishga keldim) shu koordinata bo'yicha tekshiriladi.\n"
+        "Filial manzilini xaritada belgilash uchun ishlatiladi.\n"
         "Filial binosida turib «📍 Filial joylashuvini yuborish» tugmasini bosing "
         "yoki kesh koordinatani <code>lat,lon</code> ko'rinishida yozing "
         "(masalan <code>41.311081,69.240562</code>).\n"

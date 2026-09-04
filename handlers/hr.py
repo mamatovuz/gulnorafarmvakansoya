@@ -13,7 +13,7 @@ from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
     ProbationForm, TerminationRejectForm, SalaryNegoForm, EmployeeSearchForm,
-    RejectTemplateForm,
+    RejectTemplateForm, DismissedForm,
 )
 import keyboards as kb
 from utils import (
@@ -137,7 +137,7 @@ async def hr_section_attendance(message: Message):
     if not await is_staff(message.from_user.id):
         return
     await message.answer(
-        "📍 <b>Davomat / dam olish</b>\nBo'limni tanlang:",
+        "🛌 <b>Dam olish / sinov</b>\nBo'limni tanlang:",
         reply_markup=kb.hr_attendance_menu(),
     )
 
@@ -160,61 +160,6 @@ async def hr_section_broadcast(message: Message):
         "📢 <b>Xabarnomalar</b>\nBo'limni tanlang:",
         reply_markup=kb.hr_broadcast_menu(),
     )
-
-
-# ---------------- DAVOMAT SOZLAMALARI (periodik joylashuv tekshiruvi) ----------------
-async def _att_settings_text():
-    enabled = str(await q.get_setting("loc_check_enabled", "1")) == "1"
-    interval = await q.get_setting("loc_check_interval_hours", "2") or "2"
-    status = "🟢 Yoqilgan" if enabled else "🔴 O'chirilgan"
-    return (
-        "⚙️ <b>Davomat sozlamalari</b>\n"
-        "━━━━━━━━━━━━\n"
-        "Ish vaqti davomida bot xodimlardan belgilangan oraliqda joylashuv so'rab, "
-        "ular haqiqatan ish joyida ekanini tekshiradi.\n\n"
-        f"Holat: <b>{status}</b>\n"
-        f"So'rov oralig'i: <b>{interval} soatda bir marta</b>\n\n"
-        "Quyidan boshqaring:"
-    ), enabled, interval
-
-
-@router.message(F.text == "⚙️ Davomat sozlamalari")
-async def att_settings(message: Message):
-    if not await is_staff(message.from_user.id):
-        await message.answer("⛔ Sizda ruxsat yo'q.")
-        return
-    text, enabled, interval = await _att_settings_text()
-    await message.answer(text, reply_markup=kb.attendance_settings_kb(enabled, interval))
-
-
-@router.callback_query(F.data == "attset:toggle")
-async def att_settings_toggle(call: CallbackQuery):
-    if not await is_staff(call.from_user.id):
-        await call.answer("⛔", show_alert=True)
-        return
-    enabled = str(await q.get_setting("loc_check_enabled", "1")) == "1"
-    await q.set_setting("loc_check_enabled", "0" if enabled else "1")
-    text, en, interval = await _att_settings_text()
-    try:
-        await call.message.edit_text(text, reply_markup=kb.attendance_settings_kb(en, interval))
-    except Exception:
-        pass
-    await call.answer("Saqlandi ✅")
-
-
-@router.callback_query(F.data.startswith("attset:int:"))
-async def att_settings_interval(call: CallbackQuery):
-    if not await is_staff(call.from_user.id):
-        await call.answer("⛔", show_alert=True)
-        return
-    hours = call.data.split(":")[2]
-    await q.set_setting("loc_check_interval_hours", hours)
-    text, en, interval = await _att_settings_text()
-    try:
-        await call.message.edit_text(text, reply_markup=kb.attendance_settings_kb(en, interval))
-    except Exception:
-        pass
-    await call.answer(f"{hours} soatda bir marta ✅")
 
 
 # ---------------- DASHBOARD ----------------
@@ -907,10 +852,7 @@ async def probation_view(call: CallbackQuery):
     if not p:
         await call.answer("Topilmadi.", show_alert=True)
         return
-    stats = await q.probation_attendance_stats(
-        p["user_id"], p.get("start_date"), p.get("end_date")
-    )
-    await call.message.answer(probation_text(p, stats=stats))
+    await call.message.answer(probation_text(p))
     await call.answer()
 
 
@@ -994,10 +936,17 @@ async def app_reject_pick(call: CallbackQuery, bot: Bot):
 async def _do_reject(bot: Bot, target, me, aid, notice, comment=None):
     """Arizani rad etadi va nomzodga `notice` matnini yuboradi.
 
+    Nomzodga yuborilgan to'liq javob matni kartochkada ko'rinishi uchun
+    izoh sifatida saqlanadi (qaysi tayyor javob tanlangani + to'liq matn).
+
     target — HR ga javob qaytariladigan Message obyekti."""
     await q.set_application_status(aid, ST_REJECTED, handled_by=me["id"])
+    # Kartochkada «nima sababdan rad etilgani» ko'rinsin — to'liq javobni saqlaymiz
     if comment:
-        await q.set_application_comment(aid, comment)
+        saved = f"{comment}\n— — — — —\n{notice}"
+    else:
+        saved = notice
+    await q.set_application_comment(aid, saved)
     a = await q.get_application(aid)
     if not a:
         await target.answer("Ariza topilmadi.")
@@ -1227,18 +1176,59 @@ async def education_stats_report(message: Message):
         return
     s = await q.education_stats()
     lines = [
-        "🎓 <b>Xodimlar ma'lumoti (diplom) statistikasi</b>",
-        "━━━━━━━━━━━━",
+        "🎓 <b>Diplom / ma'lumot statistikasi</b>",
+        "━━━━━━━━━━━━━━━━",
         f"👥 Jami xodimlar: <b>{s.get('total') or 0}</b>",
-        f"✅ Diplomi bor: <b>{s.get('has_diploma') or 0}</b>",
-        f"❌ Diplomi yo'q: <b>{s.get('no_diploma') or 0}</b>",
-        f"➖ Ko'rsatilmagan: <b>{s.get('unknown') or 0}</b>",
+        f"✅ Diplomi bor: <b>{s.get('has_diploma') or 0}</b>   "
+        f"❌ Yo'q: <b>{s.get('no_diploma') or 0}</b>   "
+        f"➖ Noma'lum: <b>{s.get('unknown') or 0}</b>",
     ]
+    # Ma'lumot darajasi bo'yicha — farmatsevt / boshqa soha ajratib
     breakdown = await q.education_breakdown()
-    if breakdown:
-        lines.append("\n<b>Ma'lumot turlari bo'yicha:</b>")
-        for r in breakdown:
-            lines.append(f"  • {r['education']}: <b>{r['cnt']}</b>")
+    buckets = {
+        "oliy": {"label": "🎓 Oliy ma'lumot", "pharm": 0, "other": 0},
+        "orta_maxsus": {"label": "📘 O'rta maxsus", "pharm": 0, "other": 0},
+        "umumiy": {"label": "📗 Umumiy o'rta", "pharm": 0, "other": 0},
+        "yoq": {"label": "❌ Diplom yo'q", "pharm": 0, "other": 0},
+        "other": {"label": "❔ Boshqa", "pharm": 0, "other": 0},
+    }
+    incomplete_total = 0
+    for r in (breakdown or []):
+        edu = r.get("education") or ""
+        cnt = r.get("cnt") or 0
+        low = edu.lower()
+        if "diplom yo" in low or edu.strip().startswith("❌"):
+            key = "yoq"
+        elif "oliy" in low:
+            key = "oliy"
+        elif "maxsus" in low:
+            key = "orta_maxsus"
+        elif "umumiy" in low or "rta ta" in low:
+            key = "umumiy"
+        else:
+            key = "other"
+        sub = "pharm" if "farmatsevt" in low else "other"
+        buckets[key][sub] += cnt
+        if "tugallanmagan" in low:
+            incomplete_total += cnt
+
+    lines.append("\n<b>📚 Ma'lumot darajasi bo'yicha:</b>")
+    any_level = False
+    for key in ("oliy", "orta_maxsus", "umumiy", "yoq", "other"):
+        bkt = buckets[key]
+        total = bkt["pharm"] + bkt["other"]
+        if not total:
+            continue
+        any_level = True
+        detail = ""
+        if bkt["pharm"] or bkt["other"]:
+            detail = f"  (💊 farmatsevt: <b>{bkt['pharm']}</b> · boshqa: <b>{bkt['other']}</b>)"
+        lines.append(f"  {bkt['label']}: <b>{total}</b>{detail}")
+    if not any_level:
+        lines.append("  <i>Ma'lumot kiritilmagan.</i>")
+    if incomplete_total:
+        lines.append(f"\n🕓 Shundan tugallanmagan (o'qimoqda): <b>{incomplete_total}</b>")
+
     by_branch = await q.education_by_branch()
     if by_branch:
         lines.append("\n<b>Filiallar bo'yicha:</b>")
@@ -1544,8 +1534,11 @@ async def hr_fire_confirm(call: CallbackQuery, bot: Bot):
         "left", user_id=uid, full_name=emp_name, branch_id=branch_id,
         details="HR tomonidan ishdan bo'shatildi", created_by=me["id"] if me else None,
     )
-    # Xodimni ishdan bo'shatamiz (profil o'chadi, rol nomzodga qaytadi)
-    await q.fire_employee(uid)
+    # Xodimni ishdan bo'shatamiz (profil arxivga ko'chadi, rol nomzodga qaytadi)
+    await q.fire_employee(
+        uid, reason="HR tomonidan ishdan bo'shatildi",
+        dismissed_by=me["id"] if me else None,
+    )
     await q.add_log(
         call.from_user.id, me["full_name"] if me else "?",
         "hr_ishdan_boshatdi", f"{emp_name} · {branch_name}",
@@ -1593,6 +1586,272 @@ async def hr_fire_confirm(call: CallbackQuery, bot: Bot):
         f"🏢 Filial: {branch_name}\n"
         f"🧑‍💼 Bo'shatdi: {me['full_name'] if me else '-'} (HR)",
     )
+
+
+# ================= ISHDAN BO'SHAGANLAR (arxiv + ishga qayta olish) =================
+def _dismissed_card(rec):
+    """Bo'shatilgan xodim kartochkasi: boshida yuborgan/oldingi ma'lumotlari."""
+    prof = rec.get("profile") or {}
+    body = employee_profile_text(prof) if prof else (
+        f"👤 <b>{rec.get('full_name') or '-'}</b>"
+    )
+    tail = [
+        "",
+        "━━━━━━━━━━━━",
+        "🚫 <b>Ishdan bo'shatilgan</b>",
+        f"🏢 Oldingi filial: <b>{rec.get('branch_name') or '—'}</b>",
+        f"💰 Oldingi maosh: <b>{rec.get('monthly_salary') or '—'}</b>",
+    ]
+    if rec.get("reason"):
+        tail.append(f"✍️ Sabab: {rec['reason']}")
+    if rec.get("dismissed_at"):
+        tail.append(f"🗓 Sana: {rec['dismissed_at']}")
+    return body + "\n" + "\n".join(tail)
+
+
+@router.message(F.text == "🧑‍💼 Ishdan bo'shaganlar")
+async def dismissed_menu(message: Message, state: FSMContext):
+    await state.clear()
+    if not await is_staff(message.from_user.id):
+        return
+    rows = await q.list_dismissed_employees(limit=100)
+    await message.answer(
+        "🧑‍💼 <b>Ishdan bo'shaganlar</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"Jami arxivda: <b>{len(rows)}</b> ta\n\n"
+        "Xodimni filial yoki ism bo'yicha qidiring, kartochkaga kirib "
+        "«♻️ Ishga qayta olish» tugmasi orqali qayta ishga oling.",
+        reply_markup=kb.dismissed_root_kb(),
+    )
+
+
+async def _dismissed_show_list(target, rows, back_cb="dis:root", header=None):
+    if not rows:
+        await target.answer("🗂 Bu bo'yicha bo'shatilgan xodim topilmadi.")
+        return
+    await target.answer(
+        header or f"🧑‍💼 <b>Bo'shatilganlar</b> — {len(rows)} ta\nTanlang:",
+        reply_markup=kb.dismissed_list_kb(rows, back_cb=back_cb),
+    )
+
+
+@router.callback_query(F.data == "dis:root")
+async def dismissed_root(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await call.message.answer(
+        "🧑‍💼 <b>Ishdan bo'shaganlar</b>\nQidiruv turini tanlang:",
+        reply_markup=kb.dismissed_root_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "dis:all")
+async def dismissed_all(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rows = await q.list_dismissed_employees(limit=100)
+    await _dismissed_show_list(call.message, rows)
+    await call.answer()
+
+
+@router.callback_query(F.data == "dis:branches")
+async def dismissed_branches(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    branches = await q.dismissed_branches()
+    if not branches:
+        await call.message.answer("🗂 Hozircha bo'shatilgan xodim yo'q.")
+        await call.answer()
+        return
+    await call.message.answer(
+        "🏢 <b>Filial bo'yicha</b>\nQaysi filial bo'shaganlarini ko'rasiz?",
+        reply_markup=kb.dismissed_branches_kb(branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dis:br:"))
+async def dismissed_by_branch(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[2]) or None
+    rows = await q.list_dismissed_employees(branch_id=bid, limit=100)
+    await _dismissed_show_list(call.message, rows, back_cb="dis:branches")
+    await call.answer()
+
+
+@router.callback_query(F.data == "dis:search")
+async def dismissed_search_start(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(DismissedForm.search)
+    await call.message.answer(
+        "🔍 Ishdan bo'shagan xodimning <b>ismini</b> (yoki bir qismini) yozing:"
+    )
+    await call.answer()
+
+
+@router.message(DismissedForm.search, F.text)
+async def dismissed_search_run(message: Message, state: FSMContext):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    rows = await q.list_dismissed_employees(search=message.text, limit=100)
+    await _dismissed_show_list(
+        message, rows,
+        header=f"🔍 <b>«{message.text.strip()}»</b> bo'yicha: {len(rows)} ta",
+    )
+
+
+@router.callback_query(F.data.startswith("dis:view:"))
+async def dismissed_view(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    did = int(call.data.split(":")[2])
+    rec = await q.get_dismissed_record(did)
+    if not rec:
+        await call.answer("Yozuv topilmadi.", show_alert=True)
+        return
+    prof = rec.get("profile") or {}
+    photo = prof.get("photo_file_id")
+    text = _dismissed_card(rec)
+    if photo:
+        try:
+            await call.message.answer_photo(
+                photo, caption=text, reply_markup=kb.dismissed_view_kb(did)
+            )
+            await call.answer()
+            return
+        except Exception:
+            pass
+    await call.message.answer(text, reply_markup=kb.dismissed_view_kb(did))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dis:rehire:"))
+async def dismissed_rehire_start(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    did = int(call.data.split(":")[2])
+    rec = await q.get_dismissed_record(did)
+    if not rec:
+        await call.answer("Yozuv topilmadi.", show_alert=True)
+        return
+    if rec.get("rehired"):
+        await call.answer("Bu xodim allaqachon ishga qaytarilgan.", show_alert=True)
+        return
+    branches = await q.list_branches()
+    if not branches:
+        await call.answer("Avval filial qo'shing.", show_alert=True)
+        return
+    await call.message.answer(
+        f"♻️ <b>Ishga qayta olish</b> — {rec.get('full_name') or '-'}\n"
+        f"🏢 Oldingi filiali: <b>{rec.get('branch_name') or '—'}</b>\n\n"
+        "Qaysi filialga qayta olamiz? (oldingisi ✅ bilan)",
+        reply_markup=kb.dismissed_rehire_branch_kb(
+            did, branches, prev_branch_id=rec.get("branch_id")
+        ),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dis:rb:"))
+async def dismissed_rehire_branch(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, _, did, bid = call.data.split(":")
+    did, bid = int(did), int(bid)
+    rec = await q.get_dismissed_record(did)
+    if not rec or rec.get("rehired"):
+        await call.answer("Yozuv topilmadi yoki allaqachon qaytarilgan.", show_alert=True)
+        return
+    branch = await q.get_branch(bid)
+    await state.set_state(DismissedForm.rehire_salary)
+    await state.update_data(dis_did=did, dis_branch=bid)
+    await call.message.answer(
+        f"💰 <b>Yangi maosh</b>\n"
+        f"👤 {rec.get('full_name') or '-'}\n"
+        f"🏢 Filial: <b>{branch['name'] if branch else '—'}</b>\n"
+        f"💵 Oldingi maoshi: <b>{rec.get('monthly_salary') or '—'}</b>\n\n"
+        "Yangi maoshni kiriting (masalan: <b>3 500 000</b>):"
+    )
+    await call.answer()
+
+
+@router.message(DismissedForm.rehire_salary, F.text)
+async def dismissed_rehire_finish(message: Message, state: FSMContext, bot: Bot):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    await state.clear()
+    did = data.get("dis_did")
+    bid = data.get("dis_branch")
+    salary = message.text.strip()
+    rec = await q.get_dismissed_record(did)
+    if not rec or rec.get("rehired"):
+        await message.answer("⚠️ Yozuv topilmadi yoki allaqachon qaytarilgan.")
+        return
+    prof = rec.get("profile") or {}
+    role = rec.get("role") or prof.get("role") or ROLE_EMPLOYEE
+    uid = rec.get("user_id")
+    branch = await q.get_branch(bid)
+    me = await actor(message.from_user.id)
+
+    # Rol + filialni tiklaymiz, so'ng profilni yangi maosh bilan qayta yaratamiz
+    if rec.get("tg_id"):
+        await q.set_role(rec["tg_id"], role, branch_id=bid)
+    await q.upsert_employee_profile(
+        uid, prof.get("application_id"), role, prof.get("position"),
+        branch_id=bid, monthly_salary=salary,
+        birth_date=prof.get("birth_date"), address=prof.get("address"),
+        work_hours=prof.get("work_hours"), rest_day=prof.get("rest_day"),
+        photo_file_id=prof.get("photo_file_id"), extra_info=prof.get("extra_info"),
+        since=prof.get("since"), education=prof.get("education"),
+        shift=prof.get("shift"), parent_phone=prof.get("parent_phone"),
+        passport_front=prof.get("passport_front"),
+        passport_back=prof.get("passport_back"),
+        diploma_file=prof.get("diploma_file"),
+    )
+    await q.mark_dismissed_rehired(did)
+    await q.add_hr_event(
+        "hired", user_id=uid, full_name=rec.get("full_name"), branch_id=bid,
+        details="Ishga qayta olindi", created_by=me["id"] if me else None,
+    )
+    await q.add_log(
+        message.from_user.id, me["full_name"] if me else "?",
+        "ishga_qayta_oldi",
+        f"{rec.get('full_name')} · {branch['name'] if branch else bid} · {salary}",
+    )
+    await message.answer(
+        "✅ <b>Ishga qayta olindi!</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"👤 Xodim: <b>{rec.get('full_name') or '-'}</b>\n"
+        f"🏢 Filial: <b>{branch['name'] if branch else '—'}</b>\n"
+        f"💼 Lavozim: {prof.get('position') or '-'}\n"
+        f"💰 Yangi maosh: <b>{salary}</b>",
+    )
+    if rec.get("tg_id"):
+        await safe_send(
+            bot, rec["tg_id"],
+            "🎉 <b>Xush kelibsiz!</b>\n\n"
+            "Siz Gulnora Farm jamoasiga <b>qayta qabul qilindingiz</b>.\n"
+            f"🏢 Filial: <b>{branch['name'] if branch else '—'}</b>\n"
+            f"💰 Maosh: <b>{salary}</b>\n\n"
+            "Menyuni yangilash uchun /start bosing.",
+            reply_markup=kb.main_menu(role),
+        )
 
 
 @router.callback_query(F.data.startswith("ufset:"))
@@ -2021,8 +2280,12 @@ async def termination_accept(call: CallbackQuery, bot: Bot):
         "left", user_id=req["employee_user_id"], full_name=req.get("employee_name"),
         branch_id=req.get("branch_id"), details=f"so'rov #{rid}", created_by=me["id"],
     )
-    # Xodimni ishdan bo'shatamiz (profil o'chadi, rol nomzodga qaytadi)
-    await q.fire_employee(req["employee_user_id"])
+    # Xodimni ishdan bo'shatamiz (profil arxivga ko'chadi, rol nomzodga qaytadi)
+    await q.fire_employee(
+        req["employee_user_id"],
+        reason=req.get("reason") or f"So'rov #{rid} bo'yicha",
+        dismissed_by=me["id"],
+    )
     await q.add_log(
         call.from_user.id, me["full_name"], "ishdan_boshatish_tasdiq",
         f"#{rid} — {req.get('employee_name')}"
