@@ -2948,6 +2948,14 @@ def dayoff_plan_confirm_kb(plan_id):
     return b.as_markup()
 
 
+def dayoff_plan_edit_again_kb(plan_id):
+    """Tasdiqdan keyin ham xatoni tuzatish uchun (08:30 hisobotgacha)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Tahrirlash", callback_data=f"dopl_edit:{plan_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def dayoff_plan_edit_kb(plan_id, items):
     """Har bir xodim uchun holat tugmasi: 🛌 dam oladi <-> ✅ keladi."""
     b = InlineKeyboardBuilder()

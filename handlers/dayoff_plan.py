@@ -47,6 +47,15 @@ def plan_prompt_text(plan, off_items):
     return header
 
 
+async def _report_already_sent(plan):
+    """08:30 HR hisoboti shu sana uchun yuborilgan bo'lsa True (tahrir yopiladi)."""
+    date_iso = plan.get("plan_date")
+    if not date_iso:
+        return False
+    flag = await q.get_setting(f"dayoff_report_sent:{date_iso}", "0")
+    return str(flag) == "1"
+
+
 async def _can_manage(user, plan):
     if not user:
         return False
@@ -74,8 +83,11 @@ async def dayoff_plan_edit(call: CallbackQuery):
     if not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if plan.get("status") == "confirmed":
-        await call.answer("Bu reja allaqachon tasdiqlangan.", show_alert=True)
+    if await _report_already_sent(plan):
+        await call.answer(
+            "⛔ Hisobot allaqachon HR ga yuborilgan — endi tahrirlab bo'lmaydi.",
+            show_alert=True,
+        )
         return
     items = await q.list_dayoff_plan_items(plan_id)
     if not items:
@@ -109,8 +121,11 @@ async def dayoff_plan_toggle(call: CallbackQuery):
     if not plan or not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if plan.get("status") == "confirmed":
-        await call.answer("Reja tasdiqlangan, o'zgartirib bo'lmaydi.", show_alert=True)
+    if await _report_already_sent(plan):
+        await call.answer(
+            "⛔ Hisobot allaqachon HR ga yuborilgan — endi tahrirlab bo'lmaydi.",
+            show_alert=True,
+        )
         return
     new_status = await q.toggle_dayoff_plan_item(item_id)
     items = await q.list_dayoff_plan_items(item["plan_id"])
@@ -134,8 +149,11 @@ async def dayoff_plan_confirm(call: CallbackQuery):
     if not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if plan.get("status") == "confirmed":
-        await call.answer("Allaqachon tasdiqlangan.", show_alert=True)
+    if await _report_already_sent(plan):
+        await call.answer(
+            "⛔ Hisobot allaqachon HR ga yuborilgan — endi tahrirlab bo'lmaydi.",
+            show_alert=True,
+        )
         return
     await q.set_dayoff_plan_status(plan_id, "confirmed", confirmed_by=user["id"])
     await q.add_log(call.from_user.id, user.get("full_name"),
@@ -150,10 +168,12 @@ async def dayoff_plan_confirm(call: CallbackQuery):
     ]
     for it in off:
         lines.append(f"  • {it.get('full_name')}")
+    lines.append("\n✏️ Xato bo'lsa — hisobotgacha tahrirlashingiz mumkin.")
+    edit_kb = kb.dayoff_plan_edit_again_kb(plan_id)
     try:
-        await call.message.edit_text("\n".join(lines), reply_markup=None)
+        await call.message.edit_text("\n".join(lines), reply_markup=edit_kb)
     except Exception:
-        await call.message.answer("\n".join(lines))
+        await call.message.answer("\n".join(lines), reply_markup=edit_kb)
     await call.answer("Tasdiqlandi ✅")
 
 
