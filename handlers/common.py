@@ -12,7 +12,7 @@ from database.db import (
 from states import Reg, GenericEmpSearch
 import keyboards as kb
 from i18n import t, tf, norm_lang
-from utils import check_subscription, get_welcome_text
+from utils import check_subscription
 
 router = Router()
 

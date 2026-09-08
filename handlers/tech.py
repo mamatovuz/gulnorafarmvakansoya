@@ -14,13 +14,13 @@ from aiogram.fsm.context import FSMContext
 
 from database import queries as q
 from database.db import (
-    ROLE_TECH, ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_DIRECTOR,
+    ROLE_TECH, ROLE_ADMIN, ROLE_HR, ROLE_DIRECTOR,
 )
 import keyboards as kb
 from states import TechReplyForm, TechCancelForm, TechRatingForm
 from utils import (
     safe_send, tech_task_text, close_request_notices,
-    mark_request_notices_taken, post_open_tech_task_to_channel,
+    mark_request_notices_taken,
     update_tech_channel_card, reply_tech_channel_rating,
 )
 
@@ -495,7 +495,6 @@ async def tech_task_transfer_start(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ttxfercancel:"))
 async def tech_task_transfer_cancel(call: CallbackQuery):
-    tid = int(call.data.split(":")[1])
     try:
         await call.message.delete()
     except Exception:

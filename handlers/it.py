@@ -15,7 +15,7 @@ from database import queries as q
 from database.db import ROLE_ADMIN, ROLE_IT
 from states import ITForm
 import keyboards as kb
-from utils import safe_send, now_tk, iso_to_display
+from utils import safe_send, now_tk
 
 router = Router()
 

@@ -7,7 +7,7 @@ from database import queries as q
 from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE, ROLE_IT, ROLE_TECH,
-    ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING, STATUS_LABELS,
+    ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING,
 )
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
@@ -17,13 +17,13 @@ from states import (
 )
 import keyboards as kb
 from utils import (
-    vacancy_text, application_text, safe_send, broadcast, employee_profile_text,
+    vacancy_text, safe_send, broadcast, employee_profile_text,
     send_employee_profile,
-    fine_text, manager_request_text, send_application_resume, send_application_photo,
+    fine_text, manager_request_text, send_application_resume,
     post_application_to_channel, post_vacancy_to_channel, parse_date_input, add_days_iso,
     iso_to_display, probation_text, update_application_channel, send_application_card,
     close_request_notices, post_interview_to_channel, update_interview_channel,
-    interview_confirm_label, interview_attendance_label, REJECT_TEMPLATES,
+    interview_confirm_label, interview_attendance_label,
     effective_reject_template, broadcast_trust,
     staff_reg_text, tech_task_text, post_open_tech_task_to_channel,
 )

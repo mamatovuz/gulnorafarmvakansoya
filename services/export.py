@@ -1,5 +1,4 @@
 """Excel (.xlsx) hisobotlarni tayyorlash."""
-from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -7,7 +6,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from aiogram.types import BufferedInputFile
 
-from database.db import STATUS_LABELS, application_status_label
+from database.db import application_status_label
 
 _HEADER_FILL = PatternFill("solid", fgColor="2E7D32")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -303,7 +302,6 @@ def build_daily_attendance_xlsx(branches_data, date_display):
 
     headers = ["№", "Ism-familiya", "Keldi", "Ketdi", "Izoh"]
     ncols = len(headers)
-    last_col = get_column_letter(ncols)
 
     wb = Workbook()
 

@@ -12,7 +12,7 @@ from states import (
     BranchForm, ChannelForm, RoleForm, UserManageForm, SettingsForm,
 )
 import keyboards as kb
-from utils import vacancy_text, safe_send, PROFILE_UPDATE_NOTICE
+from utils import safe_send, PROFILE_UPDATE_NOTICE
 
 router = Router()
 
@@ -890,7 +890,6 @@ async def user_block(call: CallbackQuery, bot: Bot):
     await q.set_user_blocked(tg_id, True)
     me = await actor(call.from_user.id)
     await q.add_log(call.from_user.id, me["full_name"], "user_bloklandi", str(tg_id))
-    u = await q.get_user(tg_id)
     await call.message.edit_reply_markup(reply_markup=kb.user_manage_kb(tg_id, True))
     await call.answer("🚫 Bloklandi")
     await safe_send(bot, tg_id, "⛔ Siz administrator tomonidan botdan bloklandingiz.")

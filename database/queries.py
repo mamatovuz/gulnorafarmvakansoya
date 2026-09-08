@@ -229,6 +229,13 @@ def _py_lower(s):
 async def _conn():
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
+    # Bir vaqtda ko'p ulanish (8 ta fon loop + handlerlar) yozganda «database is
+    # locked» bo'lmasligi uchun: WAL rejimi + qulf kutish vaqti (5 soniya).
+    try:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        pass
     # Qidiruvni registrga bog'liq bo'lmagan holga keltirish uchun (o'zbekcha,
     # kirillcha harflar ham) Python ning str.lower() ini SQL da ishlatamiz.
     try:
@@ -1449,8 +1456,9 @@ async def add_fine(employee_user_id, amount, reason, created_by,
 
 def _period_now_str():
     """Joriy oy (YYYY-MM), Toshkent vaqti bilan."""
-    from datetime import datetime, timedelta
-    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m")
+    from datetime import datetime, timedelta, timezone
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    return (now_utc + timedelta(hours=5)).strftime("%Y-%m")
 
 
 async def cancel_fine(fid, cancelled_by):
@@ -2787,6 +2795,44 @@ async def set_setting(key, value):
             (key, value),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+# Har kuni / har oy uchun yoziladigan «yuborildi» flaglari settings jadvalida
+# to'planib boradi (masalan att_in_rem:2026-09-08:12345). Bularni davriy tozalash
+# uchun — sana bilan tugaydigan eski flaglarni o'chiradi (bugungisini qoldiradi).
+_DATED_FLAG_PREFIXES = (
+    "att_in_rem:", "att_out_rem:",
+    "dayoff_prompt_sent:", "dayoff_report_sent:",
+)
+_MONTHLY_FLAG_PREFIXES = (
+    "avans_prompt_sent:", "it_report_sent:", "salary_report_sent:",
+)
+
+
+async def cleanup_old_flags(today_iso, month_iso):
+    """Eski kunlik/oylik «yuborildi» flaglarini o'chiradi (settings o'sib ketmasin).
+
+    today_iso — 'YYYY-MM-DD' (bugun), month_iso — 'YYYY-MM' (shu oy).
+    O'chirilgan qatorlar sonini qaytaradi."""
+    db = await _conn()
+    removed = 0
+    try:
+        for pref in _DATED_FLAG_PREFIXES:
+            cur = await db.execute(
+                "DELETE FROM settings WHERE key LIKE ? AND key NOT LIKE ?",
+                (pref + "%", pref + today_iso + "%"),
+            )
+            removed += cur.rowcount or 0
+        for pref in _MONTHLY_FLAG_PREFIXES:
+            cur = await db.execute(
+                "DELETE FROM settings WHERE key LIKE ? AND key NOT LIKE ?",
+                (pref + "%", pref + month_iso + "%"),
+            )
+            removed += cur.rowcount or 0
+        await db.commit()
+        return removed
     finally:
         await db.close()
 

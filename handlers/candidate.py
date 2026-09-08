@@ -7,13 +7,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN, ST_NEW
+from database.db import ROLE_HR, ROLE_ADMIN
 from states import Apply, RescheduleForm, SalaryNegoForm
 import keyboards as kb
 from i18n import t, tf, canon, norm_lang
 from utils import (
-    vacancy_text, application_text, application_summary, safe_send,
-    send_application_resume, send_application_photo, best_vacancy_matches,
+    vacancy_text, application_summary, safe_send,
+    send_application_resume, best_vacancy_matches,
     recommendation_text, now_tk, post_application_channel, send_application_card,
     normalize_phone, phone_from_contact, PHONE_HINT, update_interview_channel,
     missing_application_fields,
@@ -252,7 +252,14 @@ async def apply_cancel(message: Message, state: FSMContext, lang: str = None):
 # 1) Ism
 @router.message(Apply.full_name, F.text)
 async def a_name(message: Message, state: FSMContext, lang: str = None):
-    await state.update_data(full_name=message.text.strip())
+    full_name = message.text.strip()
+    # Kamida 3 ta harf bo'lsin — bo'sh/bir belgili/faqat raqamli ism qabul qilinmaydi
+    if len(full_name) < 3 or not any(c.isalpha() for c in full_name):
+        await message.answer(
+            t("apply.name_bad", lang), reply_markup=kb.cancel_kb(lang)
+        )
+        return
+    await state.update_data(full_name=full_name)
     await state.set_state(Apply.birth_date)
     await message.answer(
         f"{q_head(2, lang)}\n{t('apply.birth', lang)}",

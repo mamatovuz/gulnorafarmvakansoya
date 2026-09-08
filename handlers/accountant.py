@@ -1,6 +1,6 @@
 """Buxgalter (accountant) paneli: davomat (filial kesimida), oylik belgilash/oshirish,
 oylik berildi/berilmadi, jarima yozish, dori yozish va yakuniy oylik hisoblash."""
-from datetime import datetime, date
+from datetime import date
 from calendar import monthrange
 
 from aiogram import Router, F, Bot
@@ -12,7 +12,7 @@ from database.db import ROLE_ADMIN, ROLE_ACCOUNTANT
 from states import AccForm
 import keyboards as kb
 from utils import (
-    employee_profile_text, fine_text, safe_send, now_tk, send_employee_profile,
+    fine_text, safe_send, now_tk, send_employee_profile,
     parse_money, fmt_money,
 )
 
@@ -283,7 +283,7 @@ async def _show_deduction_card(target, profile, kind):
 
     if base is None:
         extra = (
-            f"\n\n⚠️ <b>Oylik belgilanmagan</b> — kesish uchun avval "
+            "\n\n⚠️ <b>Oylik belgilanmagan</b> — kesish uchun avval "
             "«👥 Xodimlar (oylik/jarima)» bo'limidan oylik kiriting."
         )
         await send_employee_profile(target, profile, suffix=extra)

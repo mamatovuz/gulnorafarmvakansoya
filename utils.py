@@ -2,11 +2,11 @@
 import re
 from math import radians, sin, cos, asin, sqrt
 from difflib import SequenceMatcher
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 from aiogram import Bot
 from database import queries as q
-from database.db import STATUS_LABELS, application_status_label, branch_short
+from database.db import application_status_label, branch_short
 
 
 # O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
@@ -15,7 +15,7 @@ TASHKENT_OFFSET = timedelta(hours=5)
 
 def now_tk():
     """Hozirgi Toshkent vaqti (naive datetime). Server vaqt mintaqasiga bog'liq emas."""
-    return datetime.utcnow() + TASHKENT_OFFSET
+    return datetime.now(timezone.utc).replace(tzinfo=None) + TASHKENT_OFFSET
 
 
 def now_tk_hm():
@@ -82,10 +82,9 @@ def parse_money(text):
     if not digits:
         return None
     try:
-        value = int(digits)
+        return int(digits)
     except ValueError:
         return None
-    return value or None
 
 
 def fmt_money(amount):

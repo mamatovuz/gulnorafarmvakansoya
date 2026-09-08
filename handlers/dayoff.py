@@ -12,7 +12,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER
 from states import DayoffForm
 import keyboards as kb
-from i18n import t, tf
+from i18n import tf
 from utils import safe_send, broadcast_request, close_request_notices
 
 router = Router()

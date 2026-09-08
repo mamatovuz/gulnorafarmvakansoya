@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT, ROLE_MANAGER, ROLE_DIRECTOR
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT, ROLE_MANAGER
 import keyboards as kb
 from utils import safe_send, days_left_until, probation_text, iso_to_display, now_tk
 
@@ -386,6 +386,17 @@ async def dayoff_report_loop(bot: Bot, interval_seconds=60):
 
 
 # ---------------- ISH VAQTI ESLATMALARI (ish boshi / ish oxiri) ----------------
+def _clamp_hm(hh, mm):
+    """Soatni 00:00–23:59 oralig'iga keltiradi. «24:00» (yarim tun) => «23:59»,
+    aks holda strpt("24:00") ValueError beradi va eslatma hech qachon ketmaydi."""
+    h, m = int(hh), int(mm)
+    if h >= 24 or (h == 23 and m == 60):
+        return "23:59"
+    if m >= 60:
+        m = 59
+    return f"{h:02d}:{m:02d}"
+
+
 def _parse_work_hours(work_hours):
     """«09:00 - 18:00» dan (start, end) HH:MM. Aniqlanmasa (None, None)."""
     if not work_hours:
@@ -394,7 +405,7 @@ def _parse_work_hours(work_hours):
     times = re.findall(r"(\d{1,2}):(\d{2})", work_hours)
     if len(times) < 2:
         return None, None
-    return f"{int(times[0][0]):02d}:{times[0][1]}", f"{int(times[1][0]):02d}:{times[1][1]}"
+    return _clamp_hm(*times[0]), _clamp_hm(*times[1])
 
 
 def _within_window(now_hm, target_hm, window_min=30):
@@ -424,11 +435,21 @@ _ATT_OUT_TEXT = (
 
 async def _run_attendance_reminders(bot: Bot):
     """Ish boshi/oxiri eslatmasi — faqat oddiy xabar (davomat belgilanmaydi)."""
-    if str(await q.get_setting("att_reminder_enabled", "1")) != "1":
-        return
     now = now_tk()
     now_hm = now.strftime("%H:%M")
     date_iso = now.strftime("%Y-%m-%d")
+
+    # Kuniga bir marta — eski kunlik/oylik «yuborildi» flaglarini tozalaymiz
+    # (settings jadvali cheksiz o'sib ketmasligi uchun).
+    if str(await q.get_setting("flags_cleaned_on", "")) != date_iso:
+        try:
+            await q.cleanup_old_flags(date_iso, now.strftime("%Y-%m"))
+        except Exception:
+            logger.exception("Eski flaglarni tozalashda xatolik")
+        await q.set_setting("flags_cleaned_on", date_iso)
+
+    if str(await q.get_setting("att_reminder_enabled", "1")) != "1":
+        return
     from handlers.dayoff_plan import weekday_uz
     today = weekday_uz(now)
 

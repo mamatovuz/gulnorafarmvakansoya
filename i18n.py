@@ -125,6 +125,12 @@ TEXTS = {
         ),
     },
     "apply.q_num": {"uz": "<b>{n}-savol</b>", "ru": "<b>Вопрос {n}</b>"},
+    "apply.name_bad": {
+        "uz": "❗️ Iltimos to'liq ism-familiyangizni yozing (kamida 3 ta harf).\n"
+              "Misol: <i>Aliyev Vali</i>",
+        "ru": "❗️ Введите полное имя и фамилию (минимум 3 буквы).\n"
+              "Пример: <i>Алиев Вали</i>",
+    },
     "apply.birth": {
         "uz": "📅 Tug'ilgan sanangizni kiriting.\nFormat: <b>kun.oy.yil</b>\n"
               "Misol: <i>29.08.2009</i>",

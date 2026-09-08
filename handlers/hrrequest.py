@@ -19,7 +19,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import WorkHoursForm, HRMessageForm
 import keyboards as kb
-from i18n import t, variants
+from i18n import variants
 from utils import safe_send, broadcast_request, close_request_notices
 from handlers.salaryraise import start_raise_flow
 

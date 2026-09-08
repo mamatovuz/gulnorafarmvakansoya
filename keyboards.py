@@ -2,7 +2,6 @@
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
-    InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
@@ -10,7 +9,6 @@ from i18n import t, choices as i18n_choices, LANG_NAMES, LANGS
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_TECH, ROLE_CANDIDATE,
-    ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED,
     application_list_label,
 )
 
