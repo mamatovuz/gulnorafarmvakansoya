@@ -473,12 +473,6 @@ def staff_reg_text(reg):
     return "\n".join(parts)
 
 
-def attendance_status_text(status, distance=None, radius=None):
-    if status == "present":
-        return "✅ Ofisda"
-    return "❌ Ofisdan uzoqda"
-
-
 def fine_text(fine):
     return (
         f"💸 <b>Jarima #{fine['id']}</b>\n"

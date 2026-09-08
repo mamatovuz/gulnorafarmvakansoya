@@ -1,15 +1,12 @@
-"""Buxgalter (accountant) paneli: davomat (filial kesimida), oylik belgilash/oshirish,
+"""Buxgalter (accountant) paneli: oylik belgilash/oshirish,
 oylik berildi/berilmadi, jarima yozish, dori yozish va yakuniy oylik hisoblash."""
-from datetime import date
-from calendar import monthrange
-
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from database import queries as q
 from database.db import ROLE_ADMIN, ROLE_ACCOUNTANT
-from states import AccForm
+from states import AccForm, AccEmpSearch
 import keyboards as kb
 from utils import (
     fine_text, safe_send, now_tk, send_employee_profile,
@@ -79,18 +76,118 @@ async def acc_branch_view(call: CallbackQuery):
 
 
 # ---------------- XODIMLAR (OYLIK/JARIMA) ----------------
+async def _acc_search_menu(target):
+    total = len(await q.list_employee_profiles())
+    if not total:
+        await target.answer("Hali xodim profillari yo'q.")
+        return
+    await target.answer(
+        f"👥 <b>Xodimlar</b> — jami <b>{total}</b> ta\n"
+        "━━━━━━━━━━━━\n"
+        "Kerakli xodimni qanday topamiz?",
+        reply_markup=kb.accountant_search_kb(),
+    )
+
+
+async def _acc_send_results(target, profiles, title):
+    if not profiles:
+        await target.answer(
+            f"{title}\n\n😔 Hech kim topilmadi. Boshqa so'z bilan urinib ko'ring.",
+            reply_markup=kb.accountant_search_kb(),
+        )
+        return
+    await target.answer(
+        f"{title}\n\n👥 Topildi: <b>{len(profiles)}</b> ta\n"
+        "Oylik/jarima kiritish uchun xodimni tanlang:",
+        reply_markup=kb.employee_profiles_list_kb(
+            profiles[:30], prefix="accemp", with_search=False
+        ),
+    )
+
+
 @router.message(F.text == "👥 Xodimlar (oylik/jarima)")
-async def acc_employees(message: Message):
+async def acc_employees(message: Message, state: FSMContext):
     if not await _is_accountant(message.from_user.id):
         return
-    employees = await q.list_employee_profiles()
-    if not employees:
-        await message.answer("Hali xodim profillari yo'q.")
+    await state.clear()
+    await _acc_search_menu(message)
+
+
+@router.callback_query(F.data.startswith("accsrch:"))
+async def acc_search_pick(call: CallbackQuery, state: FSMContext):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
         return
-    await message.answer(
-        f"👥 <b>Xodimlar</b>\n\nJami: <b>{len(employees)}</b> ta\nTanlang:",
-        reply_markup=kb.employee_profiles_list_kb(employees[:30], prefix="accemp"),
+    mode = call.data.split(":")[1]
+    if mode == "home":
+        await state.clear()
+        await _acc_search_menu(call.message)
+    elif mode == "text":
+        await state.set_state(AccEmpSearch.query)
+        await call.message.answer(
+            "🔤 Xodimning <b>ismi</b>, <b>@username</b>, <b>telefoni</b> yoki "
+            "<b>ID</b> sini yozing.\n"
+            "<i>To'liq yozish shart emas — bir qismi ham yetadi.</i>"
+        )
+    elif mode == "branch":
+        await state.clear()
+        branches = await q.list_branches()
+        if not branches:
+            await call.answer("Filiallar ro'yxati bo'sh.", show_alert=True)
+            return
+        await call.message.answer(
+            "🏢 Qaysi filial xodimlarini ko'ramiz?",
+            reply_markup=kb.accountant_search_branch_kb(branches),
+        )
+    elif mode == "role":
+        await state.clear()
+        await call.message.answer(
+            "💼 Qaysi lavozim bo'yicha qidiramiz?",
+            reply_markup=kb.accountant_search_role_kb(),
+        )
+    else:  # all
+        await state.clear()
+        profiles = await q.search_employees()
+        await _acc_send_results(call.message, profiles, "👥 <b>Barcha xodimlar</b>")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("accsrchb:"))
+async def acc_search_by_branch(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    bid = int(call.data.split(":")[1])
+    branch = await q.get_branch(bid)
+    profiles = await q.search_employees(branch_id=bid)
+    await _acc_send_results(
+        call.message, profiles,
+        f"🏢 <b>{branch['name'] if branch else 'Filial'}</b> xodimlari",
     )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("accsrchr:"))
+async def acc_search_by_role(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    role = call.data.split(":")[1]
+    label = dict(kb.EMP_SEARCH_ROLES).get(role, role)
+    profiles = await q.search_employees(role=role)
+    await _acc_send_results(call.message, profiles, f"💼 <b>{label}</b>")
+    await call.answer()
+
+
+@router.message(AccEmpSearch.query, F.text)
+async def acc_search_run(message: Message, state: FSMContext):
+    if not await _is_accountant(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    text = message.text.strip()
+    profiles = await q.search_employees(text=text)
+    await _acc_send_results(message, profiles, f"🔍 <b>Qidiruv:</b> {text}")
 
 
 @router.callback_query(F.data.startswith("accemp:"))
@@ -585,70 +682,6 @@ async def acc_meds_list(call: CallbackQuery):
 
 
 # ================= YAKUNIY OYLIK HISOBLASH =================
-# Kunlik stavka = oylik ÷ 30. Kelmagan kun × kunlik, kechikkan kun × kunlik/2.
-_REST_WEEKDAY = {
-    "Dushanba": 0, "Seshanba": 1, "Chorshanba": 2, "Payshanba": 3,
-    "Juma": 4, "Shanba": 5, "Yakshanba": 6,
-}
-
-
-def _rest_weekday(rest_day):
-    """Kanonik dam olish kunini Python hafta kuniga (Dush=0..Yaksh=6) o'giradi.
-
-    «🚫 yo'q» yoki noma'lum bo'lsa None — hech qanday kun dam deb hisoblanmaydi."""
-    return _REST_WEEKDAY.get((rest_day or "").strip())
-
-
-def _month_workdays(period, rest_wd, today, upto_today=True):
-    """Oydagi ish kunlari soni — dam olish kunlaridan tashqari.
-
-    upto_today=True  => faqat bugungacha (kutilgan davomat uchun).
-    upto_today=False => butun oy bo'yicha (kunlik stavka mahraji uchun).
-    """
-    year, month = map(int, period.split("-"))
-    last_day = monthrange(year, month)[1]
-    if upto_today:
-        if (year, month) > (today.year, today.month):
-            return 0                  # kelajakdagi oy
-        end_day = today.day if (today.year, today.month) == (year, month) else last_day
-    else:
-        end_day = last_day
-    count = 0
-    for d in range(1, end_day + 1):
-        if rest_wd is None or date(year, month, d).weekday() != rest_wd:
-            count += 1
-    return count
-
-
-def _workday_seconds(work_hours):
-    """Ish kuni davomiyligi (sekund). «09:00-18:00» => 32400. Aniqlanmasa 8 soat."""
-    import re
-    times = re.findall(r"(\d{1,2}):(\d{2})", work_hours or "")
-    if len(times) < 2:
-        return 8 * 3600
-    start = int(times[0][0]) * 3600 + int(times[0][1]) * 60
-    end = int(times[1][0]) * 3600 + int(times[1][1]) * 60
-    diff = end - start
-    if diff <= 0:
-        diff += 24 * 3600
-    return diff or 8 * 3600
-
-
-def _fmt_hms(seconds):
-    """Sekundni «1 soat 5 daqiqa» ko'rinishida yozadi."""
-    seconds = int(seconds or 0)
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    parts = []
-    if h:
-        parts.append(f"{h} soat")
-    if m:
-        parts.append(f"{m} daqiqa")
-    if s or not parts:
-        parts.append(f"{s} soniya")
-    return " ".join(parts)
-
-
 async def _compute_final_salary(uid):
     """Yakuniy oylikni chegirmalar bilan hisoblaydi. Dict qaytaradi.
 

@@ -322,45 +322,6 @@ CREATE TABLE IF NOT EXISTS staff_regs (
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
-CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    branch_id INTEGER,
-    date TEXT NOT NULL,
-    time TEXT,
-    latitude REAL,
-    longitude REAL,
-    distance INTEGER,
-    status TEXT NOT NULL DEFAULT 'present',
-    out_time TEXT,
-    out_latitude REAL,
-    out_longitude REAL,
-    out_distance INTEGER,
-    late INTEGER NOT NULL DEFAULT 0,
-    early INTEGER NOT NULL DEFAULT 0,
-    late_seconds INTEGER NOT NULL DEFAULT 0,
-    early_seconds INTEGER NOT NULL DEFAULT 0,
-    on_break INTEGER NOT NULL DEFAULT 0,
-    break_seconds INTEGER NOT NULL DEFAULT 0,
-    break_started_at TEXT,
-    last_prompt_at TEXT,
-    created_at TEXT DEFAULT (datetime('now','+5 hours'))
-);
-
-CREATE TABLE IF NOT EXISTS location_checks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attendance_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    branch_id INTEGER,
-    date TEXT,
-    requested_at TEXT,
-    responded_at TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',   -- pending / present / away / missed
-    distance INTEGER,
-    kind TEXT NOT NULL DEFAULT 'auto',        -- auto / resume
-    created_at TEXT DEFAULT (datetime('now','+5 hours'))
-);
-
 CREATE TABLE IF NOT EXISTS salary_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_user_id INTEGER NOT NULL,
@@ -829,21 +790,6 @@ EMPLOYEE_PROFILE_COLUMNS = {
     "updated_by_self_at": "TEXT",
 }
 
-ATTENDANCE_COLUMNS = {
-    "out_time": "TEXT",
-    "out_latitude": "REAL",
-    "out_longitude": "REAL",
-    "out_distance": "INTEGER",
-    "late": "INTEGER NOT NULL DEFAULT 0",
-    "early": "INTEGER NOT NULL DEFAULT 0",
-    "late_seconds": "INTEGER NOT NULL DEFAULT 0",   # kechikkan vaqt (sekund)
-    "early_seconds": "INTEGER NOT NULL DEFAULT 0",  # erta ketgan vaqt (sekund)
-    "on_break": "INTEGER NOT NULL DEFAULT 0",
-    "break_seconds": "INTEGER NOT NULL DEFAULT 0",
-    "break_started_at": "TEXT",
-    "last_prompt_at": "TEXT",
-}
-
 FINES_COLUMNS = {
     "branch_id": "INTEGER",
     "period": "TEXT",
@@ -1033,13 +979,6 @@ async def _migrate(db):
     for col, coltype in EMPLOYEE_PROFILE_COLUMNS.items():
         if col not in existing:
             await db.execute(f"ALTER TABLE employee_profiles ADD COLUMN {col} {coltype}")
-
-    cur = await db.execute("PRAGMA table_info(attendance)")
-    existing = {row[1] for row in await cur.fetchall()}
-    if existing:  # jadval mavjud bo'lsa
-        for col, coltype in ATTENDANCE_COLUMNS.items():
-            if col not in existing:
-                await db.execute(f"ALTER TABLE attendance ADD COLUMN {col} {coltype}")
 
     cur = await db.execute("PRAGMA table_info(staff_regs)")
     existing = {row[1] for row in await cur.fetchall()}

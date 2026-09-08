@@ -160,22 +160,17 @@ class StaffReg(StatesGroup):
     confirm = State()        # yakuniy tasdiqlash
 
 
-class AttendanceForm(StatesGroup):
-    """Ishga kelish/ketish — GPS lokatsiya kutilmoqda."""
-    location = State()      # Ishga keldim
-    checkout = State()      # Ishdan ketdim
-
-
-class AttendanceEditForm(StatesGroup):
-    """HR bitta xodim davomatini tahrirlaydi — kelgan/ketgan vaqtni yozadi."""
-    value = State()   # HH:MM ko'rinishida vaqt kiritiladi
-
-
 class DayoffForm(StatesGroup):
     """Dam olish kunini almashtirish so'rovi."""
     from_day = State()
     to_day = State()
     reason = State()
+
+
+class AccEmpSearch(StatesGroup):
+    """Moliya «👥 Xodimlar» — ism/username/telefon/ID bo'yicha qidirish.
+    Filial va lavozim bo'yicha qidiruv inline tugmalar orqali ketadi."""
+    query = State()
 
 
 class AccForm(StatesGroup):

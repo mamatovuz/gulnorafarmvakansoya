@@ -1204,6 +1204,36 @@ def director_search_role_kb():
     return b.as_markup()
 
 
+# ---------------- MOLIYA «👥 XODIMLAR» QIDIRUVI ----------------
+def accountant_search_kb():
+    """Moliya bo'limi xodimlarni qidirish usullari (HR/direktor kabi)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔤 Ism / username / telefon", callback_data="accsrch:text")
+    b.button(text="🏢 Filial bo'yicha", callback_data="accsrch:branch")
+    b.button(text="💼 Lavozim bo'yicha", callback_data="accsrch:role")
+    b.button(text="👥 Barcha xodimlar", callback_data="accsrch:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def accountant_search_branch_kb(branches):
+    b = InlineKeyboardBuilder()
+    for br in branches:
+        b.button(text=f"🏢 {br['name']}", callback_data=f"accsrchb:{br['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="accsrch:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def accountant_search_role_kb():
+    b = InlineKeyboardBuilder()
+    for role, label in EMP_SEARCH_ROLES:
+        b.button(text=label, callback_data=f"accsrchr:{role}")
+    b.button(text="⬅️ Orqaga", callback_data="accsrch:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def manager_requests_list_kb(requests, prefix="mrview"):
     b = InlineKeyboardBuilder()
     for r in requests:
@@ -2329,201 +2359,6 @@ def staff_regs_list_kb(regs, prefix="srview"):
             callback_data=f"{prefix}:{r['id']}",
         )
     b.adjust(1)
-    return b.as_markup()
-
-
-# ================= DAVOMAT (ATTENDANCE) =================
-def break_stats_kb(scope="mgr"):
-    """Tanaffus/joylashuv statistikasi uchun davr tanlash."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📅 Bugun", callback_data=f"brk:{scope}:day")
-    b.button(text="🗓 Hafta", callback_data=f"brk:{scope}:week")
-    b.button(text="📆 Oy", callback_data=f"brk:{scope}:month")
-    b.adjust(3)
-    return b.as_markup()
-
-
-def attendance_settings_kb(enabled, interval_hours):
-    """HR: periodik joylashuv tekshiruvi sozlamalari."""
-    b = InlineKeyboardBuilder()
-    if enabled:
-        b.button(text="🟢 Tekshiruv YOQILGAN (bosib o'chirish)", callback_data="attset:toggle")
-    else:
-        b.button(text="🔴 Tekshiruv O'CHIRILGAN (bosib yoqish)", callback_data="attset:toggle")
-    for h in (1, 2, 3):
-        mark = "✅ " if str(interval_hours) == str(h) else ""
-        b.button(text=f"{mark}{h} soatda", callback_data=f"attset:int:{h}")
-    b.adjust(1, 3)
-    return b.as_markup()
-
-
-def attendance_location_kb():
-    b = ReplyKeyboardBuilder()
-    b.button(text="📍 Joylashuvni yuborish", request_location=True)
-    b.button(text=CANCEL_BTN)
-    b.adjust(1)
-    return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
-
-
-def attendance_reminder_kb(kind, lang=None):
-    """Ish vaqti eslatmasi ostidagi tugma: «📍 Ishga keldim» (kind='in') yoki
-    «🏁 Ishdan ketdim» (kind='out'). Tugma bosilsa — odatdagi davomat oqimi
-    ishga tushadi. «🏠 Asosiy menyu» esa to'liq menyuni tiklaydi."""
-    b = ReplyKeyboardBuilder()
-    b.button(text=t("btn.checkin", lang) if kind == "in" else t("btn.checkout", lang))
-    b.button(text=t("btn.main_menu", lang))
-    b.adjust(1)
-    return b.as_markup(resize_keyboard=True)
-
-
-def attendance_report_kb(scope="hr"):
-    """scope: hr | dir | mgr — davr tanlash."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📅 Bugun", callback_data=f"att:{scope}:day")
-    b.button(text="🗓 Hafta", callback_data=f"att:{scope}:week")
-    b.button(text="📆 Oy", callback_data=f"att:{scope}:month")
-    if scope != "mgr":
-        b.button(text="🏢 Filiallar kesimi", callback_data=f"attbr:{scope}:day")
-    b.adjust(3, 1)
-    return b.as_markup()
-
-
-def attendance_branch_period_kb(scope="hr"):
-    b = InlineKeyboardBuilder()
-    b.button(text="📅 Bugun", callback_data=f"attbr:{scope}:day")
-    b.button(text="🗓 Hafta", callback_data=f"attbr:{scope}:week")
-    b.button(text="📆 Oy", callback_data=f"attbr:{scope}:month")
-    b.button(text="⬅️ Orqaga", callback_data=f"att:{scope}:day")
-    b.adjust(3, 1)
-    return b.as_markup()
-
-
-def late_early_kb():
-    b = InlineKeyboardBuilder()
-    b.button(text="📅 Bugun", callback_data="le:day")
-    b.button(text="🗓 Hafta", callback_data="le:week")
-    b.button(text="📆 Oy", callback_data="le:month")
-    b.adjust(3)
-    return b.as_markup()
-
-
-# ---- HR: filial bo'yicha / bitta xodim bo'yicha davomat ----
-# Davr tugmalari ikkala oqimda ham bir xil: bugun / kecha / 1 hafta / 1 oy
-_ATT_PICK_PERIODS = [
-    ("day", "📅 Bugun"),
-    ("yesterday", "📅 Kecha"),
-    ("week", "🗓 1 hafta"),
-    ("month", "📆 1 oy"),
-]
-
-
-def att_pick_branches_kb(branches, action):
-    """Filial tanlash ro'yxati.
-    action: 'hbatt' — filial davomati, 'heatt' — bitta xodim davomati."""
-    b = InlineKeyboardBuilder()
-    for br in branches:
-        b.button(text=f"🏢 {br['name']}", callback_data=f"{action}:br:{br['id']}")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def att_branch_period_pick_kb(branch_id):
-    """Tanlangan filial uchun davr tugmalari."""
-    b = InlineKeyboardBuilder()
-    for p, txt in _ATT_PICK_PERIODS:
-        b.button(text=txt, callback_data=f"hbatt:p:{branch_id}:{p}")
-    b.button(text="⬅️ Filiallar", callback_data="hbatt:back")
-    b.adjust(2, 2, 1)
-    return b.as_markup()
-
-
-def att_emp_list_kb(employees, branch_id):
-    """Tanlangan filialdagi xodimlar ro'yxati."""
-    b = InlineKeyboardBuilder()
-    for e in employees:
-        name = e.get("full_name") or e.get("tg_id")
-        b.button(text=f"👤 {name}", callback_data=f"heatt:emp:{e['user_id']}")
-    b.button(text="⬅️ Filiallar", callback_data="heatt:back")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def att_emp_period_pick_kb(user_id):
-    """Tanlangan xodim uchun davr tugmalari."""
-    b = InlineKeyboardBuilder()
-    for p, txt in _ATT_PICK_PERIODS:
-        b.button(text=txt, callback_data=f"heatt:p:{user_id}:{p}")
-    b.button(text="⬅️ Xodimlar", callback_data=f"heatt:eback:{user_id}")
-    b.adjust(2, 2, 1)
-    return b.as_markup()
-
-
-def att_branch_report_kb(branch_id, period):
-    """Filial davomati hisoboti ostida: Excel + davrni almashtirish."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📊 Excel yuklab olish", callback_data=f"hbatt:xl:{branch_id}:{period}")
-    b.button(text="🔁 Boshqa davr", callback_data=f"hbatt:br:{branch_id}")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def att_emp_report_kb(user_id, period):
-    """Xodim davomati hisoboti ostida: Excel + davrni almashtirish."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📊 Excel yuklab olish", callback_data=f"heatt:xl:{user_id}:{period}")
-    b.button(text="🔁 Boshqa davr", callback_data=f"heatt:emp:{user_id}")
-    b.adjust(1)
-    return b.as_markup()
-
-
-# ---- HR: davomatni tahrirlash (filial → xodim → davr → kun) ----
-def att_edit_emp_list_kb(employees, branch_id):
-    """Tahrirlash uchun filialdagi xodimlar ro'yxati."""
-    b = InlineKeyboardBuilder()
-    for e in employees:
-        name = e.get("full_name") or e.get("tg_id")
-        b.button(text=f"👤 {name}", callback_data=f"hedit:emp:{e['user_id']}")
-    b.button(text="⬅️ Filiallar", callback_data="hedit:back")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def att_edit_period_kb(user_id):
-    """Tahrirlash — davr tanlash (bugun/kecha to'g'ridan kun, hafta/oy kunlar ro'yxati)."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📅 Bugun", callback_data=f"hedit:pd:{user_id}:day")
-    b.button(text="📅 Kecha", callback_data=f"hedit:pd:{user_id}:yesterday")
-    b.button(text="🗓 1 hafta", callback_data=f"hedit:pd:{user_id}:week")
-    b.button(text="📆 1 oy", callback_data=f"hedit:pd:{user_id}:month")
-    b.button(text="⬅️ Xodimlar", callback_data=f"hedit:eback:{user_id}")
-    b.adjust(2, 2, 1)
-    return b.as_markup()
-
-
-def att_edit_days_kb(user_id, period, days):
-    """Hafta/oy kunlari ro'yxati. days: [(iso, 'DD.MM.YYYY', has_record)]."""
-    b = InlineKeyboardBuilder()
-    for iso, label, has in days:
-        mark = "✅" if has else "▫️"
-        b.button(text=f"{mark} {label}", callback_data=f"hedit:day:{user_id}:{period}:{iso}")
-    b.button(text="⬅️ Davr", callback_data=f"hedit:emp:{user_id}")
-    b.adjust(2)
-    return b.as_markup()
-
-
-def att_edit_day_kb(user_id, period, iso_date):
-    """Bitta kun uchun: kelgan / ketgan vaqtni tahrirlash tugmalari."""
-    b = InlineKeyboardBuilder()
-    b.button(text="🟢 Kelgan vaqt", callback_data=f"hedit:set:{user_id}:{period}:{iso_date}:in")
-    b.button(text="🔴 Ketgan vaqt", callback_data=f"hedit:set:{user_id}:{period}:{iso_date}:out")
-    if period in ("week", "month"):
-        back_cb = f"hedit:pd:{user_id}:{period}"
-        back_txt = "⬅️ Kunlar"
-    else:
-        back_cb = f"hedit:emp:{user_id}"
-        back_txt = "⬅️ Davr"
-    b.button(text=back_txt, callback_data=back_cb)
-    b.adjust(2, 1)
     return b.as_markup()
 
 
