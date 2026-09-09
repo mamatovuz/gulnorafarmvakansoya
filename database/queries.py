@@ -2781,6 +2781,7 @@ async def set_setting(key, value):
 # uchun — sana bilan tugaydigan eski flaglarni o'chiradi (bugungisini qoldiradi).
 _DATED_FLAG_PREFIXES = (
     "att_in_rem:", "att_out_rem:",
+    "vf_in_before:", "vf_in_after:", "vf_out_before:", "vf_out_after:",
     "dayoff_prompt_sent:", "dayoff_report_sent:",
 )
 _MONTHLY_FLAG_PREFIXES = (

@@ -424,6 +424,24 @@ def _within_window(now_hm, target_hm, window_min=30):
     return 0 <= diff <= window_min
 
 
+def _shift_hm(hm, minutes):
+    """«HH:MM» ni belgilangan daqiqaga suradi. Manfiy — orqaga, musbat — oldinga.
+    Natija 00:00–23:59 oralig'ida bo'lsa «HH:MM», tun chegarasidan chiqsa None."""
+    from datetime import datetime, timedelta
+    try:
+        base = datetime.strptime(hm, "%H:%M")
+    except (ValueError, TypeError):
+        return None
+    shifted = base + timedelta(minutes=minutes)
+    if shifted.date() != base.date():
+        return None  # yarim tundan o'tib ketdi — eslatma yubormaymiz
+    return shifted.strftime("%H:%M")
+
+
+# Verifiks eslatmalari uchun oyna (daqiqa). Kichik — eslatmalar bir-biriga
+# qorishib ketmasligi va noto'g'ri vaqtda ketib qolmasligi uchun.
+_VERIFIKS_WINDOW = 4
+
 _ATT_IN_TEXT = (
     "⏰ <b>Ish vaqtingiz boshlandi!</b>\n\n"
     "Xayrli, barakali ish tilaymiz! 🌿"
@@ -431,6 +449,28 @@ _ATT_IN_TEXT = (
 _ATT_OUT_TEXT = (
     "🌇 <b>Ish vaqtingiz tugadi!</b>\n\n"
     "Mehnatingiz uchun rahmat. Xayrli dam oling! 🌙"
+)
+
+# --- Verifiks (kirish/chiqish qayd etish) eslatmalari ---
+_VERIFIKS_IN_BEFORE_TEXT = (
+    "⏰ <b>Ish vaqtingiz boshlanishiga 5 daqiqa qoldi!</b>\n\n"
+    "Iltimos, <b>Verifiks</b> ilovasini oching va <b>kirish</b> qayd etib qo'ying. ✅\n\n"
+    "Kirishni o'z vaqtida belgilashni unutmang."
+)
+_VERIFIKS_IN_AFTER_TEXT = (
+    "❗️ <b>Diqqat!</b>\n\n"
+    "Ish vaqtingiz boshlanganiga 5 daqiqa bo'ldi. "
+    "<b>Verifiks</b> ilovasidan <b>kirish</b> qilishni esingizdan chiqarmadingizmi?\n\n"
+    "Agar hali kirmagan bo'lsangiz, iltimos hoziroq <b>Verifiks</b> ilovasiga kirib qo'ying. ✅"
+)
+_VERIFIKS_OUT_BEFORE_TEXT = (
+    "🌇 <b>Ish vaqtingiz tugashiga 5 daqiqa qoldi!</b>\n\n"
+    "<b>Verifiks</b> ilovasidan <b>chiqish</b> qayd etishni esdan chiqarmang. ✅"
+)
+_VERIFIKS_OUT_AFTER_TEXT = (
+    "❓ <b>Ish vaqtingiz tugadi.</b>\n\n"
+    "<b>Verifiks</b> ilovasidan <b>chiqish</b> qildingizmi?\n\n"
+    "Agar hali chiqmagan bo'lsangiz, iltimos <b>Verifiks</b> ilovasidan chiqishni belgilab qo'ying. ✅"
 )
 
 
@@ -484,6 +524,24 @@ async def _run_attendance_reminders(bot: Bot):
             flag = f"att_out_rem:{date_iso}:{tg}"
             if str(await q.get_setting(flag, "0")) != "1":
                 await safe_send(bot, tg, _ATT_OUT_TEXT)
+                await q.set_setting(flag, "1")
+
+        # --- Verifiks eslatmalari (kirish/chiqish qayd etish) ---
+        # Har biri o'z target vaqtiga (ish boshi/oxiridan ±5 daqiqa) yetganda
+        # bir marta yuboriladi. Kichik oyna — noto'g'ri vaqtda ketib qolmasin.
+        for suffix, target, text in (
+            ("vf_in_before", _shift_hm(start, -5), _VERIFIKS_IN_BEFORE_TEXT),
+            ("vf_in_after",  _shift_hm(start, 5),  _VERIFIKS_IN_AFTER_TEXT),
+            ("vf_out_before", _shift_hm(end, -5),  _VERIFIKS_OUT_BEFORE_TEXT),
+            ("vf_out_after",  _shift_hm(end, 5),   _VERIFIKS_OUT_AFTER_TEXT),
+        ):
+            if not target:
+                continue
+            if not _within_window(now_hm, target, _VERIFIKS_WINDOW):
+                continue
+            flag = f"{suffix}:{date_iso}:{tg}"
+            if str(await q.get_setting(flag, "0")) != "1":
+                await safe_send(bot, tg, text)
                 await q.set_setting(flag, "1")
 
 
