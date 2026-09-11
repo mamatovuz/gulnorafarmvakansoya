@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, date, timezone
 
 from aiogram import Bot
 from database import queries as q
-from database.db import application_status_label, branch_short
+from database.db import application_status_label, branch_short, request_status_label
 
 
 # O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
@@ -439,7 +439,7 @@ async def send_employee_profile(target, profile, reply_markup=None, prefix="",
 def staff_reg_text(reg):
     """Gulnora Farm hodimi self-registratsiyasi matni (HR uchun)."""
     parts = [
-        f"🧾 <b>Xodim so'rovi #{reg['id']}</b>  |  {reg.get('status') or '-'}",
+        f"🧾 <b>Xodim so'rovi #{reg['id']}</b>  |  {request_status_label(reg.get('status'))}",
         "━━━━━━━━━━━━",
         f"👤 Ism-familiya: {_v(reg, 'full_name')}",
         f"📅 Tug'ilgan sana: {_v(reg, 'birth_date')}",
@@ -505,7 +505,7 @@ def manager_request_text(req):
             lines.append(f"📈 Tajriba: {req['experience']}")
     lines += [
         f"📝 Tafsilot: {_v(req, 'details')}",
-        f"Holati: {_v(req, 'status')}",
+        f"Holati: {request_status_label(req.get('status'))}",
         f"🕐 Sana: {_v(req, 'created_at')}",
     ]
     return "\n".join(lines)

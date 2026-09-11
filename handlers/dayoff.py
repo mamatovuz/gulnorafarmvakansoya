@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, request_status_label
 from states import DayoffForm
 import keyboards as kb
 from i18n import tf
@@ -27,7 +27,7 @@ def _req_text(r):
         f"📆 Hozirgi dam kuni: {r.get('from_day') or '-'}\n"
         f"📆 So'ralayotgan dam kuni: {r.get('to_day') or '-'}\n"
         f"✍️ Sabab: {r.get('reason') or '-'}\n"
-        f"Holati: {r.get('status') or '-'}\n"
+        f"Holati: {request_status_label(r.get('status'))}\n"
         f"🕐 Sana: {r.get('created_at') or '-'}"
     )
 

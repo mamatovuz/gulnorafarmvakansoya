@@ -9,7 +9,7 @@ from i18n import t, choices as i18n_choices, LANG_NAMES, LANGS
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_TECH, ROLE_CANDIDATE,
-    application_list_label,
+    application_list_label, request_status_label,
 )
 
 
@@ -1240,7 +1240,7 @@ def manager_requests_list_kb(requests, prefix="mrview"):
         kind = "Xodim" if r.get("kind") == "vacancy" else "Texnik"
         title = r.get("title") or "So'rov"
         b.button(
-            text=f"#{r['id']} · {kind} · {title} · {r.get('status') or '-'}",
+            text=f"#{r['id']} · {kind} · {title} · {request_status_label(r.get('status'))}",
             callback_data=f"{prefix}:{r['id']}",
         )
     b.adjust(1)
@@ -2355,7 +2355,7 @@ def staff_regs_list_kb(regs, prefix="srview"):
     b = InlineKeyboardBuilder()
     for r in regs:
         b.button(
-            text=f"#{r['id']} · {r.get('full_name') or '-'} · {r.get('position') or '-'} · {r.get('status') or '-'}",
+            text=f"#{r['id']} · {r.get('full_name') or '-'} · {r.get('position') or '-'} · {request_status_label(r.get('status'))}",
             callback_data=f"{prefix}:{r['id']}",
         )
     b.adjust(1)
@@ -2747,7 +2747,7 @@ def dayoff_list_kb(reqs, prefix="doview"):
     b = InlineKeyboardBuilder()
     for r in reqs:
         b.button(
-            text=f"#{r['id']} · {r.get('full_name') or '-'} · {r.get('from_day')}→{r.get('to_day')} · {r.get('status')}",
+            text=f"#{r['id']} · {r.get('full_name') or '-'} · {r.get('from_day')}→{r.get('to_day')} · {request_status_label(r.get('status'))}",
             callback_data=f"{prefix}:{r['id']}",
         )
     b.adjust(1)

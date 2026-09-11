@@ -67,6 +67,36 @@ def application_status_label(a):
     return STATUS_LABELS.get(status, status or "-")
 
 
+# So'rovlar (dam olish / oylik / ish vaqti / filial / xodim ro'yxati ...) uchun
+# umumiy status yorliqlari — foydalanuvchiga inglizcha "new/approved" o'rniga
+# o'zbekcha chiqishi uchun.
+REQUEST_STATUS_LABELS = {
+    "new": "🆕 Yangi",
+    "pending": "⏳ Ko'rib chiqilmoqda",
+    "approved": "✅ Tasdiqlangan",
+    "confirmed": "✅ Tasdiqlangan",
+    "rejected": "❌ Rad etilgan",
+    "updated": "✏️ Yangilangan",
+    "reschedule": "🔁 Qayta belgilangan",
+    "cancelled": "🚫 Bekor qilingan",
+    "canceled": "🚫 Bekor qilingan",
+    "closed": "🔒 Yopilgan",
+    "done": "✅ Bajarildi",
+    "filled": "✅ To'ldirilgan",
+    "open": "🟢 Ochiq",
+    "waiting": "⏳ Kutuvda",
+    "interview": "📅 Suhbatga chaqirilgan",
+    "accepted": "✅ Qabul qilingan",
+}
+
+
+def request_status_label(status):
+    """Ixtiyoriy so'rov statusini o'zbekcha yorliqqa aylantiradi."""
+    if not status:
+        return "-"
+    return REQUEST_STATUS_LABELS.get(str(status).strip().lower(), status)
+
+
 # Yo'nalish / lavozim nomidan icon aniqlash (kalit so'z bo'yicha).
 # Ro'yxatga faqat ICON chiqadi — nomi emas (kompakt bo'lsin).
 def application_role_icon(a):
