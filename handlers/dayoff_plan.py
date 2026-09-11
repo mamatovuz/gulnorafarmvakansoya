@@ -27,22 +27,25 @@ def weekday_uz(dt):
     return WEEKDAY_UZ[dt.weekday()]
 
 
-def plan_prompt_text(plan, off_items):
+def plan_prompt_text(plan, items):
     header = (
         "🛌 <b>Ertangi dam olishni tasdiqlang</b>\n"
         "━━━━━━━━━━━━\n"
         f"📆 Sana: <b>{iso_to_display(plan.get('plan_date'))}</b> ({plan.get('weekday')})\n"
         f"🏢 Filial: <b>{plan.get('branch_name') or '-'}</b>\n\n"
+        "🟢 — dam oladi (kelmaydi)   🔴 — ishga keladi\n\n"
     )
-    if off_items:
-        header += "Ertaga quyidagi xodimlar <b>dam oladi</b>:\n"
-        for i, it in enumerate(off_items, start=1):
-            header += f"{i}. {it.get('full_name') or '-'} — {it.get('position') or '-'}\n"
+    if items:
+        for i, it in enumerate(items, start=1):
+            dot = "🟢" if it.get("day_status") == "off" else "🔴"
+            header += f"{i}. {dot} {it.get('full_name') or '-'} — {it.get('position') or '-'}\n"
     else:
-        header += "Ertaga dam oluvchi xodim yo'q.\n"
+        header += "Bu filialda xodim yo'q.\n"
+    off_n = sum(1 for it in items if it.get("day_status") == "off")
     header += (
-        "\nHammasi to'g'rimi? <b>Tasdiqlash</b>ni bosing. Kimdir aslida "
-        "<b>ishga keladi</b> bo'lsa — <b>Tahrirlash</b>dan uni belgilang."
+        f"\n🟢 Dam oladi: <b>{off_n}</b> / {len(items)} nafar\n"
+        "\nHammasi to'g'rimi? <b>✅ Tasdiqlash</b>ni bosing. Kimningdir holati noto'g'ri "
+        "bo'lsa — <b>✏️ Tahrirlash</b>dan uni bosib 🟢⇄🔴 almashtiring."
     )
     return header
 
@@ -62,12 +65,15 @@ async def _can_manage(user, plan):
     if user["role"] in (ROLE_ADMIN, ROLE_HR):
         return True
     if user["role"] == ROLE_MANAGER:
-        # Rahbar o'z filiali rejasini boshqaradi
+        # Rahbar faqat o'z filiali rejasini boshqaradi
         branch_id = user.get("branch_id")
         if not branch_id:
             profile = await q.get_employee_profile(user["id"])
             branch_id = profile.get("branch_id") if profile else None
-        return plan.get("branch_id") == branch_id or branch_id is None
+        if not branch_id:
+            # Filialga bog'lanmagan rahbar hech qaysi rejani boshqara olmaydi
+            return False
+        return plan.get("branch_id") == branch_id
     return False
 
 
@@ -135,7 +141,7 @@ async def dayoff_plan_toggle(call: CallbackQuery):
         )
     except Exception:
         pass
-    await call.answer("✅ keladi" if new_status == "work" else "🛌 dam oladi")
+    await call.answer("🔴 keladi" if new_status == "work" else "🟢 dam oladi")
 
 
 @router.callback_query(F.data.startswith("dopl_ok:"))
@@ -197,7 +203,7 @@ def _dayoff_summary_text(date_iso, branches_data, pending):
         "🛌 <b>Kunlik dam olish hisoboti</b>",
         f"📆 Sana: <b>{iso_to_display(date_iso)}</b>",
         "━━━━━━━━━━━━",
-        f"🏢 Tasdiqlangan filiallar: <b>{len(branches_data)}</b>",
+        f"🏢 Filiallar: <b>{len(branches_data)}</b>",
         f"👤 Bugun dam oladi (kelmaydi): <b>{total_off}</b> nafar",
     ]
     for b in branches_data:
@@ -216,10 +222,16 @@ async def send_dayoff_report(bot: Bot, target_tg_ids, date_iso, note_empty=False
     confirmed = await q.list_dayoff_plans_for_date(date_iso, status="confirmed")
     pending = await q.list_dayoff_plans_for_date(date_iso, status="pending")
     branches_data = []
-    for plan in confirmed:
+    # Tasdiqlangan + tasdiqlanmagan rejalarni ham qo'shamiz — rahbar tasdiqlamay
+    # qolsa ham o'sha filial xodimlari hisobotdan tushib qolmasligi uchun
+    # (tasdiqlanmaganlari «⏳» bilan alohida belgilanadi).
+    for plan in [*confirmed, *pending]:
         items = await q.list_dayoff_plan_items(plan["id"])
+        name = plan.get("branch_name") or "Filialsiz"
+        if plan.get("status") != "confirmed":
+            name += " ⏳ (tasdiqlanmagan)"
         branches_data.append({
-            "branch_name": plan.get("branch_name") or "Filialsiz",
+            "branch_name": name,
             "items": items,
         })
     if not branches_data:

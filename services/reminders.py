@@ -324,14 +324,18 @@ async def _run_dayoff_prompt(bot: Bot):
         if plan_id is None:
             continue  # allaqachon yaratilgan (qayta yubormaymiz)
         profiles = await q.list_employee_profiles(branch_id=br["id"])
-        off = [p for p in profiles if (p.get("rest_day") or "").strip() == weekday]
-        for p in off:
+        # Filialning BARCHA xodimini rejaga qo'shamiz: rest_day ertangi kunga
+        # to'g'ri kelsa 🟢 dam oladi ('off'), aks holda 🔴 ishga keladi ('work').
+        # Rahbar hammasini ko'rib, kerak bo'lsa tahrirlaydi.
+        for p in profiles:
+            status = "off" if (p.get("rest_day") or "").strip() == weekday else "work"
             await q.add_dayoff_plan_item(
-                plan_id, p["user_id"], p.get("full_name"), p.get("position")
+                plan_id, p["user_id"], p.get("full_name"), p.get("position"),
+                day_status=status,
             )
         mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=br["id"])
-        if not mgr_ids or not off:
-            # Rahbari yo'q yoki hech kim dam olmaydi — rejani avtomatik
+        if not mgr_ids or not profiles:
+            # Rahbari yo'q yoki filialda xodim yo'q — rejani avtomatik
             # tasdiqlaymiz (tasdiqlaydigan rahbar yo'q / bezovta qilmaymiz).
             await q.set_dayoff_plan_status(plan_id, "confirmed")
             continue

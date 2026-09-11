@@ -2794,9 +2794,9 @@ def dayoff_plan_edit_kb(plan_id, items):
     b = InlineKeyboardBuilder()
     for it in items:
         if it.get("day_status") == "off":
-            label = f"🛌 {it.get('full_name') or '-'} — dam oladi"
+            label = f"🟢 {it.get('full_name') or '-'} — dam oladi"
         else:
-            label = f"✅ {it.get('full_name') or '-'} — keladi"
+            label = f"🔴 {it.get('full_name') or '-'} — keladi"
         b.button(text=label, callback_data=f"dopl_tog:{it['id']}")
     b.button(text="✅ Tasdiqlash", callback_data=f"dopl_ok:{plan_id}")
     b.adjust(1)
