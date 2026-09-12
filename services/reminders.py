@@ -149,7 +149,17 @@ async def probation_reminder_loop(bot: Bot, interval_seconds=3600):
 
 
 # ---------------- AVANS SO'ROVI (har oy belgilangan kunda) ----------------
-def _advance_prompt_text(pay_day):
+def _advance_prompt_text(pay_day, summasiz=True):
+    if summasiz:
+        return (
+            "💵 <b>Avans so'rovi</b>\n\n"
+            "Assalomu alaykum! <b>\"Gulnora Farm\"</b> dorixonalar tarmog'i "
+            "xodimlari uchun avans ro'yxatini shakllantirish boshlandi.\n\n"
+            "<b>Siz avans oluvchilar ro'yxatiga qo'shilishni xohlaysizmi?</b>\n\n"
+            f"«Ha» tugmasini bossangiz, karta raqamingizni yuborasiz va har oyning "
+            f"<b>{pay_day}-sanasida</b> avans o'sha kartaga o'tkaziladi.\n\n"
+            "Quyidagi tugmalardan birini tanlang 👇"
+        )
     return (
         "💵 <b>Avans so'rovi</b>\n\n"
         "Assalomu alaykum! <b>\"Gulnora Farm\"</b> dorixonalar tarmog'i "
@@ -168,8 +178,9 @@ async def send_advance_prompt(bot: Bot, period=None, mark_sent=True):
     except (TypeError, ValueError):
         pay_day = 15
 
+    summasiz = str(await q.get_setting("avans_summasiz", "1")) == "1"
     ids = await q.advance_employee_tg_ids()
-    text = _advance_prompt_text(pay_day)
+    text = _advance_prompt_text(pay_day, summasiz)
     sent = 0
     for tid in ids:
         if await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period)):

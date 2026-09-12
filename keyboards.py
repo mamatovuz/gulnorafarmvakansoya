@@ -2685,12 +2685,17 @@ def advance_send_acc_kb(period):
     return b.as_markup()
 
 
-def advance_settings_kb(prompt_day, pay_day, enabled=True, amounts_count=None):
+def advance_settings_kb(prompt_day, pay_day, enabled=True, amounts_count=None,
+                        summasiz=True):
     b = InlineKeyboardBuilder()
     if enabled:
         b.button(text="💵 Avans so'rovi: 🟢 YOQILGAN", callback_data="avset:toggle")
     else:
         b.button(text="💵 Avans so'rovi: 🔴 O'CHIQ", callback_data="avset:toggle")
+    if summasiz:
+        b.button(text="💰 Summa so'rash: 🔴 O'CHIQ", callback_data="avset:summasiz")
+    else:
+        b.button(text="💰 Summa so'rash: 🟢 YOQILGAN", callback_data="avset:summasiz")
     b.button(
         text=f"📨 So'rov yuboriladigan kun: {prompt_day}-sana",
         callback_data="avset:promptday",
@@ -2699,8 +2704,9 @@ def advance_settings_kb(prompt_day, pay_day, enabled=True, amounts_count=None):
         text=f"💳 To'lov sanasi: {pay_day}-sana",
         callback_data="avset:payday",
     )
-    suffix = f": {amounts_count} ta" if amounts_count is not None else ""
-    b.button(text=f"💵 Avans miqdorlari{suffix}", callback_data="avset:amounts")
+    if not summasiz:
+        suffix = f": {amounts_count} ta" if amounts_count is not None else ""
+        b.button(text=f"💵 Avans miqdorlari{suffix}", callback_data="avset:amounts")
     b.adjust(1)
     return b.as_markup()
 

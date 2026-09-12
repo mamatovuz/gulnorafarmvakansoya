@@ -77,6 +77,15 @@ def _fmt_sum(value):
 
 DEFAULT_ADVANCE_AMOUNTS = (1_320_000, 2_640_000, 3_520_000, 4_400_000)
 ADVANCE_AMOUNTS_SETTING = "avans_amounts"
+ADVANCE_SUMMASIZ_SETTING = "avans_summasiz"
+
+
+async def _summasiz_mode():
+    """True — summa so'ralmaydi (xodim faqat ro'yxatga qo'shiladi, karta bilan).
+
+    False — hozirgidek xodim avans miqdorini ham tanlaydi.
+    """
+    return str(await q.get_setting(ADVANCE_SUMMASIZ_SETTING, "1")) == "1"
 
 
 def _parse_money_value(text):
@@ -147,16 +156,27 @@ async def _show_confirm(message: Message, state: FSMContext):
     amount = data.get("avns_amount")
     me = await q.get_user(message.from_user.id)
     full_name = (me or {}).get("full_name") or "-"
-    await message.answer(
-        "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"👤 Ism-familiya: <b>{full_name}</b>\n"
-        f"💵 Avans miqdori: <b>{_fmt_sum(amount)} so'm</b>\n"
-        f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"Ushbu karta raqamiga <b>{_fmt_sum(amount)} so'm</b> avans o'tkazilsinmi?",
-        reply_markup=kb.advance_confirm_kb(),
-    )
+    if amount:
+        await message.answer(
+            "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"👤 Ism-familiya: <b>{full_name}</b>\n"
+            f"💵 Avans miqdori: <b>{_fmt_sum(amount)} so'm</b>\n"
+            f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"Ushbu karta raqamiga <b>{_fmt_sum(amount)} so'm</b> avans o'tkazilsinmi?",
+            reply_markup=kb.advance_confirm_kb(),
+        )
+    else:
+        await message.answer(
+            "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
+            "━━━━━━━━━━━━\n"
+            f"👤 Ism-familiya: <b>{full_name}</b>\n"
+            f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
+            "━━━━━━━━━━━━\n"
+            "Sizni avans oluvchilar ro'yxatiga qo'shaylikmi?",
+            reply_markup=kb.advance_confirm_kb(),
+        )
 
 
 # ==================== XODIM TOMONI ====================
@@ -172,7 +192,10 @@ async def advance_yes(call: CallbackQuery, state: FSMContext):
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await _ask_amount(call.message, state)
+    if await _summasiz_mode():
+        await _ask_card(call.message, state)
+    else:
+        await _ask_amount(call.message, state)
     await call.answer()
 
 
@@ -314,7 +337,7 @@ async def advance_card(message: Message, state: FSMContext):
         return
     await state.update_data(avns_card=card)
     data = await state.get_data()
-    if not data.get("avns_amount"):
+    if not data.get("avns_amount") and not await _summasiz_mode():
         await message.answer("❌ Avans miqdori tanlanmagan. Qaytadan tanlang.")
         await _ask_amount(message, state)
         return
@@ -330,10 +353,11 @@ async def advance_confirm(call: CallbackQuery, state: FSMContext):
     if not card:
         await call.answer("Karta raqami topilmadi, qaytadan urinib ko'ring.", show_alert=True)
         return
-    if not amount:
+    summasiz = await _summasiz_mode()
+    if not amount and not summasiz:
         await call.answer("Avans miqdori topilmadi, qaytadan tanlang.", show_alert=True)
         return
-    amount = int(amount)
+    amount = int(amount) if amount else None
     await state.clear()
     me = await q.get_user(call.from_user.id)
     if not me:
@@ -350,9 +374,10 @@ async def advance_confirm(call: CallbackQuery, state: FSMContext):
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+    amount_line = f"💵 Miqdor: <b>{_fmt_sum(amount)} so'm</b>\n" if amount else ""
     await call.message.answer(
         "✅ <b>So'rovingiz qabul qilindi!</b>\n"
-        f"💵 Miqdor: <b>{_fmt_sum(amount)} so'm</b>\n"
+        f"{amount_line}"
         f"💳 Karta: <b>{_pretty_card(card)}</b>\n\n"
         "Avans ro'yxati HR bo'limiga yuboriladi. Rahmat!"
     )
@@ -369,7 +394,10 @@ async def advance_edit(call: CallbackQuery, state: FSMContext):
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await _ask_amount(call.message, state)
+    if await _summasiz_mode():
+        await _ask_card(call.message, state)
+    else:
+        await _ask_amount(call.message, state)
     await call.answer()
 
 
@@ -473,23 +501,37 @@ async def hr_advance_send(call: CallbackQuery, bot: Bot):
 # ==================== AVANS SOZLAMALARI (HR / ADMIN) ====================
 async def _advance_settings_text():
     enabled = str(await q.get_setting("avans_enabled", "1")) == "1"
+    summasiz = await _summasiz_mode()
     prompt_day = await q.get_setting("avans_prompt_day", "13") or "13"
     pay_day = await q.get_setting("avans_day", "15") or "15"
     amounts = await _advance_amounts()
     status = "🟢 Yoqilgan" if enabled else "🔴 O'chirilgan"
     amounts_line = ", ".join(f"{_fmt_sum(amount)} so'm" for amount in amounts)
+    if summasiz:
+        summa_status = "🔴 O'chirilgan"
+        summa_desc = (
+            "Xodim faqat <b>karta raqamini</b> yuboradi va HR ga <b>summasiz</b> "
+            "boradi (avans oluvchilar ro'yxatiga qo'shiladi)."
+        )
+        amounts_block = ""
+    else:
+        summa_status = "🟢 Yoqilgan"
+        summa_desc = "Xodim avans <b>miqdorini</b> ham tanlaydi."
+        amounts_block = f"💵 Avans miqdorlari: <b>{amounts_line}</b>\n"
     text = (
         "💵 <b>Avans sozlamalari</b>\n"
         "━━━━━━━━━━━━\n"
         "Har oy belgilangan kunda xodimlarga avans ro'yxati shakllanayotgani "
         "haqida xabar va <b>Ha / Yo'q</b> tugmalari yuboriladi.\n\n"
         f"Holat: <b>{status}</b>\n"
+        f"💰 Summa so'rash: <b>{summa_status}</b>\n"
+        f"   <i>{summa_desc}</i>\n"
         f"📨 So'rov yuboriladigan kun: <b>har oy {prompt_day}-sana</b>\n"
         f"💳 Avans to'lov sanasi: <b>har oy {pay_day}-sana</b>\n"
-        f"💵 Avans miqdorlari: <b>{amounts_line}</b>\n\n"
+        f"{amounts_block}\n"
         "Quyidan istalgan sozlamani o'zgartiring:"
     )
-    return text, enabled, prompt_day, pay_day, amounts
+    return text, enabled, prompt_day, pay_day, amounts, summasiz
 
 
 def _advance_amount_settings_text(amounts):
@@ -509,11 +551,11 @@ def _advance_amount_settings_text(amounts):
 async def advance_settings(message: Message):
     if not await _is_hr(message.from_user.id):
         return
-    text, enabled, prompt_day, pay_day, amounts = await _advance_settings_text()
+    text, enabled, prompt_day, pay_day, amounts, summasiz = await _advance_settings_text()
     await message.answer(
         text,
         reply_markup=kb.advance_settings_kb(
-            prompt_day, pay_day, enabled, len(amounts)
+            prompt_day, pay_day, enabled, len(amounts), summasiz
         ),
     )
 
@@ -530,12 +572,39 @@ async def advance_settings_toggle(call: CallbackQuery):
         call.from_user.id, (me or {}).get("full_name"),
         "sozlama_avans", "yoqildi" if not enabled else "o'chirildi",
     )
-    text, en, prompt_day, pay_day, amounts = await _advance_settings_text()
+    text, en, prompt_day, pay_day, amounts, summasiz = await _advance_settings_text()
     try:
         await call.message.edit_text(
             text,
             reply_markup=kb.advance_settings_kb(
-                prompt_day, pay_day, en, len(amounts)
+                prompt_day, pay_day, en, len(amounts), summasiz
+            ),
+        )
+    except Exception:
+        pass
+    await call.answer("Saqlandi ✅")
+
+
+@router.callback_query(F.data == "avset:summasiz")
+async def advance_settings_summasiz(call: CallbackQuery):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    summasiz = await _summasiz_mode()
+    # summasiz → summa so'raladi (yoqiladi); aksincha → summasiz (o'chiriladi)
+    await q.set_setting(ADVANCE_SUMMASIZ_SETTING, "0" if summasiz else "1")
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, (me or {}).get("full_name"),
+        "sozlama_avans_summa",
+        "summa so'raladi" if summasiz else "summasiz",
+    )
+    text, enabled, prompt_day, pay_day, amounts, new_summasiz = await _advance_settings_text()
+    try:
+        await call.message.edit_text(
+            text,
+            reply_markup=kb.advance_settings_kb(
+                prompt_day, pay_day, enabled, len(amounts), new_summasiz
             ),
         )
     except Exception:
@@ -549,19 +618,19 @@ async def advance_settings_back(call: CallbackQuery, state: FSMContext):
         await call.answer("⛔", show_alert=True)
         return
     await state.clear()
-    text, enabled, prompt_day, pay_day, amounts = await _advance_settings_text()
+    text, enabled, prompt_day, pay_day, amounts, summasiz = await _advance_settings_text()
     try:
         await call.message.edit_text(
             text,
             reply_markup=kb.advance_settings_kb(
-                prompt_day, pay_day, enabled, len(amounts)
+                prompt_day, pay_day, enabled, len(amounts), summasiz
             ),
         )
     except Exception:
         await call.message.answer(
             text,
             reply_markup=kb.advance_settings_kb(
-                prompt_day, pay_day, enabled, len(amounts)
+                prompt_day, pay_day, enabled, len(amounts), summasiz
             ),
         )
     await call.answer()
@@ -757,11 +826,11 @@ async def advance_settings_promptday_save(message: Message, state: FSMContext):
         "sozlama_avans_kun", f"so'rov: {day}",
     )
     await message.answer(f"✅ So'rov endi har oy <b>{day}-sanada</b> yuboriladi.")
-    text, enabled, prompt_day, pay_day, amounts = await _advance_settings_text()
+    text, enabled, prompt_day, pay_day, amounts, summasiz = await _advance_settings_text()
     await message.answer(
         text,
         reply_markup=kb.advance_settings_kb(
-            prompt_day, pay_day, enabled, len(amounts)
+            prompt_day, pay_day, enabled, len(amounts), summasiz
         ),
     )
 
@@ -783,11 +852,11 @@ async def advance_settings_payday_save(message: Message, state: FSMContext):
         "sozlama_avans_kun", f"to'lov: {day}",
     )
     await message.answer(f"✅ Avans endi har oy <b>{day}-sanada</b> to'lanadi.")
-    text, enabled, prompt_day, pay_day, amounts = await _advance_settings_text()
+    text, enabled, prompt_day, pay_day, amounts, summasiz = await _advance_settings_text()
     await message.answer(
         text,
         reply_markup=kb.advance_settings_kb(
-            prompt_day, pay_day, enabled, len(amounts)
+            prompt_day, pay_day, enabled, len(amounts), summasiz
         ),
     )
 
