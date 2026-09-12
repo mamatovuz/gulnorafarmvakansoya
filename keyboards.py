@@ -2648,6 +2648,15 @@ def advance_yes_no_kb(period):
     return b.as_markup()
 
 
+def advance_restart_confirm_kb():
+    """«Avans so'rovini boshidan yuborish» — tasdiqlash/bekor qilish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, boshidan boshlansin", callback_data="avrestart:yes")
+    b.button(text="❌ Yo'q, bekor qilish", callback_data="avrestart:no")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def _fmt_amount(value):
     """123456 -> '123 456' (minglar probel bilan)."""
     return f"{int(value):,}".replace(",", " ")

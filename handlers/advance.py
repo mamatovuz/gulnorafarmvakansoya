@@ -430,9 +430,42 @@ async def hr_advance(message: Message):
 
 
 @router.message(F.text == "🔄 Avans so'rovini boshidan yuborish")
-async def hr_advance_restart(message: Message, bot: Bot):
+async def hr_advance_restart(message: Message):
     if not await _is_hr(message.from_user.id):
         return
+    period = _period_now()
+    await message.answer(
+        "🔄 <b>Avans so'rovini boshidan boshlash</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"📆 Davr: <b>{period}</b>\n\n"
+        "⚠️ Tasdiqlasangiz — shu davrdagi <b>barcha eski avans javoblari "
+        "o'chiriladi</b> va so'rov barcha xodimlarga <b>boshidan</b> yuboriladi.\n\n"
+        "Tasdiqlaysizmi?",
+        reply_markup=kb.advance_restart_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "avrestart:no")
+async def hr_advance_restart_cancel(call: CallbackQuery):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_text("❌ Avans so'rovini boshidan yuborish bekor qilindi.")
+    except Exception:
+        await call.message.answer("❌ Bekor qilindi.")
+    await call.answer("Bekor qilindi")
+
+
+@router.callback_query(F.data == "avrestart:yes")
+async def hr_advance_restart_confirm(call: CallbackQuery, bot: Bot):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     period = _period_now()
     deleted = await q.reset_advance_period(period)
     await q.set_setting(f"avans_prompt_sent:{period}", "0")
@@ -443,13 +476,13 @@ async def hr_advance_restart(message: Message, bot: Bot):
     from services.reminders import send_advance_prompt
 
     sent, total, _period = await send_advance_prompt(bot, period)
-    me = await q.get_user(message.from_user.id)
+    me = await q.get_user(call.from_user.id)
     await q.add_log(
-        message.from_user.id, (me or {}).get("full_name"),
+        call.from_user.id, (me or {}).get("full_name"),
         "avans_boshidan_yuborildi",
         f"{period}: {deleted} ta eski yozuv o'chdi, {sent}/{total} yuborildi",
     )
-    await message.answer(
+    await call.message.answer(
         "🔄 <b>Avans so'rovi boshidan yuborildi.</b>\n"
         "━━━━━━━━━━━━\n"
         f"📆 Davr: <b>{period}</b>\n"
@@ -457,6 +490,7 @@ async def hr_advance_restart(message: Message, bot: Bot):
         f"📨 Yuborildi: <b>{sent}/{total}</b> xodimga\n\n"
         "Xodimlar endi avansni boshidan tanlaydi."
     )
+    await call.answer("Boshidan yuborildi ✅")
 
 
 @router.callback_query(F.data.startswith("avns_send:"))
