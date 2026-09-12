@@ -2796,14 +2796,28 @@ def dayoff_plan_edit_again_kb(plan_id):
 
 
 def dayoff_plan_edit_kb(plan_id, items):
-    """Har bir xodim uchun holat tugmasi: 🛌 dam oladi <-> ✅ keladi."""
+    """Har bir xodim uchun holat tugmasi. Bosilsa 🟢 keladi ⇄ 🔴 kelmaydi almashadi.
+    So'rovning o'zida ko'rsatiladi — alohida «Tahrirlash» rejimi kerak emas."""
     b = InlineKeyboardBuilder()
     for it in items:
-        if it.get("day_status") == "off":
-            label = f"🟢 {it.get('full_name') or '-'} — dam oladi"
+        if it.get("day_status") == "work":
+            label = f"🟢 {it.get('full_name') or '-'} — ishga keladi"
         else:
-            label = f"🔴 {it.get('full_name') or '-'} — keladi"
+            label = f"🔴 {it.get('full_name') or '-'} — kelmaydi"
         b.button(text=label, callback_data=f"dopl_tog:{it['id']}")
     b.button(text="✅ Tasdiqlash", callback_data=f"dopl_ok:{plan_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_plan_branch_pick_kb(plans):
+    """HR/Admin uchun — qaysi filial rejasini tahrirlashni tanlash."""
+    b = InlineKeyboardBuilder()
+    for p in plans:
+        st = "✅" if p.get("status") == "confirmed" else "⏳"
+        b.button(
+            text=f"{st} {p.get('branch_name') or 'Filialsiz'}",
+            callback_data=f"dopl_edit:{p['id']}",
+        )
     b.adjust(1)
     return b.as_markup()

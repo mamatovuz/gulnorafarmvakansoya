@@ -27,25 +27,30 @@ def weekday_uz(dt):
     return WEEKDAY_UZ[dt.weekday()]
 
 
-def plan_prompt_text(plan, items):
-    header = (
+def plan_prompt_text(plan, items, *, reminder=False):
+    header = ""
+    if reminder:
+        header += "⏰ <b>ESLATMA — ertangi dam olishni hali tasdiqlamadingiz!</b>\n\n"
+    header += (
         "🛌 <b>Ertangi dam olishni tasdiqlang</b>\n"
         "━━━━━━━━━━━━\n"
         f"📆 Sana: <b>{iso_to_display(plan.get('plan_date'))}</b> ({plan.get('weekday')})\n"
         f"🏢 Filial: <b>{plan.get('branch_name') or '-'}</b>\n\n"
-        "🟢 — dam oladi (kelmaydi)   🔴 — ishga keladi\n\n"
+        "🟢 — ishga keladi   🔴 — kelmaydi (dam oladi)\n\n"
     )
     if items:
         for i, it in enumerate(items, start=1):
-            dot = "🟢" if it.get("day_status") == "off" else "🔴"
+            dot = "🟢" if it.get("day_status") == "work" else "🔴"
             header += f"{i}. {dot} {it.get('full_name') or '-'} — {it.get('position') or '-'}\n"
     else:
         header += "Bu filialda xodim yo'q.\n"
     off_n = sum(1 for it in items if it.get("day_status") == "off")
+    work_n = len(items) - off_n
     header += (
-        f"\n🟢 Dam oladi: <b>{off_n}</b> / {len(items)} nafar\n"
-        "\nHammasi to'g'rimi? <b>✅ Tasdiqlash</b>ni bosing. Kimningdir holati noto'g'ri "
-        "bo'lsa — <b>✏️ Tahrirlash</b>dan uni bosib 🟢⇄🔴 almashtiring."
+        f"\n🟢 Ishga keladi: <b>{work_n}</b> · 🔴 Kelmaydi: <b>{off_n}</b> "
+        f"({len(items)} nafar)\n"
+        "\n👇 Kimningdir holati noto'g'ri bo'lsa — <b>ustiga bosing</b> (🟢⇄🔴). "
+        "Hammasi to'g'ri bo'lsa <b>✅ Tasdiqlash</b>ni bosing."
     )
     return header
 
@@ -59,11 +64,37 @@ async def _report_already_sent(plan):
     return str(flag) == "1"
 
 
+def _hm(s, default):
+    """«HH:MM» ni (soat, daqiqa) ga aylantiradi."""
+    try:
+        h, m = (s or default).split(":")
+        return int(h), int(m)
+    except (ValueError, AttributeError):
+        h, m = default.split(":")
+        return int(h), int(m)
+
+
+async def _hr_edit_open():
+    """HR/Admin ertalab dam olish rejasini tahrirlash oynasi ochiqmi?
+    05:00 dan 08:30 (hisobot vaqti) gacha, va hisobot hali yuborilmagan bo'lsa."""
+    now = now_tk()
+    start = _hm(await q.get_setting("dayoff_hr_edit_start", "05:00"), "05:00")
+    end = _hm(await q.get_setting("dayoff_report_time", "08:30"), "08:30")
+    cur = (now.hour, now.minute)
+    if not (start <= cur < end):
+        return False
+    today = now.strftime("%Y-%m-%d")
+    return str(await q.get_setting(f"dayoff_report_sent:{today}", "0")) != "1"
+
+
 async def _can_manage(user, plan):
     if not user:
         return False
-    if user["role"] in (ROLE_ADMIN, ROLE_HR):
+    if user["role"] == ROLE_ADMIN:
         return True
+    if user["role"] == ROLE_HR:
+        # HR faqat ertalabki oynada (05:00–08:30) istalgan filialni tahrirlaydi
+        return await _hr_edit_open()
     if user["role"] == ROLE_MANAGER:
         # Rahbar faqat o'z filiali rejasini boshqaradi
         branch_id = user.get("branch_id")
@@ -99,19 +130,11 @@ async def dayoff_plan_edit(call: CallbackQuery):
     if not items:
         await call.answer("Bu rejada xodim yo'q.", show_alert=True)
         return
-    try:
-        await call.message.edit_text(
-            "✏️ <b>Tahrirlash</b>\n\n"
-            "Har bir xodim tugmasini bosib holatini almashtiring:\n"
-            "🛌 <b>dam oladi</b> ⇄ ✅ <b>keladi</b>\n\n"
-            "Tugatgach «✅ Tasdiqlash» ni bosing.",
-            reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
-        )
-    except Exception:
-        await call.message.answer(
-            "✏️ Har bir xodim holatini almashtiring, so'ng «✅ Tasdiqlash»:",
-            reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
-        )
+    # Yangi xabar sifatida ochamiz — HR filial ro'yxati buzilmasligi uchun
+    await call.message.answer(
+        plan_prompt_text(plan, items),
+        reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
+    )
     await call.answer()
 
 
@@ -135,13 +158,15 @@ async def dayoff_plan_toggle(call: CallbackQuery):
         return
     new_status = await q.toggle_dayoff_plan_item(item_id)
     items = await q.list_dayoff_plan_items(item["plan_id"])
+    markup = kb.dayoff_plan_edit_kb(item["plan_id"], items)
     try:
-        await call.message.edit_reply_markup(
-            reply_markup=kb.dayoff_plan_edit_kb(item["plan_id"], items)
-        )
+        await call.message.edit_text(plan_prompt_text(plan, items), reply_markup=markup)
     except Exception:
-        pass
-    await call.answer("🔴 keladi" if new_status == "work" else "🟢 dam oladi")
+        try:
+            await call.message.edit_reply_markup(reply_markup=markup)
+        except Exception:
+            pass
+    await call.answer("🟢 ishga keladi" if new_status == "work" else "🔴 kelmaydi")
 
 
 @router.callback_query(F.data.startswith("dopl_ok:"))
@@ -166,14 +191,16 @@ async def dayoff_plan_confirm(call: CallbackQuery):
                     "dam_olish_reja_tasdiq", f"plan#{plan_id}")
     items = await q.list_dayoff_plan_items(plan_id)
     off = [it for it in items if it.get("day_status") == "off"]
+    work_n = len(items) - len(off)
     lines = [
         "✅ <b>Tasdiqlandi. Rahmat!</b>",
         f"📆 {iso_to_display(plan.get('plan_date'))} ({plan.get('weekday')})",
         f"🏢 {plan.get('branch_name') or '-'}",
-        f"🛌 Dam oladi: <b>{len(off)}</b> nafar",
+        f"🟢 Ishga keladi: <b>{work_n}</b> nafar",
+        f"🔴 Kelmaydi (dam oladi): <b>{len(off)}</b> nafar",
     ]
     for it in off:
-        lines.append(f"  • {it.get('full_name')}")
+        lines.append(f"  🔴 {it.get('full_name')}")
     lines.append("\n✏️ Xato bo'lsa — hisobotgacha tahrirlashingiz mumkin.")
     edit_kb = kb.dayoff_plan_edit_again_kb(plan_id)
     try:
@@ -192,6 +219,25 @@ async def hr_dayoff_report(message: Message, bot: Bot):
         return
     today = now_tk().strftime("%Y-%m-%d")
     await send_dayoff_report(bot, [message.from_user.id], today, note_empty=True)
+    # HR/Admin — bugungi rejalarni filial bo'yicha tahrirlash imkoni (05:00–08:30)
+    if user["role"] in (ROLE_HR, ROLE_ADMIN):
+        plans = await q.list_dayoff_plans_for_date(today)
+        if not plans:
+            return
+        if user["role"] == ROLE_ADMIN or await _hr_edit_open():
+            await message.answer(
+                "✏️ <b>Filialni tanlab tahrirlang</b>\n"
+                "Har bir xodim tugmasini bosib 🟢 <b>ishga keladi</b> ⇄ "
+                "🔴 <b>kelmaydi</b> qilib belgilang.",
+                reply_markup=kb.dayoff_plan_branch_pick_kb(plans),
+            )
+        else:
+            start = await q.get_setting("dayoff_hr_edit_start", "05:00")
+            end = await q.get_setting("dayoff_report_time", "08:30")
+            await message.answer(
+                f"✏️ Tahrirlash oynasi <b>{start}–{end}</b> oralig'ida ochiladi "
+                "(hisobot yuborilgunicha)."
+            )
 
 
 def _dayoff_summary_text(date_iso, branches_data, pending):

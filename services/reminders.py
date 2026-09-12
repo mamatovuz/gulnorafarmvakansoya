@@ -355,8 +355,12 @@ async def _run_dayoff_prompt(bot: Bot):
         for tid in mgr_ids:
             await safe_send(
                 bot, tid, plan_prompt_text(plan, items),
-                reply_markup=kb.dayoff_plan_confirm_kb(plan_id),
+                reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
             )
+        # Eslatma taymerini boshlaymiz — birinchi eslatma ~30 daqiqadan keyin
+        await q.set_setting(
+            f"dayoff_remind_at:{plan_id}", now.strftime("%Y-%m-%d %H:%M:%S")
+        )
     await q.set_setting(flag_key, "1")
     logger.info("Kunlik dam olish so'rovi yuborildi (%s)", plan_date)
 
@@ -398,6 +402,83 @@ async def dayoff_report_loop(bot: Bot, interval_seconds=60):
             raise
         except Exception:
             logger.exception("Kunlik dam olish hisobotida xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- KUNLIK DAM OLISH: HAR 30 DAQIQADA TASDIQLASH ESLATMASI ----------------
+def _in_quiet_hours(now, start, end):
+    """now tungi jim oynada (masalan 22:00–07:00) ekanligini tekshiradi."""
+    def mins(s, d):
+        try:
+            h, m = (s or d).split(":")
+            return int(h) * 60 + int(m)
+        except (ValueError, AttributeError):
+            h, m = d.split(":")
+            return int(h) * 60 + int(m)
+    cur = now.hour * 60 + now.minute
+    s = mins(start, "22:00")
+    e = mins(end, "07:00")
+    if s == e:
+        return False
+    if s < e:
+        return s <= cur < e
+    return cur >= s or cur < e  # yarim tundan o'tadi
+
+
+async def _run_dayoff_reminders(bot: Bot):
+    """Tasdiqlanmagan filial rejalari uchun rahbarga har 30 daqiqada eslatma."""
+    now = now_tk()
+    if _in_quiet_hours(
+        now,
+        await q.get_setting("dayoff_reminder_quiet_start", "22:00"),
+        await q.get_setting("dayoff_reminder_quiet_end", "07:00"),
+    ):
+        return
+    try:
+        interval = int(await q.get_setting("dayoff_reminder_min", "30") or 30)
+    except (TypeError, ValueError):
+        interval = 30
+    from handlers.dayoff_plan import plan_prompt_text
+    today = now.strftime("%Y-%m-%d")
+    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    for date_iso in (today, tomorrow):
+        # Hisobot yuborilgan bo'lsa — o'sha kun uchun eslatma kerak emas
+        if str(await q.get_setting(f"dayoff_report_sent:{date_iso}", "0")) == "1":
+            continue
+        pending = await q.list_dayoff_plans_for_date(date_iso, status="pending")
+        for plan in pending:
+            key = f"dayoff_remind_at:{plan['id']}"
+            last = await q.get_setting(key, "")
+            if last:
+                try:
+                    last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+                    if (now - last_dt).total_seconds() < interval * 60:
+                        continue
+                except ValueError:
+                    pass
+            mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=plan["branch_id"])
+            items = await q.list_dayoff_plan_items(plan["id"])
+            if not mgr_ids or not items:
+                continue
+            sent = False
+            for tid in mgr_ids:
+                if await safe_send(
+                    bot, tid, plan_prompt_text(plan, items, reminder=True),
+                    reply_markup=kb.dayoff_plan_edit_kb(plan["id"], items),
+                ):
+                    sent = True
+            if sent:
+                await q.set_setting(key, now.strftime("%Y-%m-%d %H:%M:%S"))
+
+
+async def dayoff_reminder_loop(bot: Bot, interval_seconds=120):
+    while True:
+        try:
+            await _run_dayoff_reminders(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Kunlik dam olish eslatmasida xatolik")
         await asyncio.sleep(interval_seconds)
 
 
