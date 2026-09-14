@@ -10,6 +10,7 @@ from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_IT, ROLE_TECH, ROLE_CANDIDATE,
     application_list_label, request_status_label,
+    TECH_CATEGORIES, TECH_RECUR_PERIODS,
 )
 
 
@@ -1463,6 +1464,33 @@ def tech_deadline_kb():
     )
 
 
+# ---- Texnik nosozlik: muammo turi (kategoriya) va shoshilinchlik ----
+def tech_category_kb():
+    """Rahbar muammo turini tanlaydi (reply klaviatura)."""
+    return _choices(TECH_CATEGORIES, row=2)
+
+
+TECH_PRIO_URGENT = "🚨 Shoshilinch"
+TECH_PRIO_NORMAL = "🔹 Oddiy"
+
+
+def tech_priority_kb():
+    return _choices([TECH_PRIO_URGENT, TECH_PRIO_NORMAL], row=2)
+
+
+# ---- Texnik ishni yakunlash: natija rasmi + xarajat (ixtiyoriy) ----
+def tech_done_skip_photo_kb(task_id):
+    b = InlineKeyboardBuilder()
+    b.button(text="⏭ Rasmsiz davom etish", callback_data=f"ttdnp:{task_id}")
+    return b.as_markup()
+
+
+def tech_done_skip_cost_kb(task_id):
+    b = InlineKeyboardBuilder()
+    b.button(text="⏭ Xarajatsiz yakunlash", callback_data=f"ttdnc:{task_id}")
+    return b.as_markup()
+
+
 def tech_task_actions_kb(task_id, status):
     """Texnik xodim topshiriq tagidagi tugmalar — holatga qarab progressiv."""
     b = InlineKeyboardBuilder()
@@ -1558,7 +1586,71 @@ def tech_admin_menu_kb(counts):
              callback_data="techadm:done")
     b.button(text=f"🚫 Bekor qilingan ({counts.get('cancelled', 0)})",
              callback_data="techadm:cancelled")
+    b.button(text="📊 Statistika", callback_data="techstats:open")
+    b.button(text="🔁 Rejali ishlar", callback_data="techrecur:open")
     b.adjust(1)
+    return b.as_markup()
+
+
+# ---- Texnik ishlar statistikasi (HR/Direktor) ----
+def tech_stats_menu_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="📊 Shu oy", callback_data="techstats:month")
+    b.button(text="📈 Umumiy (hammasi)", callback_data="techstats:all")
+    b.button(text="📥 Excel (shu oy)", callback_data="techstats:xlsx")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+# ---- Rejali (takrorlanuvchi) texnik xizmat ----
+def tech_recurring_menu_kb(items):
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ Yangi rejali ish", callback_data="techrecur:add")
+    for r in items:
+        st = "🟢" if r.get("active") else "⚪️"
+        name = r.get("title") or r.get("category") or "Rejali ish"
+        b.button(text=f"{st} #{r['id']} · {name}",
+                 callback_data=f"techrecur:view:{r['id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_recurring_item_kb(rec):
+    b = InlineKeyboardBuilder()
+    if rec.get("active"):
+        b.button(text="⏸ To'xtatish", callback_data=f"techrecur:toggle:{rec['id']}")
+    else:
+        b.button(text="▶️ Faollashtirish",
+                 callback_data=f"techrecur:toggle:{rec['id']}")
+    b.button(text="🗑 O'chirish", callback_data=f"techrecur:del:{rec['id']}")
+    b.button(text="⬅️ Orqaga", callback_data="techrecur:open")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_recur_branch_kb(branches):
+    b = InlineKeyboardBuilder()
+    b.button(text="🏢 Barcha filiallar", callback_data="trecbr:all")
+    for br in branches:
+        b.button(text=br["name"], callback_data=f"trecbr:{br['id']}")
+    b.button(text="⬅️ Bekor qilish", callback_data="techrecur:open")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def tech_recur_category_kb():
+    b = InlineKeyboardBuilder()
+    for i, c in enumerate(TECH_CATEGORIES):
+        b.button(text=c, callback_data=f"treccat:{i}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def tech_recur_period_kb():
+    b = InlineKeyboardBuilder()
+    for i, (label, _days) in enumerate(TECH_RECUR_PERIODS):
+        b.button(text=f"🔁 {label}", callback_data=f"trecper:{i}")
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -2824,9 +2916,10 @@ def dayoff_plan_branch_pick_kb(plans):
     b = InlineKeyboardBuilder()
     for p in plans:
         st = "✅" if p.get("status") == "confirmed" else "⏳"
-        b.button(
-            text=f"{st} {p.get('branch_name') or 'Filialsiz'}",
-            callback_data=f"dopl_edit:{p['id']}",
-        )
+        label = f"{st} {p.get('branch_name') or 'Filialsiz'}"
+        d = (p.get("plan_date") or "")[5:]  # MM-DD (bugun/ertaga farqlanishi uchun)
+        if d:
+            label += f" · {d}"
+        b.button(text=label, callback_data=f"dopl_edit:{p['id']}")
     b.adjust(1)
     return b.as_markup()

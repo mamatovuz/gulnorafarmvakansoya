@@ -215,8 +215,24 @@ class ManagerVacancyForm(StatesGroup):
 class TechIssueForm(StatesGroup):
     """Filial rahbari texnik nosozlik yuboradi (matn/rasm/video/dumaloq video)."""
     content = State()   # istalgan turdagi xabar (media/matn)
+    category = State()  # muammo turi (⚡ Elektr / 🚰 Suv ...)
+    priority = State()  # shoshilinchlik (🚨 Shoshilinch / 🔹 Oddiy)
     deadline = State()  # bajarilishi kerak bo'lgan muddat (rahbar kiritadi)
     confirm = State()   # HR ga yuborilsinmi? tasdiq
+
+
+class TechDoneForm(StatesGroup):
+    """Texnik xodim ishni yakunlaydi — natija rasmi + xarajatni so'raydi."""
+    photo = State()     # bajarilgan ish natijasi rasmi/videosi (ixtiyoriy)
+    cost = State()      # sarflangan xarajat, so'm (ixtiyoriy)
+
+
+class TechRecurringForm(StatesGroup):
+    """HR/Admin rejali (takrorlanuvchi) texnik xizmat shabloni yaratadi."""
+    branch = State()
+    category = State()
+    title = State()
+    period = State()
 
 
 class TechReplyForm(StatesGroup):

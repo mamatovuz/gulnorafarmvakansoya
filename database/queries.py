@@ -1818,8 +1818,10 @@ async def add_tech_task(data):
         cur = await db.execute(
             """INSERT INTO tech_tasks
                (manager_request_id, branch_id, manager_user_id, title, details,
-                kind, deadline, src_chat_id, src_message_id, status)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                kind, deadline, src_chat_id, src_message_id, status,
+                priority, category, deadline_at, assigned_by, recurring_id,
+                tech_user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("manager_request_id"),
                 data.get("branch_id"),
@@ -1831,6 +1833,12 @@ async def add_tech_task(data):
                 data.get("src_chat_id"),
                 data.get("src_message_id"),
                 data.get("status") or "pending_hr",
+                data.get("priority") or "normal",
+                data.get("category"),
+                data.get("deadline_at"),
+                data.get("assigned_by"),
+                data.get("recurring_id"),
+                data.get("tech_user_id"),
             ),
         )
         await db.commit()
@@ -1886,7 +1894,8 @@ async def list_tech_tasks(tech_user_id=None, statuses=None, limit=30):
             marks = ",".join("?" for _ in statuses)
             sql += f" AND tt.status IN ({marks})"
             params.extend(statuses)
-        sql += " ORDER BY tt.id DESC"
+        # Shoshilinch (urgent) ishlar tepada, so'ng eng yangi
+        sql += " ORDER BY (tt.priority='urgent') DESC, tt.id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
         cur = await db.execute(sql, params)
@@ -2149,6 +2158,251 @@ async def apply_tech_transfer(tid, to_tech_id, prev_name):
         )
         await db.commit()
         return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def finish_tech_task(tid, tech_user_id, result_file_id=None,
+                           result_file_type=None, cost=None):
+    """Texnik xodim ishni yakunlaydi: in_progress -> done (ATOMIK, faqat o'z ishi).
+    Ayni paytda natija rasmi/videosi va sarflangan xarajatni ham saqlaydi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE tech_tasks SET status='done', "
+            "done_at=datetime('now','+5 hours'), "
+            "result_file_id=?, result_file_type=?, cost=? "
+            "WHERE id=? AND status='in_progress' AND tech_user_id=?",
+            (result_file_id, result_file_type, cost, tid, tech_user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+# ---------------- TEXNIK MUDDAT ESLATMALARI ----------------
+async def list_tech_tasks_due(today_iso):
+    """Muddati bugun (due) yoki o'tib ketgan (overdue), hali yakunlanmagan faol
+    topshiriqlar — eslatma yuborilmagan holatdagilar."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            _TECH_TASK_SELECT +
+            " WHERE tt.deadline_at IS NOT NULL AND tt.deadline_at<>'' "
+            " AND tt.status IN ('assigned','accepted','tomorrow','in_progress') "
+            " AND (tt.deadline_reminded IS NULL "
+            "      OR (tt.deadline_reminded='due' AND tt.deadline_at < ?)) "
+            " AND tt.deadline_at <= ? "
+            " ORDER BY tt.deadline_at ASC",
+            (today_iso, today_iso),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def mark_tech_deadline_reminded(tid, marker):
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_tasks SET deadline_reminded=? WHERE id=?", (marker, tid)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ---------------- TEXNIK ISHLAR STATISTIKASI (HR) ----------------
+def _period_where(period):
+    """period 'YYYY-MM' bo'lsa — shu oy; None bo'lsa — hammasi."""
+    if period:
+        return " AND substr(tt.created_at,1,7)=?", [period]
+    return "", []
+
+
+async def tech_stats_overall(period=None):
+    """Umumiy ko'rsatkichlar: jami/yakunlangan/bekor/faol, o'rtacha baho,
+    o'rtacha bajarish vaqti (soat), umumiy xarajat."""
+    pw, pp = _period_where(period)
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT "
+            " COUNT(*) total, "
+            " SUM(CASE WHEN status IN ('done','rated') THEN 1 ELSE 0 END) done, "
+            " SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled, "
+            " SUM(CASE WHEN status IN ('assigned','accepted','tomorrow','in_progress') "
+            "     THEN 1 ELSE 0 END) active, "
+            " SUM(CASE WHEN priority='urgent' THEN 1 ELSE 0 END) urgent, "
+            " AVG(CASE WHEN rating>0 THEN rating END) avg_rating, "
+            " SUM(COALESCE(cost,0)) total_cost, "
+            " AVG(CASE WHEN done_at IS NOT NULL "
+            "          AND COALESCE(accepted_at,started_at) IS NOT NULL "
+            "     THEN (julianday(done_at)"
+            "           -julianday(COALESCE(accepted_at,started_at)))*24 END) avg_hours "
+            "FROM tech_tasks tt WHERE 1=1" + pw,
+            pp,
+        )
+        r = await cur.fetchone()
+        return dict(r) if r else {}
+    finally:
+        await db.close()
+
+
+async def tech_stats_by_tech(period=None):
+    """Har bir texnik xodim kesimida: yakunlangan soni, o'rtacha baho,
+    o'rtacha vaqt (soat)."""
+    pw, pp = _period_where(period)
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT tech.full_name name, "
+            " COUNT(*) total, "
+            " SUM(CASE WHEN tt.status IN ('done','rated') THEN 1 ELSE 0 END) done, "
+            " AVG(CASE WHEN tt.rating>0 THEN tt.rating END) avg_rating, "
+            " AVG(CASE WHEN tt.done_at IS NOT NULL "
+            "          AND COALESCE(tt.accepted_at,tt.started_at) IS NOT NULL "
+            "     THEN (julianday(tt.done_at)"
+            "           -julianday(COALESCE(tt.accepted_at,tt.started_at)))*24 END) avg_hours "
+            "FROM tech_tasks tt JOIN users tech ON tech.id=tt.tech_user_id "
+            "WHERE tt.tech_user_id IS NOT NULL" + pw +
+            " GROUP BY tt.tech_user_id ORDER BY done DESC, avg_rating DESC",
+            pp,
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def tech_stats_by_category(period=None):
+    pw, pp = _period_where(period)
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT COALESCE(NULLIF(category,''),'📦 Boshqa') cat, COUNT(*) total, "
+            " SUM(COALESCE(cost,0)) total_cost "
+            "FROM tech_tasks tt WHERE 1=1" + pw +
+            " GROUP BY cat ORDER BY total DESC",
+            pp,
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def tech_stats_by_branch(period=None):
+    pw, pp = _period_where(period)
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT COALESCE(b.name,'-') branch, COUNT(*) total, "
+            " SUM(CASE WHEN tt.status IN ('done','rated') THEN 1 ELSE 0 END) done "
+            "FROM tech_tasks tt LEFT JOIN branches b ON b.id=tt.branch_id "
+            "WHERE 1=1" + pw + " GROUP BY tt.branch_id ORDER BY total DESC",
+            pp,
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+# ---------------- REJALI (TAKRORLANUVCHI) TEXNIK XIZMAT ----------------
+async def add_tech_recurring(data):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """INSERT INTO tech_recurring
+               (branch_id, title, category, details, every_days, next_date,
+                created_by)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                data.get("branch_id"),
+                data.get("title"),
+                data.get("category"),
+                data.get("details"),
+                int(data.get("every_days") or 30),
+                data.get("next_date"),
+                data.get("created_by"),
+            ),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def list_tech_recurring(active_only=False):
+    db = await _conn()
+    try:
+        sql = ("SELECT r.*, b.name branch_name FROM tech_recurring r "
+               "LEFT JOIN branches b ON b.id=r.branch_id")
+        if active_only:
+            sql += " WHERE r.active=1"
+        sql += " ORDER BY r.active DESC, r.next_date ASC"
+        cur = await db.execute(sql)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_tech_recurring(rec_id):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT r.*, b.name branch_name FROM tech_recurring r "
+            "LEFT JOIN branches b ON b.id=r.branch_id WHERE r.id=?",
+            (rec_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_tech_recurring_active(rec_id, active):
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_recurring SET active=? WHERE id=?",
+            (1 if active else 0, rec_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def delete_tech_recurring(rec_id):
+    db = await _conn()
+    try:
+        await db.execute("DELETE FROM tech_recurring WHERE id=?", (rec_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_due_tech_recurring(today_iso):
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "SELECT r.*, b.name branch_name FROM tech_recurring r "
+            "LEFT JOIN branches b ON b.id=r.branch_id "
+            "WHERE r.active=1 AND r.next_date IS NOT NULL AND r.next_date<=?",
+            (today_iso,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def bump_tech_recurring(rec_id, next_date, last_run):
+    db = await _conn()
+    try:
+        await db.execute(
+            "UPDATE tech_recurring SET next_date=?, last_run=? WHERE id=?",
+            (next_date, last_run, rec_id),
+        )
+        await db.commit()
     finally:
         await db.close()
 

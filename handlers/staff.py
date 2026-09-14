@@ -7,7 +7,7 @@ from aiogram.filters import StateFilter
 from database import queries as q
 from database.db import (
     ROLE_ADMIN, ROLE_HR, ROLE_MANAGER, ROLE_PHARMACIST, ROLE_DIRECTOR,
-    ROLE_EMPLOYEE, ROLE_ACCOUNTANT,
+    ROLE_EMPLOYEE, ROLE_ACCOUNTANT, TECH_CATEGORIES,
 )
 from states import (
     ManagerVacancyForm, TechIssueForm, CommentForm, ManagerMessageForm,
@@ -19,10 +19,48 @@ from utils import (
     send_employee_profile,
     application_text, send_application_resume, send_application_photo,
     vacancy_channel_text, mark_vacancy_channel_filled, gender_label,
-    broadcast_request,
+    broadcast_request, now_tk,
 )
 
 router = Router()
+
+
+def _deadline_to_iso(text):
+    """Muddat tanlovi/matnini ISO sanaga (YYYY-MM-DD) aylantiradi — eslatma uchun.
+    Aniqlab bo'lmasa None qaytaradi (faqat matn sifatida saqlanadi)."""
+    from datetime import timedelta
+    t = (text or "").strip().lower()
+    today = now_tk().date()
+    quick = {
+        kb.TECH_DEADLINE_TODAY.lower(): 0,
+        kb.TECH_DEADLINE_TOMORROW.lower(): 1,
+        kb.TECH_DEADLINE_2.lower(): 2,
+        kb.TECH_DEADLINE_3.lower(): 3,
+        kb.TECH_DEADLINE_WEEK.lower(): 7,
+    }
+    if text and text in (kb.TECH_DEADLINE_TODAY, kb.TECH_DEADLINE_TOMORROW,
+                         kb.TECH_DEADLINE_2, kb.TECH_DEADLINE_3, kb.TECH_DEADLINE_WEEK):
+        return (today + timedelta(days=quick[text.lower()])).strftime("%Y-%m-%d")
+    # «N kun» matnidan kun sonini olishga urinamiz
+    import re as _re
+    m = _re.search(r"(\d+)\s*kun", t)
+    if m:
+        try:
+            return (today + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+        except (ValueError, OverflowError):
+            return None
+    # dd.mm.yyyy yoki dd.mm.yy
+    m = _re.search(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})", t)
+    if m:
+        d, mth, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:
+            y += 2000
+        try:
+            from datetime import date as _date
+            return _date(y, mth, d).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    return None
 
 ROLE_NAMES = {
     ROLE_ADMIN: "Admin",
@@ -118,6 +156,18 @@ async def manager_vacancy_start(message: Message, state: FSMContext):
 async def manager_vacancy_cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("❌ Bekor qilindi.", reply_markup=kb.manager_menu())
+
+
+@router.message(StateFilter(
+    TechIssueForm.category, TechIssueForm.priority, TechIssueForm.deadline,
+), F.text == kb.CANCEL_BTN)
+async def tech_issue_reply_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    user = await q.get_user(message.from_user.id)
+    await message.answer(
+        "❌ Bekor qilindi. Texnik nosozlik HR ga yuborilmadi.",
+        reply_markup=kb.main_menu(user["role"] if user else "candidate"),
+    )
 
 
 @router.message(ManagerVacancyForm.position, F.text)
@@ -301,6 +351,56 @@ async def tech_issue_content(message: Message, state: FSMContext):
         ti_kind=kind,
         ti_caption=caption,
     )
+    await state.set_state(TechIssueForm.category)
+    await message.answer(
+        "🏷 <b>Muammo turi</b>\n\n"
+        "Nosozlik qaysi turga kiradi? Tanlang:",
+        reply_markup=kb.tech_category_kb(),
+    )
+
+
+@router.message(TechIssueForm.category, F.text)
+async def tech_issue_category(message: Message, state: FSMContext):
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    if not user:
+        await state.clear()
+        return
+    cat = message.text.strip()
+    if cat not in TECH_CATEGORIES:
+        await message.answer(
+            "❗️ Iltimos, ro'yxatdan muammo turini tanlang.",
+            reply_markup=kb.tech_category_kb(),
+        )
+        return
+    await state.update_data(ti_category=cat)
+    await state.set_state(TechIssueForm.priority)
+    await message.answer(
+        "🚦 <b>Shoshilinchlik darajasi</b>\n\n"
+        "Bu ish qanchalik shoshilinch?\n"
+        "🚨 <b>Shoshilinch</b> — zudlik bilan bajarilishi kerak.\n"
+        "🔹 <b>Oddiy</b> — navbat bilan.",
+        reply_markup=kb.tech_priority_kb(),
+    )
+
+
+@router.message(TechIssueForm.priority, F.text)
+async def tech_issue_priority(message: Message, state: FSMContext):
+    user = await ensure_role(message, ROLE_MANAGER, ROLE_ADMIN)
+    if not user:
+        await state.clear()
+        return
+    txt = message.text.strip()
+    if txt == kb.TECH_PRIO_URGENT:
+        prio = "urgent"
+    elif txt == kb.TECH_PRIO_NORMAL:
+        prio = "normal"
+    else:
+        await message.answer(
+            "❗️ Iltimos, shoshilinchlik darajasini tanlang.",
+            reply_markup=kb.tech_priority_kb(),
+        )
+        return
+    await state.update_data(ti_priority=prio)
     await state.set_state(TechIssueForm.deadline)
     await message.answer(
         "⏰ <b>Muddat</b>\n\n"
@@ -324,14 +424,20 @@ async def tech_issue_deadline(message: Message, state: FSMContext):
             reply_markup=kb.tech_deadline_kb(),
         )
         return
-    await state.update_data(ti_deadline=deadline)
+    await state.update_data(ti_deadline=deadline,
+                            ti_deadline_at=_deadline_to_iso(deadline))
     await state.set_state(TechIssueForm.confirm)
     data = await state.get_data()
     kind = data.get("ti_kind") or "📝 Matn"
     caption = data.get("ti_caption") or ""
-    preview = f"\n\n📄 Izoh: {caption}" if caption else ""
+    category = data.get("ti_category") or "-"
+    prio_label = "🚨 Shoshilinch" if data.get("ti_priority") == "urgent" else "🔹 Oddiy"
+    preview = f"\n📄 Izoh: {caption}" if caption else ""
     await message.answer(
-        f"🔎 <b>Tekshiring</b>\n\nTuri: <b>{kind}</b>{preview}\n"
+        f"🔎 <b>Tekshiring</b>\n\n"
+        f"Turi: <b>{kind}</b>\n"
+        f"🏷 Kategoriya: <b>{category}</b>\n"
+        f"🚦 Shoshilinchlik: <b>{prio_label}</b>{preview}\n"
         f"⏰ Muddat: <b>{deadline}</b>\n\n"
         "Ushbu xabar aynan shu ko'rinishda <b>HR bo'limiga yuborilsinmi?</b>\n"
         "<i>HR tasdiqlagach topshiriq texnik xodimga tushadi.</i>",
@@ -363,6 +469,9 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
     kind = data.get("ti_kind") or "📝 Matn"
     caption = data.get("ti_caption") or ""
     deadline = data.get("ti_deadline") or "Kelishiladi"
+    deadline_at = data.get("ti_deadline_at")
+    category = data.get("ti_category")
+    priority = data.get("ti_priority") or "normal"
     branch_id = user.get("branch_id") or await _manager_branch_id(user)
     rid = await q.add_manager_request({
         "manager_user_id": user["id"],
@@ -382,6 +491,9 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
         "details": caption,
         "kind": kind,
         "deadline": deadline,
+        "deadline_at": deadline_at,
+        "category": category,
+        "priority": priority,
         "src_chat_id": chat_id,
         "src_message_id": message_id,
         "status": "pending_hr",
@@ -393,12 +505,15 @@ async def tech_issue_send(call: CallbackQuery, state: FSMContext, bot: Bot):
         pass
 
     branch = await q.get_branch(branch_id) if branch_id else None
+    prio_line = "🚨 <b>SHOSHILINCH</b>\n" if priority == "urgent" else ""
     header = (
         "🔧 <b>Filial rahbaridan texnik nosozlik!</b>\n"
         "━━━━━━━━━━━━\n"
+        f"{prio_line}"
         f"👤 Rahbar: <b>{user.get('full_name') or call.from_user.full_name}</b>\n"
         f"🏢 Filial: {branch['name'] if branch else '-'}\n"
         f"🗂 Turi: {kind}\n"
+        f"🏷 Kategoriya: {category or '-'}\n"
         f"⏰ Muddat: {deadline}"
     )
     hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR))

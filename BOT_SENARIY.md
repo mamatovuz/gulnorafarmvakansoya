@@ -198,9 +198,10 @@ Panel sarlavhasi + profil, so'ng tugmalar:
 - 🔘 **📢 Mening vakansiyalarim** — HR tasdiqlagan o'z vakansiyalari (⬜
   `mymgrvac:`). Kartochkada holat + ⬜ **✅ Yakunlash** (xodim to'ldi). Yakunlansa
   kanaldagi e'lon yangilanadi, HR ga xabar.
-- 🔘 **🔧 Texnik nosozlik** — matn/rasm/video/dumaloq video + ⏰ muddat (tugma yoki
-  qo'lda) → xulosa + ⬜ **✅ Ha, HR ga yuborilsin** / ⬜ **❌ Bekor**. Yuborilsa
-  HR ga sarlavha + asl media, ⬜ **✅ Qabul** / ⬜ **❌ Yopish** bilan boradi.
+- 🔘 **🔧 Texnik nosozlik** — matn/rasm/video/dumaloq video + 🏷 kategoriya +
+  🚦 shoshilinchlik + ⏰ muddat (tugma yoki qo'lda) → xulosa + ⬜ **✅ Ha, HR ga
+  yuborilsin** / ⬜ **❌ Bekor**. Yuborilsa HR ga sarlavha + asl media, ⬜ **✅
+  Qabul** / ⬜ **❌ Yopish** bilan boradi.
 - 🔘 **👥 Filial xodimlari** — filial xodimlari ro'yxati (⬜ `mgremp:`); tanlansa
   profil + ⬜ **🚫 Ishdan bo'shatish** (`fire:`).
 - 🔘 **📊 Filial statistikasi** — xodimlar/farmatsevt/formasi yo'q soni +
@@ -315,7 +316,24 @@ kanaliga yakuniy kartochka. **Diqqat:** baho/otziv texnik xodimга ko'rsatilmay
 
 **HR/Direktor/Admin — 🔘 🔧 Texnik ishlar**: sanoqlar + ⬜ holatlar (🆕 yangi /
 🔧 bajarilmoqda / ✅ tugatilgan / 🚫 bekor) (`techadm:`) → ro'yxat → ⬜
-`techadmview:` (to'liq matn + yozishmalar + asl media).
+`techadmview:` (to'liq matn + yozishmalar + asl media + natija rasmi). Bundan
+tashqari ⬜ **📊 Statistika** va ⬜ **🔁 Rejali ishlar**.
+
+**2026-09-14 yangiliklar:**
+- **🚦 Shoshilinchlik + 🏷 kategoriya**: rahbar nosozlik yuborishда turini
+  (⚡ Elektr / 🚰 Suv / 🪑 Mebel / 💻 Texnika / ❄️ Konditsioner / 🔨 Ta'mir / 📦 Boshqa)
+  va darajasini (🚨 Shoshilinch / 🔹 Oddiy) tanlaydi. Shoshilinchlar ro'yxat
+  tepasida «🚨 SHOSHILINCH» belgisi bilan.
+- **⏰ Muddat eslatmasi**: muddat bugun bo'lsa yoki o'tib ketsa — texnik xodimga
+  va HR ga avtomatik eslatma (fon loop, 08:00–21:00).
+- **📸 Natija rasmi + 💸 xarajat**: «✅ Tugatdim» bosilganда texnik yakuniy
+  rasm/video (ixtiyoriy) va sarflangan xarajatni (so'm) kiritadi. Xarajat
+  Moliya bo'limiga ham xabar bo'lib boradi; kanal kartochkasida ko'rinadi.
+- **📊 Statistika (HR/Direktor)**: shu oy / umumiy — jami, yakunlangan, o'rtacha
+  baho, o'rtacha bajarish vaqti, xarajat, xodim/kategoriya/filial kesimi + 📥 Excel.
+- **🔁 Rejali (takrorlanuvchi) xizmat (HR/Admin)**: filial + kategoriya + nom +
+  davr (hafta/2 hafta/oy/3 oy) → belgilangan davrda avtomatik topshiriq yaratilib
+  texnik xodimlarga tushadi.
 
 ---
 

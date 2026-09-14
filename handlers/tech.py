@@ -14,14 +14,20 @@ from aiogram.fsm.context import FSMContext
 
 from database import queries as q
 from database.db import (
-    ROLE_TECH, ROLE_ADMIN, ROLE_HR, ROLE_DIRECTOR,
+    ROLE_TECH, ROLE_ADMIN, ROLE_HR, ROLE_DIRECTOR, ROLE_ACCOUNTANT,
+    TECH_CATEGORIES, TECH_RECUR_PERIODS,
 )
 import keyboards as kb
-from states import TechReplyForm, TechCancelForm, TechRatingForm
+from states import (
+    TechReplyForm, TechCancelForm, TechRatingForm, TechDoneForm,
+    TechRecurringForm,
+)
 from utils import (
     safe_send, tech_task_text, close_request_notices,
     mark_request_notices_taken,
     update_tech_channel_card, reply_tech_channel_rating,
+    post_tech_result_to_channel, send_tech_result_media, now_tk,
+    iso_to_display, _fmt_sum,
 )
 
 router = Router()
@@ -292,36 +298,165 @@ async def tech_task_start(call: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data.startswith("ttdone:"))
-async def tech_task_done(call: CallbackQuery, bot: Bot):
-    """✅ Tugatdim — ish yakunlanadi, rahbardan baho so'raladi."""
+async def tech_task_done(call: CallbackQuery, state: FSMContext):
+    """✅ Tugatdim — avval natija rasmi (ixtiyoriy), so'ng xarajat so'raladi."""
     if not await _is_tech(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
     tid = int(call.data.split(":")[1])
     me = await q.get_user(call.from_user.id)
-    if not await q.set_tech_task_status(
-        tid, "done", expected="in_progress", tech_user_id=me["id"]
-    ):
+    task = await q.get_tech_task(tid)
+    if not task or task.get("status") != "in_progress" or task.get("tech_user_id") != me["id"]:
         await call.answer(
             "Buni bajarib bo'lmadi (ish holati o'zgargan yoki sizniki emas).",
             show_alert=True,
         )
         return
-    task = await q.get_tech_task(tid)
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await update_tech_channel_card(bot, tid)
+    await state.set_state(TechDoneForm.photo)
+    await state.update_data(done_tid=tid)
     await call.message.answer(
-        f"✅ Topshiriq #{tid} <b>bajarildi</b> deb belgilandi.\n"
+        f"📸 <b>Natija rasmi</b> — topshiriq #{tid}\n\n"
+        "Bajarilgan ishning <b>rasm/video</b>sini yuboring (isbot uchun).\n"
+        "Rasm bo'lmasa — quyidagi tugmani bosing.",
+        reply_markup=kb.tech_done_skip_photo_kb(tid),
+    )
+    await call.answer()
+
+
+def _extract_media(message: Message):
+    """Yuborilgan xabardan (rasm/video/...) file_id va turini ajratadi."""
+    if message.photo:
+        return message.photo[-1].file_id, "photo"
+    if message.video:
+        return message.video.file_id, "video"
+    if message.video_note:
+        return message.video_note.file_id, "video_note"
+    if message.document:
+        return message.document.file_id, "document"
+    return None, None
+
+
+@router.message(TechDoneForm.photo)
+async def tech_done_photo(message: Message, state: FSMContext):
+    if not await _is_tech(message.from_user.id):
+        return
+    fid, ftype = _extract_media(message)
+    if not fid:
+        await message.answer(
+            "❗️ Iltimos, <b>rasm yoki video</b> yuboring — yoki tugma bilan o'tkazib yuboring."
+        )
+        return
+    data = await state.get_data()
+    tid = data.get("done_tid")
+    await state.update_data(done_photo_id=fid, done_photo_type=ftype)
+    await state.set_state(TechDoneForm.cost)
+    await message.answer(
+        "💸 <b>Xarajat</b>\n\n"
+        "Ushbu ishga sarflangan xarajatni (ehtiyot qism/material) <b>so'mda</b> yozing.\n"
+        "Masalan: <i>150000</i>\n"
+        "Xarajat bo'lmasa — quyidagi tugmani bosing.",
+        reply_markup=kb.tech_done_skip_cost_kb(tid),
+    )
+
+
+@router.callback_query(TechDoneForm.photo, F.data.startswith("ttdnp:"))
+async def tech_done_skip_photo(call: CallbackQuery, state: FSMContext):
+    tid = int(call.data.split(":")[1])
+    await state.update_data(done_photo_id=None, done_photo_type=None)
+    await state.set_state(TechDoneForm.cost)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        "💸 <b>Xarajat</b>\n\n"
+        "Ushbu ishga sarflangan xarajatni <b>so'mda</b> yozing (masalan: <i>150000</i>).\n"
+        "Xarajat bo'lmasa — quyidagi tugmani bosing.",
+        reply_markup=kb.tech_done_skip_cost_kb(tid),
+    )
+    await call.answer()
+
+
+def _parse_cost(text):
+    """«150 000 so'm» kabi matndan raqamni ajratadi. None — aniqlanmadi."""
+    digits = "".join(ch for ch in (text or "") if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+@router.message(TechDoneForm.cost, F.text)
+async def tech_done_cost(message: Message, state: FSMContext, bot: Bot):
+    if not await _is_tech(message.from_user.id):
+        return
+    cost = _parse_cost(message.text)
+    if cost is None:
+        await message.answer(
+            "❗️ Faqat son yozing (masalan: <b>150000</b>) — yoki tugma bilan o'tkazib yuboring."
+        )
+        return
+    await _finalize_done(message, state, bot, cost=cost)
+
+
+@router.callback_query(TechDoneForm.cost, F.data.startswith("ttdnc:"))
+async def tech_done_skip_cost(call: CallbackQuery, state: FSMContext, bot: Bot):
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _finalize_done(call.message, state, bot, cost=None,
+                         actor_id=call.from_user.id)
+    await call.answer()
+
+
+async def _finalize_done(message: Message, state: FSMContext, bot: Bot,
+                         cost=None, actor_id=None):
+    """Yakuniy: in_progress -> done (natija+xarajat), rahbardan baho + HR/moliya xabar."""
+    data = await state.get_data()
+    await state.clear()
+    tid = data.get("done_tid")
+    photo_id = data.get("done_photo_id")
+    photo_type = data.get("done_photo_type")
+    me = await q.get_user(actor_id or message.chat.id)
+    if not tid or not me:
+        return
+    if not await q.finish_tech_task(
+        tid, me["id"], result_file_id=photo_id, result_file_type=photo_type,
+        cost=cost,
+    ):
+        await message.answer(
+            "⚠️ Yakunlab bo'lmadi (ish holati o'zgargan yoki sizniki emas)."
+        )
+        return
+    task = await q.get_tech_task(tid)
+    await update_tech_channel_card(bot, tid)
+    await post_tech_result_to_channel(bot, tid)
+    extra = []
+    if photo_id:
+        extra.append("📸 natija rasmi")
+    if cost:
+        extra.append(f"💸 {_fmt_sum(cost)}")
+    extra_line = ("\n" + " · ".join(extra)) if extra else ""
+    await message.answer(
+        f"✅ Topshiriq #{tid} <b>bajarildi</b> deb belgilandi.{extra_line}\n"
         "Filial rahbariga ishingizni baholash so'rovi yuborildi. Rahmat!"
     )
-    await call.answer("Tugatildi ✅")
 
-    # Filial rahbariga — texnik xodimni baholash so'rovi (1..5 yulduz)
     branch = task.get("branch_name") or "-"
+    # Filial rahbariga — baholash so'rovi (agar rahbari bor bo'lsa)
     if task.get("manager_tg"):
+        if photo_id:
+            await send_tech_result_media(
+                bot, task["manager_tg"], task,
+                caption=f"📸 #{tid} — bajarilgan ish natijasi",
+            )
         await safe_send(
             bot, task["manager_tg"],
             f"⭐ <b>Texnik ish bajarildi — baholang</b>\n"
@@ -333,15 +468,28 @@ async def tech_task_done(call: CallbackQuery, bot: Bot):
             "Texnik xodimning ishini <b>1 dan 5 yulduzgacha</b> baholang:",
             reply_markup=kb.tech_rating_kb(tid),
         )
-    # HR ga — ish bajarilgani haqida xabar
+    cost_line = f"\n💸 Xarajat: {_fmt_sum(cost)}" if cost else ""
     await _notify_hr_admin(
         bot,
         f"✅ <b>Texnik ish bajarildi</b>\n"
         f"🔧 Topshiriq: #{tid}\n"
         f"🏢 Filial: {branch}\n"
-        f"👷 Texnik xodim: {me.get('full_name') or '-'}\n"
+        f"👷 Texnik xodim: {me.get('full_name') or '-'}"
+        f"{cost_line}\n"
         "⭐ Filial rahbari bahosi kutilmoqda."
     )
+    # Moliya bo'limiga — xarajat qayd etilgan bo'lsa
+    if cost:
+        for tid_acc in set(await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)):
+            await safe_send(
+                bot, tid_acc,
+                f"💸 <b>Texnik ish xarajati</b>\n"
+                f"🔧 Topshiriq: #{tid}\n"
+                f"🏢 Filial: {branch}\n"
+                f"🏷 Kategoriya: {task.get('category') or '-'}\n"
+                f"👷 Texnik xodim: {me.get('full_name') or '-'}\n"
+                f"💰 Summa: <b>{_fmt_sum(cost)}</b>",
+            )
 
 
 async def _notify_task_progress(bot: Bot, task, me, text):
@@ -851,4 +999,317 @@ async def tech_admin_view(call: CallbackQuery):
             )
         except Exception:
             pass
+    # Yakuniy natija rasmi/videosi (texnik biriktirgan)
+    if task.get("result_file_id"):
+        await send_tech_result_media(
+            call.bot, call.from_user.id, task,
+            caption=f"📸 #{tid} — bajarilgan ish natijasi",
+        )
     await call.answer()
+
+
+# ==================== TEXNIK STATISTIKA (HR/Direktor) ====================
+def _fmt_hours(h):
+    if h is None:
+        return "-"
+    try:
+        h = float(h)
+    except (TypeError, ValueError):
+        return "-"
+    if h < 1:
+        return f"{int(round(h * 60))} daqiqa"
+    d, rem = divmod(h, 24)
+    if d >= 1:
+        return f"{int(d)} kun {rem:.1f} soat"
+    return f"{h:.1f} soat"
+
+
+def _tech_stats_text(period_label, ov, by_tech, by_cat, by_branch):
+    total = ov.get("total", 0) or 0
+    done = ov.get("done", 0) or 0
+    avg_rating = ov.get("avg_rating")
+    lines = [
+        "📊 <b>Texnik ishlar statistikasi</b>",
+        f"📅 Davr: <b>{period_label}</b>",
+        "━━━━━━━━━━━━",
+        f"📦 Jami topshiriqlar: <b>{total}</b>",
+        f"✅ Yakunlangan: <b>{done}</b>",
+        f"🔧 Jarayonda: <b>{ov.get('active', 0) or 0}</b>",
+        f"🚫 Bekor: <b>{ov.get('cancelled', 0) or 0}</b>",
+        f"🚨 Shoshilinch: <b>{ov.get('urgent', 0) or 0}</b>",
+        f"⭐ O'rtacha baho: <b>{avg_rating:.2f}</b>" if avg_rating
+        else "⭐ O'rtacha baho: <b>-</b>",
+        f"⏱ O'rtacha bajarish: <b>{_fmt_hours(ov.get('avg_hours'))}</b>",
+        f"💸 Umumiy xarajat: <b>{_fmt_sum(ov.get('total_cost') or 0)}</b>",
+    ]
+    if by_tech:
+        lines.append("\n👷 <b>Xodimlar kesimi</b>")
+        for r in by_tech[:10]:
+            rt = f"{r['avg_rating']:.1f}⭐" if r.get("avg_rating") else "—"
+            lines.append(
+                f"• {r.get('name') or '-'}: {r.get('done', 0)} ta · {rt} · "
+                f"{_fmt_hours(r.get('avg_hours'))}"
+            )
+    if by_cat:
+        lines.append("\n🏷 <b>Kategoriya kesimi</b>")
+        for r in by_cat[:10]:
+            cost = f" · {_fmt_sum(r['total_cost'])}" if r.get("total_cost") else ""
+            lines.append(f"• {r.get('cat') or '-'}: {r.get('total', 0)} ta{cost}")
+    if by_branch:
+        lines.append("\n🏢 <b>Filiallar kesimi</b>")
+        for r in by_branch[:12]:
+            lines.append(
+                f"• {r.get('branch') or '-'}: {r.get('total', 0)} ta "
+                f"(✅ {r.get('done', 0)})"
+            )
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "techstats:open")
+async def tech_stats_open(call: CallbackQuery):
+    if not await _is_tech_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await call.message.answer(
+        "📊 <b>Texnik ishlar statistikasi</b>\n\nDavrni tanlang:",
+        reply_markup=kb.tech_stats_menu_kb(),
+    )
+    await call.answer()
+
+
+async def _gather_tech_stats(period):
+    ov = await q.tech_stats_overall(period)
+    by_tech = await q.tech_stats_by_tech(period)
+    by_cat = await q.tech_stats_by_category(period)
+    by_branch = await q.tech_stats_by_branch(period)
+    return ov, by_tech, by_cat, by_branch
+
+
+@router.callback_query(F.data.in_({"techstats:month", "techstats:all"}))
+async def tech_stats_show(call: CallbackQuery):
+    if not await _is_tech_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    if call.data == "techstats:month":
+        period = now_tk().strftime("%Y-%m")
+        label = period
+    else:
+        period = None
+        label = "Butun davr"
+    ov, by_tech, by_cat, by_branch = await _gather_tech_stats(period)
+    await call.message.answer(
+        _tech_stats_text(label, ov, by_tech, by_cat, by_branch)
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "techstats:xlsx")
+async def tech_stats_xlsx(call: CallbackQuery, bot: Bot):
+    if not await _is_tech_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    period = now_tk().strftime("%Y-%m")
+    ov, by_tech, by_cat, by_branch = await _gather_tech_stats(period)
+    from services import export
+    xlsx = export.build_tech_stats_xlsx(period, ov, by_tech, by_cat, by_branch)
+    try:
+        await bot.send_document(
+            call.from_user.id, xlsx,
+            caption=f"📥 Texnik ishlar statistikasi — {period}",
+        )
+    except Exception:
+        await call.message.answer("⚠️ Excel yuborib bo'lmadi.")
+    await call.answer("Tayyor ✅")
+
+
+# ==================== REJALI (TAKRORLANUVCHI) TEXNIK XIZMAT ============
+async def _is_recur_admin(tg_id):
+    """Rejali ishlarni faqat HR / Admin boshqaradi."""
+    u = await q.get_user(tg_id)
+    return u and u["role"] in (ROLE_HR, ROLE_ADMIN)
+
+
+def _recur_item_text(rec):
+    branch = rec.get("branch_name") or "🏢 Barcha filiallar"
+    period = next((lbl for lbl, d in TECH_RECUR_PERIODS
+                   if d == rec.get("every_days")), f"{rec.get('every_days')} kun")
+    st = "🟢 Faol" if rec.get("active") else "⚪️ To'xtatilgan"
+    lines = [
+        f"🔁 <b>Rejali texnik xizmat #{rec['id']}</b>",
+        "━━━━━━━━━━━━",
+        f"📌 Nomi: <b>{rec.get('title') or '-'}</b>",
+        f"🏷 Kategoriya: {rec.get('category') or '-'}",
+        f"🏢 Filial: {branch}",
+        f"🔁 Davri: <b>{period}</b>",
+        f"📆 Keyingi: <b>{iso_to_display(rec.get('next_date'))}</b>",
+        f"📊 Holati: {st}",
+    ]
+    if rec.get("last_run"):
+        lines.append(f"🕐 Oxirgi yaratilgan: {iso_to_display(rec['last_run'])}")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "techrecur:open")
+async def tech_recur_open(call: CallbackQuery, state: FSMContext):
+    if not await _is_tech_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    items = await q.list_tech_recurring()
+    txt = (
+        "🔁 <b>Rejali texnik xizmatlar</b>\n\n"
+        "Takrorlanuvchi ishlar (masalan konditsioner tozalash) belgilangan "
+        "davrda avtomatik topshiriq bo'lib texnik xodimlarga tushadi.\n"
+    )
+    if not items:
+        txt += "\nHozircha rejali ish yo'q."
+    await call.message.answer(txt, reply_markup=kb.tech_recurring_menu_kb(items))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("techrecur:view:"))
+async def tech_recur_view(call: CallbackQuery):
+    if not await _is_tech_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rec = await q.get_tech_recurring(int(call.data.split(":")[2]))
+    if not rec:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    can_edit = await _is_recur_admin(call.from_user.id)
+    await call.message.answer(
+        _recur_item_text(rec),
+        reply_markup=kb.tech_recurring_item_kb(rec) if can_edit else None,
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("techrecur:toggle:"))
+async def tech_recur_toggle(call: CallbackQuery):
+    if not await _is_recur_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rec_id = int(call.data.split(":")[2])
+    rec = await q.get_tech_recurring(rec_id)
+    if not rec:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    await q.set_tech_recurring_active(rec_id, not rec.get("active"))
+    rec = await q.get_tech_recurring(rec_id)
+    try:
+        await call.message.edit_text(
+            _recur_item_text(rec), reply_markup=kb.tech_recurring_item_kb(rec)
+        )
+    except Exception:
+        pass
+    await call.answer("Yangilandi ✅")
+
+
+@router.callback_query(F.data.startswith("techrecur:del:"))
+async def tech_recur_del(call: CallbackQuery):
+    if not await _is_recur_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rec_id = int(call.data.split(":")[2])
+    await q.delete_tech_recurring(rec_id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"🗑 Rejali ish #{rec_id} o'chirildi.")
+    await call.answer("O'chirildi")
+
+
+# ---- Yangi rejali ish yaratish ----
+@router.callback_query(F.data == "techrecur:add")
+async def tech_recur_add(call: CallbackQuery, state: FSMContext):
+    if not await _is_recur_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    branches = await q.list_branches()
+    await state.set_state(TechRecurringForm.branch)
+    await call.message.answer(
+        "🔁 <b>Yangi rejali ish</b>\n\n1️⃣ Qaysi filial uchun?",
+        reply_markup=kb.tech_recur_branch_kb(branches),
+    )
+    await call.answer()
+
+
+@router.callback_query(TechRecurringForm.branch, F.data.startswith("trecbr:"))
+async def tech_recur_branch(call: CallbackQuery, state: FSMContext):
+    val = call.data.split(":")[1]
+    branch_id = None if val == "all" else int(val)
+    await state.update_data(rec_branch_id=branch_id)
+    await state.set_state(TechRecurringForm.category)
+    await call.message.answer(
+        "2️⃣ Muammo turi (kategoriya)?",
+        reply_markup=kb.tech_recur_category_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(TechRecurringForm.category, F.data.startswith("treccat:"))
+async def tech_recur_category(call: CallbackQuery, state: FSMContext):
+    idx = int(call.data.split(":")[1])
+    try:
+        category = TECH_CATEGORIES[idx]
+    except IndexError:
+        await call.answer("Xato tanlov.", show_alert=True)
+        return
+    await state.update_data(rec_category=category)
+    await state.set_state(TechRecurringForm.title)
+    await call.message.answer(
+        "3️⃣ Ish nomi/tavsifini yozing.\n"
+        "Masalan: <i>Konditsionerlarni tozalash</i>"
+    )
+    await call.answer()
+
+
+@router.message(TechRecurringForm.title, F.text)
+async def tech_recur_title(message: Message, state: FSMContext):
+    title = (message.text or "").strip()
+    if not title:
+        await message.answer("❗️ Nom bo'sh bo'lishi mumkin emas.")
+        return
+    await state.update_data(rec_title=title)
+    await state.set_state(TechRecurringForm.period)
+    await message.answer(
+        "4️⃣ Qanchalik tez-tez takrorlansin?",
+        reply_markup=kb.tech_recur_period_kb(),
+    )
+
+
+@router.callback_query(TechRecurringForm.period, F.data.startswith("trecper:"))
+async def tech_recur_period(call: CallbackQuery, state: FSMContext):
+    if not await _is_recur_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    idx = int(call.data.split(":")[1])
+    try:
+        label, every_days = TECH_RECUR_PERIODS[idx]
+    except IndexError:
+        await call.answer("Xato tanlov.", show_alert=True)
+        return
+    data = await state.get_data()
+    await state.clear()
+    me = await q.get_user(call.from_user.id)
+    from datetime import timedelta
+    next_date = (now_tk().date() + timedelta(days=every_days)).strftime("%Y-%m-%d")
+    rec_id = await q.add_tech_recurring({
+        "branch_id": data.get("rec_branch_id"),
+        "title": data.get("rec_title"),
+        "category": data.get("rec_category"),
+        "details": data.get("rec_title"),
+        "every_days": every_days,
+        "next_date": next_date,
+        "created_by": me["id"] if me else None,
+    })
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    rec = await q.get_tech_recurring(rec_id)
+    await call.message.answer(
+        "✅ <b>Rejali ish yaratildi!</b>\n\n" + _recur_item_text(rec)
+    )
+    await call.answer("Yaratildi ✅")

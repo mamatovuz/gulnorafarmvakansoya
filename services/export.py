@@ -308,3 +308,64 @@ def build_report_xlsx(stats, branches, vacancies):
                  [[v.get("name") or "Nomsiz", v.get("cnt", 0)] for v in vacancies])
 
     return _finish(wb, "hisobot")
+
+
+def _hours_str(h):
+    if h is None:
+        return "-"
+    try:
+        h = float(h)
+    except (TypeError, ValueError):
+        return "-"
+    if h < 1:
+        return f"{int(round(h * 60))} daqiqa"
+    d, rem = divmod(h, 24)
+    if d >= 1:
+        return f"{int(d)} kun {rem:.1f} soat"
+    return f"{h:.1f} soat"
+
+
+def build_tech_stats_xlsx(period_label, overall, by_tech, by_cat, by_branch):
+    """Texnik ishlar statistikasi: Umumiy + Xodimlar + Kategoriya + Filiallar."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Umumiy"
+    avg_rating = overall.get("avg_rating")
+    _write_sheet(ws, ["Ko'rsatkich", "Qiymat"], [
+        ["Davr", period_label],
+        ["Jami topshiriqlar", overall.get("total", 0) or 0],
+        ["Yakunlangan", overall.get("done", 0) or 0],
+        ["Bekor qilingan", overall.get("cancelled", 0) or 0],
+        ["Faol (jarayonda)", overall.get("active", 0) or 0],
+        ["Shoshilinch", overall.get("urgent", 0) or 0],
+        ["O'rtacha baho", f"{avg_rating:.2f}" if avg_rating else "-"],
+        ["O'rtacha bajarish vaqti", _hours_str(overall.get("avg_hours"))],
+        ["Umumiy xarajat (so'm)", int(overall.get("total_cost") or 0)],
+    ])
+
+    ws_t = wb.create_sheet("Xodimlar")
+    _write_sheet(
+        ws_t,
+        ["Texnik xodim", "Jami", "Yakunlangan", "O'rtacha baho", "O'rtacha vaqt"],
+        [[
+            r.get("name") or "-", r.get("total", 0), r.get("done", 0),
+            f"{r['avg_rating']:.2f}" if r.get("avg_rating") else "-",
+            _hours_str(r.get("avg_hours")),
+        ] for r in by_tech],
+    )
+
+    ws_c = wb.create_sheet("Kategoriya")
+    _write_sheet(
+        ws_c, ["Kategoriya", "Soni", "Xarajat (so'm)"],
+        [[r.get("cat") or "-", r.get("total", 0), int(r.get("total_cost") or 0)]
+         for r in by_cat],
+    )
+
+    ws_b = wb.create_sheet("Filiallar")
+    _write_sheet(
+        ws_b, ["Filial", "Jami", "Yakunlangan"],
+        [[r.get("branch") or "-", r.get("total", 0), r.get("done", 0)]
+         for r in by_branch],
+    )
+
+    return _finish(wb, "texnik_statistika")

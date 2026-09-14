@@ -15,6 +15,36 @@ ROLE_IT = "it"                # IT xodim (kadrlar harakati hisoboti)
 ROLE_TECH = "tech"            # Texnik xodim (filial texnik nosozliklarini bartaraf etadi)
 ROLE_CANDIDATE = "candidate"  # Nomzod (default)
 
+# ---- Texnik ish: shoshilinchlik darajasi va muammo turlari ----
+TECH_PRIORITY_URGENT = "urgent"
+TECH_PRIORITY_NORMAL = "normal"
+
+
+def tech_priority_label(p):
+    return {"urgent": "🚨 Shoshilinch", "normal": "🔹 Oddiy"}.get(
+        (p or "normal"), "🔹 Oddiy"
+    )
+
+
+# Muammo turlari (kategoriya) — label ko'rinishida saqlanadi (kind kabi)
+TECH_CATEGORIES = [
+    "⚡ Elektr",
+    "🚰 Suv/santexnika",
+    "🪑 Mebel",
+    "💻 Texnika/kompyuter",
+    "❄️ Konditsioner",
+    "🔨 Ta'mir/qurilish",
+    "📦 Boshqa",
+]
+
+# Rejali (takrorlanuvchi) texnik xizmat davri
+TECH_RECUR_PERIODS = [
+    ("Har hafta", 7),
+    ("Har 2 hafta", 14),
+    ("Har oy", 30),
+    ("Har 3 oy", 90),
+]
+
 # Ariza holatlari
 ST_NEW = "new"
 ST_INTERVIEW = "interview"
@@ -670,12 +700,37 @@ CREATE TABLE IF NOT EXISTS tech_tasks (
     channel_message_id INTEGER,       -- (kim olgani text-edit bilan yangilanadi)
     pending_transfer_to INTEGER,      -- boshqa texnikka o'tkazish taklifi (users.id)
     prev_tech_name TEXT,              -- o'tkazishdan oldingi ega ismi (kartochkada)
+    priority TEXT DEFAULT 'normal',   -- urgent / normal (shoshilinchlik)
+    category TEXT,                    -- muammo turi (⚡ Elektr / 🚰 Suv ...)
+    deadline_at TEXT,                 -- muddat (ISO YYYY-MM-DD) — eslatma uchun
+    deadline_reminded TEXT,           -- eslatma holati: due / overdue (takror bo'lmasin)
+    result_file_id TEXT,              -- texnik yakuniy natija rasmi/videosi (file_id)
+    result_file_type TEXT,            -- photo / video / video_note / document
+    cost INTEGER,                     -- sarflangan xarajat (so'm) — ehtiyot qism/material
+    recurring_id INTEGER,             -- rejali shablondan yaratilgan bo'lsa (tech_recurring.id)
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_status ON tech_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_tech ON tech_tasks(tech_user_id);
 CREATE INDEX IF NOT EXISTS idx_tech_tasks_request ON tech_tasks(manager_request_id);
+
+-- Rejali (takrorlanuvchi) texnik xizmat shablonlari. HR/Admin yaratadi;
+-- har `every_days` kunda avtomatik texnik topshiriq (assigned) yaratiladi.
+CREATE TABLE IF NOT EXISTS tech_recurring (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch_id INTEGER,                -- NULL => barcha filiallar uchun
+    title TEXT,
+    category TEXT,
+    details TEXT,
+    every_days INTEGER NOT NULL DEFAULT 30,
+    next_date TEXT,                   -- keyingi yaratish sanasi (ISO YYYY-MM-DD)
+    last_run TEXT,                    -- oxirgi marta yaratilgan sana
+    active INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER,               -- users.id (HR/Admin)
+    created_at TEXT DEFAULT (datetime('now','+5 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_tech_recurring_next ON tech_recurring(next_date, active);
 
 -- Texnik topshiriq bo'yicha yozishmalar (texnik xodim «💬 Javob berish» qilsa —
 -- filial rahbariga boradi; rahbar javobi ham shu yerda saqlanadi).
@@ -732,6 +787,14 @@ TECH_TASK_COLUMNS = {
     "channel_message_id": "INTEGER",  # (kim olgani text-edit bilan yangilanadi)
     "pending_transfer_to": "INTEGER", # boshqa texnikka o'tkazish taklifi (users.id)
     "prev_tech_name": "TEXT",         # o'tkazishdan oldingi ega ismi
+    "priority": "TEXT DEFAULT 'normal'",  # shoshilinchlik: urgent / normal
+    "category": "TEXT",               # muammo turi (kategoriya)
+    "deadline_at": "TEXT",            # muddat ISO YYYY-MM-DD (eslatma uchun)
+    "deadline_reminded": "TEXT",      # eslatma holati: due / overdue
+    "result_file_id": "TEXT",         # yakuniy natija rasmi/videosi
+    "result_file_type": "TEXT",       # photo / video / video_note / document
+    "cost": "INTEGER",                # sarflangan xarajat (so'm)
+    "recurring_id": "INTEGER",        # rejali shablon (tech_recurring.id)
 }
 
 APP_COLUMNS = {

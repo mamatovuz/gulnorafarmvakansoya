@@ -6,9 +6,12 @@ from datetime import datetime, timedelta
 from aiogram import Bot
 
 from database import queries as q
-from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT, ROLE_MANAGER
+from database.db import ROLE_HR, ROLE_ADMIN, ROLE_IT, ROLE_MANAGER, ROLE_TECH
 import keyboards as kb
-from utils import safe_send, days_left_until, probation_text, iso_to_display, now_tk
+from utils import (
+    safe_send, days_left_until, probation_text, iso_to_display, now_tk,
+    tech_task_text, post_open_tech_task_to_channel,
+)
 
 
 def _time_reached(now, hhmm, default="00:00"):
@@ -479,6 +482,121 @@ async def dayoff_reminder_loop(bot: Bot, interval_seconds=120):
             raise
         except Exception:
             logger.exception("Kunlik dam olish eslatmasida xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- TEXNIK ISH: MUDDAT ESLATMALARI ----------------
+async def _run_tech_deadline_reminders(bot: Bot):
+    """Muddati bugun (due) yoki o'tib ketgan (overdue) topshiriqlar bo'yicha
+    ega texnik xodim(lar)ga va HR/Adminga avtomatik eslatma."""
+    now = now_tk()
+    # Faqat kunduzi (08:00–21:00) bezovta qilamiz
+    if not (8 <= now.hour < 21):
+        return
+    today = now.strftime("%Y-%m-%d")
+    tasks = await q.list_tech_tasks_due(today)
+    if not tasks:
+        return
+    hr_admin = set(await q.all_user_tg_ids(role=ROLE_HR)) | \
+        set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    for task in tasks:
+        tid = task["id"]
+        overdue = task.get("deadline_at") < today
+        marker = "overdue" if overdue else "due"
+        if overdue:
+            head = f"⏰🚨 <b>Texnik ish muddati O'TIB KETDI — #{tid}</b>"
+        else:
+            head = f"⏰ <b>Texnik ish muddati BUGUN — #{tid}</b>"
+        body = (
+            f"{head}\n"
+            "━━━━━━━━━━━━\n"
+            f"🏢 Filial: {task.get('branch_name') or '-'}\n"
+            f"🏷 Kategoriya: {task.get('category') or '-'}\n"
+            f"📝 Muammo: {task.get('details') or '-'}\n"
+            f"📆 Muddat: {task.get('deadline') or '-'}"
+        )
+        # Ega texnik xodim (bor bo'lsa) — aks holda barcha texniklar
+        targets = set()
+        if task.get("tech_tg"):
+            targets.add(task["tech_tg"])
+        elif task.get("status") == "assigned":
+            targets |= set(await q.all_user_tg_ids(role=ROLE_TECH))
+        for tid_chat in targets:
+            await safe_send(bot, tid_chat, body)
+        for tid_chat in hr_admin:
+            await safe_send(bot, tid_chat, body)
+        await q.mark_tech_deadline_reminded(tid, marker)
+
+
+async def tech_deadline_loop(bot: Bot, interval_seconds=1800):
+    while True:
+        try:
+            await _run_tech_deadline_reminders(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Texnik muddat eslatmasida xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------- TEXNIK ISH: REJALI (TAKRORLANUVCHI) XIZMAT ----------------
+async def _run_tech_recurring(bot: Bot):
+    """Muddati kelgan rejali shablonlardan avtomatik texnik topshiriq yaratadi."""
+    now = now_tk()
+    today = now.strftime("%Y-%m-%d")
+    due = await q.list_due_tech_recurring(today)
+    if not due:
+        return
+    tech_ids = set(await q.all_user_tg_ids(role=ROLE_TECH))
+    for rec in due:
+        every = int(rec.get("every_days") or 30)
+        # Filial(lar): shablon filialга bog'liq bo'lsa — o'sha; aks holda barcha filial
+        if rec.get("branch_id"):
+            branches = [{"id": rec["branch_id"], "name": rec.get("branch_name")}]
+        else:
+            branches = await q.list_branches()
+        for br in branches:
+            deadline_at = (now.date() + timedelta(days=every)).strftime("%Y-%m-%d")
+            tid = await q.add_tech_task({
+                "branch_id": br["id"],
+                "title": rec.get("title") or "Rejali texnik xizmat",
+                "details": rec.get("details") or rec.get("title"),
+                "kind": "🔁 Rejali",
+                "category": rec.get("category"),
+                "priority": "normal",
+                "deadline": f"{iso_to_display(deadline_at)} gacha",
+                "deadline_at": deadline_at,
+                "status": "assigned",
+                "assigned_by": rec.get("created_by"),
+                "recurring_id": rec["id"],
+            })
+            task = await q.get_tech_task(tid)
+            header = tech_task_text(task, for_tech=True) + (
+                "\n\n🔁 Bu — rejali (takrorlanuvchi) texnik xizmat.\n"
+                "Ishni boshlaganingizda va tugatganingizda tugmalarni bosing."
+            )
+            markup = kb.tech_task_actions_kb(tid, "assigned")
+            for tid_chat in tech_ids:
+                try:
+                    msg = await bot.send_message(tid_chat, header, reply_markup=markup)
+                    await q.add_request_notice("tech_task", tid, tid_chat, msg.message_id)
+                except Exception:
+                    pass
+            await post_open_tech_task_to_channel(bot, tid)
+        # Keyingi safarga suramiz
+        next_date = (now.date() + timedelta(days=every)).strftime("%Y-%m-%d")
+        await q.bump_tech_recurring(rec["id"], next_date, today)
+        logger.info("Rejali texnik xizmat yaratildi (shablon #%s)", rec["id"])
+
+
+async def tech_recurring_loop(bot: Bot, interval_seconds=3600):
+    while True:
+        try:
+            await _run_tech_recurring(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Rejali texnik xizmatda xatolik")
         await asyncio.sleep(interval_seconds)
 
 

@@ -6,7 +6,17 @@ from datetime import datetime, timedelta, date, timezone
 
 from aiogram import Bot
 from database import queries as q
-from database.db import application_status_label, branch_short, request_status_label
+from database.db import (
+    application_status_label, branch_short, request_status_label,
+)
+
+
+def _fmt_sum(v):
+    """12345 -> '12 345 so'm' (xarajatlar uchun)."""
+    try:
+        return f"{int(v):,}".replace(",", " ") + " so'm"
+    except (TypeError, ValueError):
+        return "-"
 
 
 # O'zbekiston vaqti — UTC+5, yozgi/qishki almashuvsiz (doimiy).
@@ -573,10 +583,16 @@ def tech_task_text(task, for_tech=False, for_admin=False):
     lines = [
         f"🔧 <b>Texnik topshiriq #{task['id']}</b>",
         "━━━━━━━━━━━━",
+    ]
+    if (task.get("priority") or "normal") == "urgent":
+        lines.append("🚨 <b>SHOSHILINCH</b>")
+    lines += [
         f"🏢 Filial: {_v(task, 'branch_name')}",
         f"👤 Rahbar: {_v(task, 'manager_name')}",
         f"🗂 Turi: {_v(task, 'kind')}",
     ]
+    if task.get("category"):
+        lines.append(f"🏷 Kategoriya: {task['category']}")
     if task.get("details"):
         lines.append(f"📝 Muammo: {task['details']}")
     lines.append(f"⏰ Muddat: {_v(task, 'deadline')}")
@@ -604,6 +620,12 @@ def tech_task_text(task, for_tech=False, for_admin=False):
                     f"⏱ Bajarish davomiyligi: "
                     f"{human_duration(base, task['done_at'])}"
                 )
+
+    # Sarflangan xarajat — texnik xodimga ham, HR ga ham ko'rsatiladi
+    if task.get("cost"):
+        lines.append(f"💸 Xarajat: {_fmt_sum(task['cost'])}")
+    if task.get("result_file_id"):
+        lines.append("📸 Natija: rasm/video biriktirilgan")
 
     # Baho va otziv FAQAT HR/Direktor/Admin panelida ko'rinadi — texnik xodimga hech qachon
     if for_admin and task.get("rating"):
@@ -753,13 +775,21 @@ def tech_channel_text(task):
     lines = [
         f"🔧 <b>Texnik ish #{task['id']}</b>",
         "━━━━━━━━━━━━",
+    ]
+    if (task.get("priority") or "normal") == "urgent":
+        lines.append("🚨 <b>SHOSHILINCH</b>")
+    lines += [
         f"🏢 Filial: {_v(task, 'branch_name')}",
         f"👤 Rahbar: {_v(task, 'manager_name')}",
         f"🗂 Turi: {_v(task, 'kind')}",
     ]
+    if task.get("category"):
+        lines.append(f"🏷 Kategoriya: {task['category']}")
     if task.get("details"):
         lines.append(f"📝 Muammo: {task['details']}")
     lines.append(f"⏰ Muddat: {_v(task, 'deadline')}")
+    if task.get("cost"):
+        lines.append(f"💸 Xarajat: {_fmt_sum(task['cost'])}")
     lines.append("━━━━━━━━━━━━")
     lines.append(_tech_channel_owner_line(task))
     lines.append(_tech_channel_status_line(task.get("status")))
@@ -840,6 +870,55 @@ async def reply_tech_channel_rating(bot: Bot, tid, review=None):
             await bot.send_message(channel, text)
         except Exception:
             pass
+
+
+async def send_tech_result_media(bot: Bot, chat_id, task, caption=None):
+    """Texnik xodim biriktirgan yakuniy natija rasmi/videosini yuboradi."""
+    fid = task.get("result_file_id")
+    if not fid:
+        return False
+    ftype = task.get("result_file_type") or "photo"
+    try:
+        if ftype == "photo":
+            await bot.send_photo(chat_id, fid, caption=caption)
+        elif ftype == "video":
+            await bot.send_video(chat_id, fid, caption=caption)
+        elif ftype == "video_note":
+            await bot.send_video_note(chat_id, fid)
+        elif ftype == "document":
+            await bot.send_document(chat_id, fid, caption=caption)
+        else:
+            await bot.send_photo(chat_id, fid, caption=caption)
+        return True
+    except Exception:
+        return False
+
+
+async def post_tech_result_to_channel(bot: Bot, tid):
+    """Yakuniy natija rasmini texnik ishlar kanalidagi kartochkaga REPLY qilib joylaydi."""
+    task = await q.get_tech_task(tid)
+    if not task or not task.get("result_file_id"):
+        return
+    channel = task.get("channel_chat_id") or await q.get_setting("tech_channel")
+    if not channel:
+        return
+    fid = task.get("result_file_id")
+    ftype = task.get("result_file_type") or "photo"
+    cap = f"📸 #{tid} — bajarilgan ish natijasi"
+    kwargs = {}
+    if task.get("channel_message_id"):
+        kwargs["reply_to_message_id"] = task["channel_message_id"]
+    try:
+        if ftype == "video":
+            await bot.send_video(channel, fid, caption=cap, **kwargs)
+        elif ftype == "video_note":
+            await bot.send_video_note(channel, fid, **kwargs)
+        elif ftype == "document":
+            await bot.send_document(channel, fid, caption=cap, **kwargs)
+        else:
+            await bot.send_photo(channel, fid, caption=cap, **kwargs)
+    except Exception:
+        pass
 
 
 async def send_application_resume(bot: Bot, chat_id: int, app):
