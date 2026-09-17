@@ -670,6 +670,206 @@ async def advance_settings_back(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+# -------- Avans so'rovi MATNI (tahrirlanadigan) --------
+async def _advance_text_menu_text():
+    from services.reminders import _advance_prompt_text_effective
+    custom = (await q.get_setting("avans_prompt_text", "") or "").strip()
+    try:
+        pay_day = int(await q.get_setting("avans_day", "15") or 15)
+    except (TypeError, ValueError):
+        pay_day = 15
+    summasiz = await _summasiz_mode()
+    preview = await _advance_prompt_text_effective(pay_day, summasiz)
+    status = "✍️ Tahrirlangan (o'zingizniki)" if custom else "📄 Standart matn"
+    text = (
+        "✍️ <b>Avans so'rovi matni</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"Holat: <b>{status}</b>\n\n"
+        "Hozir xodimlarga shu matn yuboriladi 👇\n"
+        "━━━━━━━━━━━━\n"
+        f"{preview}"
+    )
+    return text, bool(custom)
+
+
+@router.callback_query(F.data == "avset:text")
+async def advance_text_settings(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    text, is_custom = await _advance_text_menu_text()
+    try:
+        await call.message.edit_text(
+            text, reply_markup=kb.advance_text_settings_kb(is_custom)
+        )
+    except Exception:
+        await call.message.answer(
+            text, reply_markup=kb.advance_text_settings_kb(is_custom)
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data == "avset:textedit")
+async def advance_text_edit_start(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.avans_prompt_text)
+    await call.message.answer(
+        "✍️ <b>Avans so'rovi matnini yozing</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Xodimlarga «Ha / Yo'q» tugmalari bilan birga shu matn yuboriladi.\n\n"
+        "💡 Matn ichida <code>{kun}</code> yozsangiz — u avtomatik ravishda "
+        "to'lov sanasiga (masalan <b>15</b>) almashtiriladi.\n\n"
+        "Matnni yuboring:"
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.avans_prompt_text, F.text)
+async def advance_text_edit_save(message: Message, state: FSMContext):
+    if not await _is_hr(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    await q.set_setting("avans_prompt_text", message.text.strip())
+    me = await q.get_user(message.from_user.id)
+    await q.add_log(
+        message.from_user.id, (me or {}).get("full_name"),
+        "sozlama_avans_matn", "so'rov matni tahrirlandi",
+    )
+    await message.answer("✅ Avans so'rovi matni yangilandi.")
+    text, is_custom = await _advance_text_menu_text()
+    await message.answer(text, reply_markup=kb.advance_text_settings_kb(is_custom))
+
+
+@router.callback_query(F.data == "avset:textreset")
+async def advance_text_reset(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await q.set_setting("avans_prompt_text", "")
+    text, is_custom = await _advance_text_menu_text()
+    try:
+        await call.message.edit_text(
+            text, reply_markup=kb.advance_text_settings_kb(is_custom)
+        )
+    except Exception:
+        await call.message.answer(
+            text, reply_markup=kb.advance_text_settings_kb(is_custom)
+        )
+    await call.answer("Standart matnga qaytarildi ✅")
+
+
+# -------- «Ha» / «Yo'q» TUGMA matnlari --------
+async def _advance_labels_menu_text():
+    yes_label = (await q.get_setting("avans_yes_label", "") or "").strip() or "✅ Ha"
+    no_label = (await q.get_setting("avans_no_label", "") or "").strip() or "❌ Yo'q"
+    return (
+        "🔘 <b>Tugma matnlari</b>\n"
+        "━━━━━━━━━━━━\n"
+        "Avans so'rovidagi ikki tugma matni:\n\n"
+        f"• «Ha» tugmasi: <b>{yes_label}</b>\n"
+        f"• «Yo'q» tugmasi: <b>{no_label}</b>"
+    )
+
+
+@router.callback_query(F.data == "avset:labels")
+async def advance_labels_settings(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    try:
+        await call.message.edit_text(
+            await _advance_labels_menu_text(),
+            reply_markup=kb.advance_labels_settings_kb(),
+        )
+    except Exception:
+        await call.message.answer(
+            await _advance_labels_menu_text(),
+            reply_markup=kb.advance_labels_settings_kb(),
+        )
+    await call.answer()
+
+
+@router.callback_query(F.data == "avset:yeslabel")
+async def advance_yeslabel_start(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.avans_yes_label)
+    await call.message.answer(
+        "✏️ «Ha» tugmasining yangi matnini yozing.\n"
+        "Masalan: <b>✅ Ha, roziman</b>"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "avset:nolabel")
+async def advance_nolabel_start(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.set_state(SettingsForm.avans_no_label)
+    await call.message.answer(
+        "✏️ «Yo'q» tugmasining yangi matnini yozing.\n"
+        "Masalan: <b>❌ Yo'q, kerak emas</b>"
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.avans_yes_label, F.text)
+async def advance_yeslabel_save(message: Message, state: FSMContext):
+    if not await _is_hr(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    await q.set_setting("avans_yes_label", message.text.strip()[:60])
+    await message.answer("✅ «Ha» tugmasi matni yangilandi.")
+    await message.answer(
+        await _advance_labels_menu_text(),
+        reply_markup=kb.advance_labels_settings_kb(),
+    )
+
+
+@router.message(SettingsForm.avans_no_label, F.text)
+async def advance_nolabel_save(message: Message, state: FSMContext):
+    if not await _is_hr(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    await q.set_setting("avans_no_label", message.text.strip()[:60])
+    await message.answer("✅ «Yo'q» tugmasi matni yangilandi.")
+    await message.answer(
+        await _advance_labels_menu_text(),
+        reply_markup=kb.advance_labels_settings_kb(),
+    )
+
+
+@router.callback_query(F.data == "avset:labelsreset")
+async def advance_labels_reset(call: CallbackQuery, state: FSMContext):
+    if not await _is_hr(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    await q.set_setting("avans_yes_label", "")
+    await q.set_setting("avans_no_label", "")
+    try:
+        await call.message.edit_text(
+            await _advance_labels_menu_text(),
+            reply_markup=kb.advance_labels_settings_kb(),
+        )
+    except Exception:
+        await call.message.answer(
+            await _advance_labels_menu_text(),
+            reply_markup=kb.advance_labels_settings_kb(),
+        )
+    await call.answer("Standart tugma matnlari qaytarildi ✅")
+
+
 @router.callback_query(F.data == "avset:amounts")
 async def advance_amount_settings(call: CallbackQuery, state: FSMContext):
     if not await _is_hr(call.from_user.id):

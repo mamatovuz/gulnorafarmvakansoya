@@ -286,6 +286,9 @@ class SettingsForm(StatesGroup):
     avans_pay_day = State()     # avans to'lov sanasi
     avans_amount_add = State()  # avans tugmalariga yangi miqdor qo'shish
     avans_amount_edit = State()  # mavjud avans miqdorini tahrirlash
+    avans_prompt_text = State()  # avans so'rovi matnini o'zgartirish
+    avans_yes_label = State()    # «Ha» tugmasi matni
+    avans_no_label = State()     # «Yo'q» tugmasi matni
 
 
 class BranchChangeForm(StatesGroup):

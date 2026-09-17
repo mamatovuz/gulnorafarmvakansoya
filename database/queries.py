@@ -3562,8 +3562,9 @@ async def add_probation(data):
         cur = await db.execute(
             """INSERT INTO probations
                (application_id, user_id, branch_id, full_name, position,
-                start_date, end_date, days, kind, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                start_date, end_date, days, kind, status,
+                shift, agreed_salary, uniform_status, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("application_id"),
                 data.get("user_id"),
@@ -3574,6 +3575,10 @@ async def add_probation(data):
                 data.get("end_date"),
                 data.get("days", 15),
                 data.get("kind", "trial"),
+                data.get("status", "active"),
+                data.get("shift"),
+                data.get("agreed_salary"),
+                data.get("uniform_status"),
                 data.get("created_by"),
             ),
         )
@@ -3636,6 +3641,23 @@ async def mark_probation_flag(pid, flag):
     try:
         await db.execute(f"UPDATE probations SET {flag}=1 WHERE id=?", (pid,))
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def set_probation_status_if(pid, new_status, expected_status):
+    """Holatni faqat kutilgan holatdan (expected) yangi holatga o'tkazadi.
+
+    True qaytadi — agar shu chaqiruvda haqiqatan o'zgargan bo'lsa (atomik:
+    ikki rahbar bir vaqtda bosganda faqat bittasi True oladi)."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            "UPDATE probations SET status=? WHERE id=? AND status=?",
+            (new_status, pid, expected_status),
+        )
+        await db.commit()
+        return cur.rowcount > 0
     finally:
         await db.close()
 

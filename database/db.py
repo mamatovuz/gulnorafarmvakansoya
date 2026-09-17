@@ -621,7 +621,13 @@ CREATE TABLE IF NOT EXISTS probations (
     end_date TEXT,        -- ISO: YYYY-MM-DD (start + 14 kun)
     days INTEGER NOT NULL DEFAULT 15,
     kind TEXT NOT NULL DEFAULT 'trial',      -- trial (sinov) / learner (o'rganuvchi)
-    status TEXT NOT NULL DEFAULT 'active',   -- active / finished
+    -- awaiting => filial rahbari «Ishga keldi» tasdig'i kutilmoqda (hali xodimlar
+    -- ro'yxatiga qo'shilmagan); active => ishga chiqqan; finished => muddat tugadi;
+    -- no_show => kelmadi (rahbar rad etdi).
+    status TEXT NOT NULL DEFAULT 'active',
+    shift TEXT,
+    agreed_salary TEXT,
+    uniform_status TEXT,
     manager_notified INTEGER NOT NULL DEFAULT 0,
     hr_3day_sent INTEGER NOT NULL DEFAULT 0,
     hr_end_sent INTEGER NOT NULL DEFAULT 0,
@@ -834,6 +840,11 @@ MANAGER_REQUEST_COLUMNS = {
 
 PROBATION_COLUMNS = {
     "kind": "TEXT NOT NULL DEFAULT 'trial'",
+    # Sinov/o'rganuvchi ishga chiqqanda profil yaratish uchun saqlanadigan
+    # ma'lumotlar (filial rahbari «✅ Ishga keldi» ni bosgach ishlatiladi).
+    "shift": "TEXT",
+    "agreed_salary": "TEXT",
+    "uniform_status": "TEXT",
 }
 
 INTERVIEW_COLUMNS = {

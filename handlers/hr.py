@@ -24,7 +24,7 @@ from utils import (
     iso_to_display, probation_text, update_application_channel, send_application_card,
     close_request_notices, post_interview_to_channel, update_interview_channel,
     interview_confirm_label, interview_attendance_label,
-    effective_reject_template, broadcast_trust,
+    effective_reject_template, broadcast_trust, broadcast_request,
     staff_reg_text, tech_task_text, post_open_tech_task_to_channel,
 )
 from services import export
@@ -574,22 +574,34 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
     if branch_id is None:
         branch_id = a.get("branch_id")
     new_role = role_from_position(a.get("position") or a.get("vacancy_title"))
-    if a.get("applicant_tg"):
-        await q.set_role(a["applicant_tg"], new_role, branch_id)
-    # Panellarda arizadagi ism ko'rinsin (Telegram nomi emas)
-    await q.set_real_name(user_id=a["user_id"], full_name=a.get("full_name"))
     # Kelishilgan oylik bo'lsa — profilga yozamiz
     agreed_salary = a.get("offered_salary") if a.get("salary_status") == "agreed" else None
-    await q.upsert_employee_profile(
-        user_id=a["user_id"],
-        application_id=aid,
-        role=new_role,
-        position=a.get("position") or a.get("vacancy_title"),
-        branch_id=branch_id,
-        uniform_status=a.get("uniform_status") or "unknown",
-        monthly_salary=agreed_salary,
-        shift=shift or a.get("shift"),
-    )
+    eff_shift = shift or a.get("shift")
+    uniform = a.get("uniform_status") or "unknown"
+    # Panellarda arizadagi ism ko'rinsin (Telegram nomi emas)
+    await q.set_real_name(user_id=a["user_id"], full_name=a.get("full_name"))
+
+    manager_ids = await q.branch_manager_tg_ids(branch_id)
+    # Sinov / o'rganuvchi + filialda rahbar bor bo'lsa — xodim DARHOL xodimlar
+    # ro'yxatiga qo'shilMAYDI. Filial rahbari «✅ Ishga keldi» ni bosgach qo'shiladi.
+    # (Aks holda ishga chiqmagan xodim ham ro'yxatga tushib qolar edi.)
+    defer = kind in ("trial", "learner") and bool(manager_ids)
+
+    if not defer:
+        # Doimiy ishga qabul YOKI filialga rahbar biriktirilmagan — darhol qo'shamiz
+        # (tasdiqlaydigan rahbar yo'q).
+        if a.get("applicant_tg"):
+            await q.set_role(a["applicant_tg"], new_role, branch_id)
+        await q.upsert_employee_profile(
+            user_id=a["user_id"],
+            application_id=aid,
+            role=new_role,
+            position=a.get("position") or a.get("vacancy_title"),
+            branch_id=branch_id,
+            uniform_status=uniform,
+            monthly_salary=agreed_salary,
+            shift=eff_shift,
+        )
 
     # Sinov / o'rganuvchi bo'lsa — muddat yozuvini yaratamiz
     pid = None
@@ -608,17 +620,24 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             "end_date": end_iso,
             "days": period_days,
             "kind": kind,
+            # Kechiktirilgan bo'lsa — rahbar tasdig'ini kutadi
+            "status": "awaiting" if defer else "active",
+            "shift": eff_shift,
+            "agreed_salary": agreed_salary,
+            "uniform_status": uniform,
             "created_by": me["id"],
         })
     await q.add_log(
         message.from_user.id, me["full_name"], "ariza_qabul",
         f"Ariza #{aid} · {kind}" + (f" · muddat #{pid}" if pid else "")
     )
-    # Kadrlar harakati (IT hisoboti): ishga kirdi
-    await q.add_hr_event(
-        "hired", user_id=a["user_id"], full_name=a.get("full_name"),
-        branch_id=branch_id, details=f"ariza #{aid} · {kind}", created_by=me["id"],
-    )
+    # Kadrlar harakati (IT hisoboti): ishga kirdi — faqat DARHOL qo'shilganda.
+    # Kechiktirilganda «✅ Ishga keldi» tasdig'ida qayd etiladi.
+    if not defer:
+        await q.add_hr_event(
+            "hired", user_id=a["user_id"], full_name=a.get("full_name"),
+            branch_id=branch_id, details=f"ariza #{aid} · {kind}", created_by=me["id"],
+        )
 
     branch = await q.get_branch(branch_id) if branch_id else None
     branch_name = branch["name"] if branch else "—"
@@ -629,35 +648,59 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             f"<b>{iso_to_display(start_iso)} — {iso_to_display(end_iso)}</b> ({period_days} kun)"
         )
     salary_line = f"\n💰 Oylik: <b>{agreed_salary}</b>" if agreed_salary else ""
+    defer_line = (
+        "\n\n⏳ Xodim <b>hali ro'yxatga qo'shilmadi</b> — filial rahbari «✅ Ishga "
+        "keldi» ni bosgach xodimlar ro'yxatiga qo'shiladi."
+        if defer else ""
+    )
     await message.answer(
         f"{meta['emoji']} Ariza #{aid} — <b>{meta['noun']}</b>ga qabul qilindi.\n"
         f"🎯 Rol: <b>{ROLE_LABELS.get(new_role, new_role)}</b>\n"
         f"🏢 Filial: <b>{branch_name}</b>"
-        f"{period_line}{salary_line}"
+        f"{period_line}{salary_line}{defer_line}"
     )
 
     # Filial rahbariga xabar
-    manager_ids = await q.branch_manager_tg_ids(branch_id)
     period_info = (
         f"🏁 {meta['noun'].capitalize()} tugashi: {iso_to_display(end_iso)} ({period_days} kun)\n"
         if end_iso else ""
     )
-    mgr_text = (
-        f"{meta['emoji']} <b>Yangi xodim ({meta['noun']})</b>\n\n"
-        f"👤 <b>{a.get('full_name')}</b>\n"
-        f"💼 Lavozim: {a.get('position') or a.get('vacancy_title')}\n"
-        f"🏢 Filial: {branch_name}\n"
-        f"📅 Ishga chiqadi: <b>{iso_to_display(start_iso)}</b>\n"
-        f"{period_info}"
-        f"📱 Telefon: {a.get('phone') or '-'}\n\n"
-        "Iltimos, shu kuni xodimni kutib oling."
-    )
-    for tid in manager_ids:
-        await safe_send(bot, tid, mgr_text)
-    if not manager_ids:
-        await message.answer(
-            "ℹ️ Bu filialga rahbar biriktirilmagani uchun xabar yuborilmadi."
+    if defer:
+        # Rahbardan «ishga keldi»mi degan tasdiqni so'raymiz — u bosgachgina
+        # xodim ro'yxatga qo'shiladi.
+        mgr_text = (
+            f"{meta['emoji']} <b>Yangi {meta['noun']} xodimi — tasdiqlang</b>\n\n"
+            f"👤 <b>{a.get('full_name')}</b>\n"
+            f"💼 Lavozim: {a.get('position') or a.get('vacancy_title')}\n"
+            f"🏢 Filial: {branch_name}\n"
+            f"📅 Ishga chiqishi kerak: <b>{iso_to_display(start_iso)}</b>\n"
+            f"{period_info}"
+            f"📱 Telefon: {a.get('phone') or '-'}\n\n"
+            "Xodim ishga <b>keldimi</b>? Kelgan bo'lsa «✅ Ishga keldi» ni bosing — "
+            "shundagina u xodimlar ro'yxatiga qo'shiladi. Kelmagan bo'lsa "
+            "«❌ Kelmadi» ni bosing."
         )
+        await broadcast_request(
+            bot, "prob_arrival", pid, manager_ids, mgr_text,
+            reply_markup=kb.probation_arrival_kb(pid),
+        )
+    else:
+        mgr_text = (
+            f"{meta['emoji']} <b>Yangi xodim ({meta['noun']})</b>\n\n"
+            f"👤 <b>{a.get('full_name')}</b>\n"
+            f"💼 Lavozim: {a.get('position') or a.get('vacancy_title')}\n"
+            f"🏢 Filial: {branch_name}\n"
+            f"📅 Ishga chiqadi: <b>{iso_to_display(start_iso)}</b>\n"
+            f"{period_info}"
+            f"📱 Telefon: {a.get('phone') or '-'}\n\n"
+            "Iltimos, shu kuni xodimni kutib oling."
+        )
+        for tid in manager_ids:
+            await safe_send(bot, tid, mgr_text)
+        if not manager_ids:
+            await message.answer(
+                "ℹ️ Bu filialga rahbar biriktirilmagani uchun xabar yuborilmadi."
+            )
 
     # Maxfiy kanalga yuborish (admin panelda ulangan bo'lsa)
     secret_channel = await q.get_setting("secret_channel")
@@ -695,17 +738,188 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             f"({iso_to_display(start_iso)} — {iso_to_display(end_iso)})\n" if end_iso else ""
         )
         salary_cand = f"💰 Oylik: <b>{agreed_salary}</b>\n" if agreed_salary else ""
+        if defer:
+            # Rol/panel hali ochilmaydi — filial rahbari ishga kelganini
+            # tasdiqlagach ochiladi.
+            await safe_send(
+                bot, a["applicant_tg"],
+                f"🎉 <b>Tabriklaymiz!</b>\n\n"
+                f"«{a['vacancy_title']}» bo'yicha arizangiz ma'qullandi va siz "
+                f"<b>{meta['noun']}</b>ga qabul qilindingiz!\n"
+                f"🏢 Filial: <b>{branch_name}</b>\n"
+                f"📅 Ishga chiqasiz: <b>{iso_to_display(start_iso)}</b>\n"
+                f"{period_cand}{salary_cand}"
+                "\nIltimos, belgilangan kuni filialga boring. Filial rahbari "
+                "kelganingizni tasdiqlagach, sizga <b>panel ochiladi</b> va "
+                "xabar beriladi. 🌿",
+            )
+        else:
+            await safe_send(
+                bot, a["applicant_tg"],
+                f"🎉 <b>Tabriklaymiz!</b>\n\n"
+                f"«{a['vacancy_title']}» bo'yicha arizangiz ma'qullandi va siz "
+                f"<b>{meta['noun']}</b>ga qabul qilindingiz!\n"
+                f"🏢 Filial: <b>{branch_name}</b>\n"
+                f"📅 Ishga chiqasiz: <b>{iso_to_display(start_iso)}</b>\n"
+                f"{period_cand}{salary_cand}"
+                f"Sizga <b>{ROLE_LABELS.get(new_role, new_role)}</b> paneli ochildi.\n"
+                f"Yangilangan menyuni ko'rish uchun /start bosing.",
+                reply_markup=kb.main_menu(new_role),
+            )
+
+
+# ------- SINOV/O'RGANUVCHI: FILIAL RAHBARI «ISHGA KELDI»NI TASDIQLAYDI -------
+async def _can_confirm_arrival(user, prob):
+    """Admin/HR yoki shu filial rahbari tasdiqlashi mumkin."""
+    if not user:
+        return False
+    if user["role"] in (ROLE_ADMIN, ROLE_HR):
+        return True
+    if user["role"] == ROLE_MANAGER:
+        branch_id = user.get("branch_id")
+        if not branch_id:
+            profile = await q.get_employee_profile(user["id"])
+            branch_id = profile.get("branch_id") if profile else None
+        return bool(branch_id) and prob.get("branch_id") == branch_id
+    return False
+
+
+@router.callback_query(F.data.startswith("probarr:ok:"))
+async def probation_arrived(call: CallbackQuery, bot: Bot):
+    pid = int(call.data.rsplit(":", 1)[1])
+    prob = await q.get_probation(pid)
+    if not prob:
+        await call.answer("Yozuv topilmadi.", show_alert=True)
+        return
+    user = await q.get_user(call.from_user.id)
+    if not await _can_confirm_arrival(user, prob):
+        await call.answer("⛔", show_alert=True)
+        return
+    if prob.get("status") != "awaiting":
+        await close_request_notices(bot, "prob_arrival", pid,
+                                    keep_chat_id=call.from_user.id)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+    # Atomik — faqat bitta rahbar tasdiqlaydi
+    if not await q.set_probation_status_if(pid, "active", "awaiting"):
+        await close_request_notices(bot, "prob_arrival", pid,
+                                    keep_chat_id=call.from_user.id)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+
+    role = role_from_position(prob.get("position"))
+    if prob.get("employee_tg"):
+        await q.set_role(prob["employee_tg"], role, prob.get("branch_id"))
+    await q.upsert_employee_profile(
+        user_id=prob["user_id"],
+        application_id=prob.get("application_id"),
+        role=role,
+        position=prob.get("position"),
+        branch_id=prob.get("branch_id"),
+        uniform_status=prob.get("uniform_status") or "unknown",
+        monthly_salary=prob.get("agreed_salary"),
+        shift=prob.get("shift"),
+    )
+    # Endi kadrlar harakatida qayd etamiz (IT hisoboti)
+    await q.add_hr_event(
+        "hired", user_id=prob["user_id"], full_name=prob.get("full_name"),
+        branch_id=prob.get("branch_id"),
+        details=f"ariza #{prob.get('application_id')} · {prob.get('kind')} · ishga keldi",
+        created_by=user["id"],
+    )
+    await q.add_log(call.from_user.id, user.get("full_name"),
+                    "sinov_ishga_keldi", f"muddat #{pid}")
+
+    await close_request_notices(bot, "prob_arrival", pid,
+                                keep_chat_id=call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>{prob.get('full_name')}</b> xodimlar ro'yxatiga qo'shildi.\n"
+        f"🏢 Filial: {prob.get('branch_name') or '-'}"
+    )
+    await call.answer("Qo'shildi ✅")
+    # Xodimga panel ochilganini bildiramiz
+    if prob.get("employee_tg"):
         await safe_send(
-            bot, a["applicant_tg"],
-            f"🎉 <b>Tabriklaymiz!</b>\n\n"
-            f"«{a['vacancy_title']}» bo'yicha arizangiz ma'qullandi va siz "
-            f"<b>{meta['noun']}</b>ga qabul qilindingiz!\n"
-            f"🏢 Filial: <b>{branch_name}</b>\n"
-            f"📅 Ishga chiqasiz: <b>{iso_to_display(start_iso)}</b>\n"
-            f"{period_cand}{salary_cand}"
-            f"Sizga <b>{ROLE_LABELS.get(new_role, new_role)}</b> paneli ochildi.\n"
-            f"Yangilangan menyuni ko'rish uchun /start bosing.",
-            reply_markup=kb.main_menu(new_role),
+            bot, prob["employee_tg"],
+            "🎉 <b>Ishga chiqqaningiz tasdiqlandi!</b>\n\n"
+            f"🏢 Filial: <b>{prob.get('branch_name') or '-'}</b>\n"
+            f"Sizga <b>{ROLE_LABELS.get(role, role)}</b> paneli ochildi.\n"
+            "Menyuni ko'rish uchun /start bosing.",
+            reply_markup=kb.main_menu(role),
+        )
+    # HR/Adminга xabar
+    hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR)) | \
+        set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    hr_ids.discard(call.from_user.id)
+    for tid in hr_ids:
+        await safe_send(
+            bot, tid,
+            f"✅ <b>Ishga keldi</b> — {prob.get('full_name')} "
+            f"({prob.get('branch_name') or '-'}) xodimlar ro'yxatiga qo'shildi.\n"
+            f"Tasdiqladi: {user.get('full_name') or '-'}",
+        )
+
+
+@router.callback_query(F.data.startswith("probarr:no:"))
+async def probation_no_show(call: CallbackQuery, bot: Bot):
+    pid = int(call.data.rsplit(":", 1)[1])
+    prob = await q.get_probation(pid)
+    if not prob:
+        await call.answer("Yozuv topilmadi.", show_alert=True)
+        return
+    user = await q.get_user(call.from_user.id)
+    if not await _can_confirm_arrival(user, prob):
+        await call.answer("⛔", show_alert=True)
+        return
+    if not await q.set_probation_status_if(pid, "no_show", "awaiting"):
+        await close_request_notices(bot, "prob_arrival", pid,
+                                    keep_chat_id=call.from_user.id)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+    # Ishga chiqmadi — profil yaratilmagan, rolni nomzodga qaytaramiz
+    if prob.get("employee_tg"):
+        await q.set_role(prob["employee_tg"], ROLE_CANDIDATE, None)
+    await q.add_log(call.from_user.id, user.get("full_name"),
+                    "sinov_kelmadi", f"muddat #{pid}")
+
+    await close_request_notices(bot, "prob_arrival", pid,
+                                keep_chat_id=call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"❌ <b>{prob.get('full_name')}</b> ishga kelmadi deb belgilandi. "
+        "Xodim ro'yxatga qo'shilmadi."
+    )
+    await call.answer("Belgilandi")
+    # HR/Adminga xabar — endi ular boshqa nomzod qidirishi mumkin
+    hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR)) | \
+        set(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    hr_ids.discard(call.from_user.id)
+    for tid in hr_ids:
+        await safe_send(
+            bot, tid,
+            f"❌ <b>Ishga kelmadi</b> — {prob.get('full_name')} "
+            f"({prob.get('branch_name') or '-'}) ishga chiqmadi.\n"
+            f"Belgiladi: {user.get('full_name') or '-'}\n"
+            "Xodim ro'yxatga qo'shilmadi.",
         )
 
 

@@ -157,8 +157,32 @@ async def dayoff_plan_toggle(call: CallbackQuery):
     await call.answer("🟢 ishga keladi" if new_status == "work" else "🔴 kelmaydi")
 
 
+async def _clear_plan_notices(bot: Bot, plan_id, keep_chat_id=None, keep_msg_id=None):
+    """Reja bo'yicha yuborilgan barcha so'rov/eslatma xabarlaridagi tugmalarni
+    olib tashlaydi (joriy xabardan tashqari). Tasdiqlangach eski xabarlarda
+    «✅ Tasdiqlash» tugmasi qolib, chalkashtirmasligi uchun."""
+    try:
+        rows = await q.pop_request_notices("dayoff_plan", plan_id)
+    except Exception:
+        return
+    for row in rows:
+        chat_id, message_id = row["chat_id"], row["message_id"]
+        if (keep_chat_id is not None and int(chat_id) == int(keep_chat_id)
+                and keep_msg_id is not None and int(message_id) == int(keep_msg_id)):
+            continue  # joriy xabar — uni handlerning o'zi yangilaydi
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except Exception:
+            try:
+                await bot.delete_message(chat_id, message_id)
+            except Exception:
+                pass
+
+
 @router.callback_query(F.data.startswith("dopl_ok:"))
-async def dayoff_plan_confirm(call: CallbackQuery):
+async def dayoff_plan_confirm(call: CallbackQuery, bot: Bot):
     user = await q.get_user(call.from_user.id)
     plan_id = int(call.data.split(":")[1])
     plan = await q.get_dayoff_plan(plan_id)
@@ -172,6 +196,11 @@ async def dayoff_plan_confirm(call: CallbackQuery):
         await call.answer(_locked_alert(plan), show_alert=True)
         return
     await q.set_dayoff_plan_status(plan_id, "confirmed", confirmed_by=user["id"])
+    # Boshqa (eski so'rov/eslatma) xabarlardagi tugmalarni tozalaymiz — joriy
+    # xabar summary ga aylantiriladi.
+    await _clear_plan_notices(bot, plan_id,
+                              keep_chat_id=call.from_user.id,
+                              keep_msg_id=call.message.message_id)
     await q.add_log(call.from_user.id, user.get("full_name"),
                     "dam_olish_reja_tasdiq", f"plan#{plan_id}")
     items = await q.list_dayoff_plan_items(plan_id)

@@ -152,6 +152,15 @@ async def probation_reminder_loop(bot: Bot, interval_seconds=3600):
 
 
 # ---------------- AVANS SO'ROVI (har oy belgilangan kunda) ----------------
+async def _advance_prompt_text_effective(pay_day, summasiz=True):
+    """Avans so'rovi matni. HR sozlamada o'z matnini kiritgan bo'lsa — o'shani
+    ishlatadi ({kun} o'rniga to'lov sanasi qo'yiladi). Aks holda standart matn."""
+    custom = (await q.get_setting("avans_prompt_text", "") or "").strip()
+    if custom:
+        return custom.replace("{kun}", str(pay_day)).replace("{sana}", str(pay_day))
+    return _advance_prompt_text(pay_day, summasiz)
+
+
 def _advance_prompt_text(pay_day, summasiz=True):
     if summasiz:
         return (
@@ -183,10 +192,13 @@ async def send_advance_prompt(bot: Bot, period=None, mark_sent=True):
 
     summasiz = str(await q.get_setting("avans_summasiz", "1")) == "1"
     ids = await q.advance_employee_tg_ids()
-    text = _advance_prompt_text(pay_day, summasiz)
+    text = await _advance_prompt_text_effective(pay_day, summasiz)
+    yes_label = (await q.get_setting("avans_yes_label", "") or "").strip() or None
+    no_label = (await q.get_setting("avans_no_label", "") or "").strip() or None
+    markup = kb.advance_yes_no_kb(period, yes_label, no_label)
     sent = 0
     for tid in ids:
-        if await safe_send(bot, tid, text, reply_markup=kb.advance_yes_no_kb(period)):
+        if await safe_send(bot, tid, text, reply_markup=markup):
             sent += 1
     if mark_sent:
         await q.set_setting(f"avans_prompt_sent:{period}", "1")
@@ -356,10 +368,16 @@ async def _run_dayoff_prompt(bot: Bot):
         plan = await q.get_dayoff_plan(plan_id)
         items = await q.list_dayoff_plan_items(plan_id)
         for tid in mgr_ids:
-            await safe_send(
-                bot, tid, plan_prompt_text(plan, items),
-                reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
-            )
+            # Xabar id sini saqlaymiz — rahbar tasdiqlagach barcha (so'rov +
+            # eslatma) xabarlaridagi tugmalar avtomatik o'chirilishi uchun.
+            try:
+                msg = await bot.send_message(
+                    tid, plan_prompt_text(plan, items),
+                    reply_markup=kb.dayoff_plan_edit_kb(plan_id, items),
+                )
+                await q.add_request_notice("dayoff_plan", plan_id, tid, msg.message_id)
+            except Exception:
+                pass
         # Eslatma taymerini boshlaymiz — birinchi eslatma ~30 daqiqadan keyin
         await q.set_setting(
             f"dayoff_remind_at:{plan_id}", now.strftime("%Y-%m-%d %H:%M:%S")
@@ -465,11 +483,18 @@ async def _run_dayoff_reminders(bot: Bot):
                 continue
             sent = False
             for tid in mgr_ids:
-                if await safe_send(
-                    bot, tid, plan_prompt_text(plan, items, reminder=True),
-                    reply_markup=kb.dayoff_plan_edit_kb(plan["id"], items),
-                ):
+                try:
+                    msg = await bot.send_message(
+                        tid, plan_prompt_text(plan, items, reminder=True),
+                        reply_markup=kb.dayoff_plan_edit_kb(plan["id"], items),
+                    )
+                    # Eslatma xabarini ham qayd etamiz — tasdiqlagach o'chadi.
+                    await q.add_request_notice(
+                        "dayoff_plan", plan["id"], tid, msg.message_id
+                    )
                     sent = True
+                except Exception:
+                    pass
             if sent:
                 await q.set_setting(key, now.strftime("%Y-%m-%d %H:%M:%S"))
 

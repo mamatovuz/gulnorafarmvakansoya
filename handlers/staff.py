@@ -1481,3 +1481,67 @@ async def director_export(message: Message):
         "📑 <b>Excel hisobot</b>\nQaysi ma'lumotni yuklab olasiz?",
         reply_markup=kb.export_kb("director"),
     )
+
+
+# ---------------- HAR QANDAY XODIM: «MENING JARIMALARIM» ----------------
+_FINE_SOURCE_LABELS = {"hr": "HR bo'limi", "finance": "Moliya bo'limi"}
+
+
+def _prev_period(period):
+    """'YYYY-MM' -> o'tgan oy 'YYYY-MM'."""
+    y, m = int(period[:4]), int(period[5:7])
+    if m == 1:
+        return f"{y - 1}-12"
+    return f"{y}-{m - 1:02d}"
+
+
+def _fines_block(title, fines):
+    if not fines:
+        return f"{title}\n   — jarima yo'q ✅"
+    lines = [title]
+    for f in fines:
+        src = _FINE_SOURCE_LABELS.get(f.get("source"), "—")
+        date = (f.get("created_at") or "")[:10]
+        lines.append(
+            f"   💸 <b>{f.get('amount') or '-'}</b>\n"
+            f"      ✍️ Sabab: {f.get('reason') or '-'}\n"
+            f"      🏢 Kim: {src} · 🕐 {date}"
+        )
+    return "\n".join(lines)
+
+
+@router.message(F.text == kb.MY_FINES_BTN)
+async def my_fines(message: Message):
+    profile = await q.get_employee_profile_by_tg(message.from_user.id)
+    if not profile:
+        await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
+        return
+    user_id = profile["user_id"]
+    all_fines = await q.list_fines(user_id, limit=200)  # bekor qilinganlar chiqmaydi
+    this_p = now_tk().strftime("%Y-%m")
+    prev_p = _prev_period(this_p)
+
+    def _for(period):
+        return [f for f in all_fines if (f.get("period") or (f.get("created_at") or "")[:7]) == period]
+
+    this_fines = _for(this_p)
+    prev_fines = _for(prev_p)
+
+    if not this_fines and not prev_fines:
+        await message.answer(
+            "💸 <b>Mening jarimalarim</b>\n"
+            "━━━━━━━━━━━━\n"
+            "✅ Shu oy va o'tgan oyda sizga hech qanday jarima yozilmagan. "
+            "Ajoyib! 🌿"
+        )
+        return
+
+    text = (
+        "💸 <b>Mening jarimalarim</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"{_fines_block(f'📅 <b>Shu oy ({this_p})</b> — {len(this_fines)} ta:', this_fines)}\n\n"
+        f"{_fines_block(f'📆 <b>O`tgan oy ({prev_p})</b> — {len(prev_fines)} ta:', prev_fines)}\n\n"
+        "ℹ️ Bekor qilingan jarimalar ro'yxatda ko'rsatilmaydi. Savol bo'lsa "
+        "HR yoki Moliya bo'limiga murojaat qiling."
+    )
+    await message.answer(text)

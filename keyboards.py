@@ -29,6 +29,9 @@ EMPLOYEE_ROLES = (
 # Xodim menyusidagi «HR ga murojaat» tugmasi (ish vaqti / maosh / boshqa masala)
 HR_REQUEST_BTN = "📩 HR ga murojaat"
 
+# Har qanday xodim o'z jarimalarini ko'radigan tugma (shu oy + o'tgan oy)
+MY_FINES_BTN = "💸 Mening jarimalarim"
+
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
 
@@ -40,6 +43,7 @@ EMP_MANAGE_BTN = "🛠 Ma'lumotlarni o'zgartirish"
 # (aks holda tugma matni ochiq anketa savoliga javob sifatida ketib qoladi).
 MENU_ESCAPE_BUTTONS = {
     "👤 Mening profilim", "🔄 Dam olish kunini almashtirish", HR_REQUEST_BTN,
+    MY_FINES_BTN,
     "💸 HR ga so'rov",  # eski nomdagi tugma (kesh qolgan klaviaturalar uchun)
     "💼 Vakansiyalar", "📄 Mening arizalarim", "🏠 Asosiy menyu",
     "👨‍💼 HR panel", "👑 Admin panel", "📈 Direktor panel", "🧮 Moliya bo'limi",
@@ -75,6 +79,7 @@ def main_menu(role, has_applied=False, lang=None):
         b.button(text=t("btn.profile", lang))
         b.button(text=t("btn.dayoff", lang))
         b.button(text=t("btn.hr_request", lang))
+        b.button(text=MY_FINES_BTN)
         b.button(text=t("btn.lang", lang))
     if role == ROLE_MANAGER:
         b.button(text="🏢 Filial rahbari panel")
@@ -90,6 +95,7 @@ def main_menu(role, has_applied=False, lang=None):
         b.button(text="🔧 Texnik xodim panel")
         b.button(text=t("btn.profile", lang))
         b.button(text=t("btn.hr_request", lang))
+        b.button(text=MY_FINES_BTN)
         b.button(text=t("btn.lang", lang))
     if role == ROLE_HR:
         b.button(text="👨‍💼 HR panel")
@@ -276,6 +282,16 @@ def probation_shift_kb():
     for i, s in enumerate(PROBATION_SHIFTS):
         b.button(text=s, callback_data=f"probshift:{i}")
     b.adjust(1)
+    return b.as_markup()
+
+
+def probation_arrival_kb(pid):
+    """Filial rahbari uchun — sinov/o'rganuvchi xodim ishga keldimi?
+    «✅ Ishga keldi» bosilsagina xodim xodimlar ro'yxatiga qo'shiladi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ishga keldi", callback_data=f"probarr:ok:{pid}")
+    b.button(text="❌ Kelmadi", callback_data=f"probarr:no:{pid}")
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -2732,10 +2748,10 @@ def it_branch_pick_kb(branches, user_id):
 
 
 # ================= AVANS (oldindan to'lov) =================
-def advance_yes_no_kb(period):
+def advance_yes_no_kb(period, yes_label=None, no_label=None):
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Ha", callback_data=f"avns_yes:{period}")
-    b.button(text="❌ Yo'q", callback_data=f"avns_no:{period}")
+    b.button(text=yes_label or "✅ Ha", callback_data=f"avns_yes:{period}")
+    b.button(text=no_label or "❌ Yo'q", callback_data=f"avns_no:{period}")
     b.adjust(2)
     return b.as_markup()
 
@@ -2808,6 +2824,30 @@ def advance_settings_kb(prompt_day, pay_day, enabled=True, amounts_count=None,
     if not summasiz:
         suffix = f": {amounts_count} ta" if amounts_count is not None else ""
         b.button(text=f"💵 Avans miqdorlari{suffix}", callback_data="avset:amounts")
+    b.button(text="✍️ So'rov matnini o'zgartirish", callback_data="avset:text")
+    b.button(text="🔘 Tugma matnlari (Ha / Yo'q)", callback_data="avset:labels")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def advance_text_settings_kb(is_custom):
+    """Avans so'rovi matnini tahrirlash menyusi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Matnni o'zgartirish", callback_data="avset:textedit")
+    if is_custom:
+        b.button(text="↩️ Standart matnga qaytarish", callback_data="avset:textreset")
+    b.button(text="⬅️ Ortga", callback_data="avset:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def advance_labels_settings_kb():
+    """«Ha» / «Yo'q» tugma matnlarini tahrirlash menyusi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ «Ha» tugmasi matni", callback_data="avset:yeslabel")
+    b.button(text="✏️ «Yo'q» tugmasi matni", callback_data="avset:nolabel")
+    b.button(text="↩️ Standart tugma matnlari", callback_data="avset:labelsreset")
+    b.button(text="⬅️ Ortga", callback_data="avset:back")
     b.adjust(1)
     return b.as_markup()
 
