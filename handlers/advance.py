@@ -58,10 +58,33 @@ async def _is_accountant(tg_id):
 
 
 def _normalize_card(text):
-    """Karta raqamini tozalab, faqat raqamlarni qaytaradi ('' agar noto'g'ri)."""
+    """Karta raqamini tozalab, faqat raqamlarni qaytaradi ('' agar noto'g'ri).
+
+    Faqat 16 xonali O'zbekiston milliy kartalari (Uzcard / Humo) qabul qilinadi."""
     digits = re.sub(r"\D", "", text or "")
-    if 12 <= len(digits) <= 19:
+    if len(digits) == 16:
         return digits
+    return ""
+
+
+# O'zbekiston milliy to'lov tizimlari. Ipak Yo'li Bank kartalari ham shu
+# tizimlarda (Uzcard — 8600, Humo — 9860) chiqariladi, shu sabab alohida
+# prefiks kerak emas — 8600/9860 barchasini qamrab oladi.
+UZCARD_PREFIXES = ("8600", "5614")
+HUMO_PREFIXES = ("9860",)
+
+
+def _card_type(digits):
+    """Karta turini aniqlaydi: 'Uzcard' / 'Humo', yoki '' — qo'llab-quvvatlanmaydi.
+
+    Faqat Uzcard va Humo (jumladan Ipak Yo'li Bank) kartalari qabul qilinadi;
+    Visa/Mastercard va boshqa xalqaro kartalar rad etiladi."""
+    if len(digits) != 16:
+        return ""
+    if digits.startswith(UZCARD_PREFIXES):
+        return "Uzcard"
+    if digits.startswith(HUMO_PREFIXES):
+        return "Humo"
     return ""
 
 
@@ -156,13 +179,17 @@ async def _show_confirm(message: Message, state: FSMContext):
     amount = data.get("avns_amount")
     me = await q.get_user(message.from_user.id)
     full_name = (me or {}).get("full_name") or "-"
+    ctype = _card_type(card or "")
+    card_line = f"💳 Karta raqami: <b>{_pretty_card(card)}</b>"
+    if ctype:
+        card_line += f" <i>({ctype})</i>"
     if amount:
         await message.answer(
             "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
             "━━━━━━━━━━━━\n"
             f"👤 Ism-familiya: <b>{full_name}</b>\n"
             f"💵 Avans miqdori: <b>{_fmt_sum(amount)} so'm</b>\n"
-            f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
+            f"{card_line}\n"
             "━━━━━━━━━━━━\n"
             f"Ushbu karta raqamiga <b>{_fmt_sum(amount)} so'm</b> avans o'tkazilsinmi?",
             reply_markup=kb.advance_confirm_kb(),
@@ -172,7 +199,7 @@ async def _show_confirm(message: Message, state: FSMContext):
             "🧾 <b>Avans so'rovi — ma'lumotlaringizni tekshiring:</b>\n"
             "━━━━━━━━━━━━\n"
             f"👤 Ism-familiya: <b>{full_name}</b>\n"
-            f"💳 Karta raqami: <b>{_pretty_card(card)}</b>\n"
+            f"{card_line}\n"
             "━━━━━━━━━━━━\n"
             "Sizni avans oluvchilar ro'yxatiga qo'shaylikmi?",
             reply_markup=kb.advance_confirm_kb(),
@@ -222,7 +249,9 @@ async def advance_no(call: CallbackQuery, state: FSMContext):
 async def _ask_card(message: Message, state: FSMContext):
     await state.set_state(AdvanceForm.card)
     await message.answer(
-        "💳 Endi avans o'tkaziladigan <b>karta raqamingizni</b> yuboring.\n"
+        "💳 Endi avans o'tkaziladigan <b>karta raqamingizni</b> yuboring.\n\n"
+        "⚠️ Faqat <b>Uzcard</b>, <b>Humo</b> yoki <b>Ipak Yo'li Bank</b> "
+        "kartasi (16 xonali) qabul qilinadi.\n"
         "<i>Masalan: 8600 1234 5678 9012</i>"
     )
 
@@ -331,7 +360,16 @@ async def advance_card(message: Message, state: FSMContext):
     if not card:
         await message.answer(
             "❌ Karta raqami noto'g'ri ko'rinadi.\n"
-            "Iltimos, 16 xonali karta raqamini yuboring.\n"
+            "Iltimos, <b>16 xonali</b> karta raqamini yuboring.\n"
+            "<i>Masalan: 8600 1234 5678 9012</i>"
+        )
+        return
+    if not _card_type(card):
+        await message.answer(
+            "❌ Bu karta qabul qilinmaydi.\n\n"
+            "Avans faqat <b>Uzcard</b> (8600...), <b>Humo</b> (9860...) yoki "
+            "<b>Ipak Yo'li Bank</b> kartasiga o'tkaziladi.\n"
+            "Iltimos, shu turdagi karta raqamini yuboring.\n"
             "<i>Masalan: 8600 1234 5678 9012</i>"
         )
         return

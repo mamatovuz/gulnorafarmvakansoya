@@ -2498,12 +2498,26 @@ async def _archive_dismissed(db, user_id, reason=None, dismissed_by=None):
     return cur.lastrowid
 
 
+async def _cancel_user_probations(db, user_id):
+    """Ishdan bo'shatilgan xodimning ochiq (awaiting/active) sinov/o'rganish
+    yozuvlarini «dismissed» holatiga o'tkazadi. Aks holda sinov muddati eslatma
+    davri o'tib ketganda HR ga xato «muddat tugadi» xabari yuborilaveradi.
+
+    Shu ochiq `db` ulanishida ishlaydi (commit chaqiruvchida qilinadi)."""
+    await db.execute(
+        "UPDATE probations SET status='dismissed' "
+        "WHERE user_id=? AND status IN ('awaiting','active')",
+        (user_id,),
+    )
+
+
 async def fire_employee(user_id, reason=None, dismissed_by=None):
     """Xodimni ishdan bo'shatadi: profil ma'lumotlari arxivga ko'chiriladi,
     profil o'chadi va rol nomzodga qaytadi (xodim paneli yo'qoladi)."""
     db = await _conn()
     try:
         await _archive_dismissed(db, user_id, reason, dismissed_by)
+        await _cancel_user_probations(db, user_id)
         await db.execute("DELETE FROM employee_profiles WHERE user_id=?", (user_id,))
         await db.execute(
             "UPDATE users SET role='candidate', branch_id=NULL WHERE id=?",
@@ -2533,6 +2547,7 @@ async def fire_all_in_branch(branch_id):
         victims = await _branch_members(db, branch_id)
         for v in victims:
             await _archive_dismissed(db, v["user_id"], reason="Butun filial bo'shatildi")
+            await _cancel_user_probations(db, v["user_id"])
             await db.execute(
                 "DELETE FROM employee_profiles WHERE user_id=?", (v["user_id"],)
             )
@@ -2729,6 +2744,7 @@ async def delete_employee_completely(user_id):
     try:
         await db.execute("DELETE FROM employee_profiles WHERE user_id=?", (user_id,))
         await db.execute("DELETE FROM staff_regs WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM probations WHERE user_id=?", (user_id,))
         await db.execute("DELETE FROM users WHERE id=?", (user_id,))
         await db.commit()
     finally:
