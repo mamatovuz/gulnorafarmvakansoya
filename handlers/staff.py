@@ -938,16 +938,62 @@ async def director_fine_category(call: CallbackQuery):
         await call.answer("⛔", show_alert=True)
         return
     category = call.data.split(":")[2]
-    people = await q.list_staff_for_fine(category)
+    branches = await q.list_staff_branches_for_fine(category)
     label = kb.DIRECTOR_FINE_LABELS.get(category, category)
-    if not people:
+    if not branches:
         await call.message.answer(
             f"{label} bo'yicha xodim topilmadi."
         )
         await call.answer()
         return
     await call.message.answer(
-        f"{label} — <b>{len(people)}</b> ta xodim.\n"
+        f"{label}\n\nJarima qo'llanadigan filialni tanlang 👇",
+        reply_markup=kb.director_fine_branches_kb(branches, category),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dfine:branches:"))
+async def director_fine_branches(call: CallbackQuery):
+    if not await _is_director(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    category = call.data.split(":")[2]
+    branches = await q.list_staff_branches_for_fine(category)
+    label = kb.DIRECTOR_FINE_LABELS.get(category, category)
+    if not branches:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"{label}\n\nJarima qo'llanadigan filialni tanlang 👇",
+        reply_markup=kb.director_fine_branches_kb(branches, category),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dfine:br:"))
+async def director_fine_branch_people(call: CallbackQuery):
+    if not await _is_director(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, _, category, raw_branch_id = call.data.split(":", 3)
+    branch_id = int(raw_branch_id)
+    no_branch = branch_id == 0
+    people = await q.list_staff_for_fine(
+        category,
+        branch_id=None if no_branch else branch_id,
+        no_branch=no_branch,
+    )
+    label = kb.DIRECTOR_FINE_LABELS.get(category, category)
+    branch = None if no_branch else await q.get_branch(branch_id)
+    branch_name = "Filialsiz" if no_branch else (
+        branch.get("name") if branch else f"Filial #{branch_id}"
+    )
+    if not people:
+        await call.answer("Bu filialda xodim topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"{label} · <b>{branch_name}</b> — {len(people)} ta xodim.\n"
         "Jarima qo'llash uchun xodimni tanlang 👇",
         reply_markup=kb.director_fine_people_kb(people, category),
     )

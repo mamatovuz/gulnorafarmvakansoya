@@ -713,6 +713,25 @@ def application_advanced_filter_kb(branches):
     return b.as_markup()
 
 
+def application_branch_filter_kb(branch_id):
+    """Tanlangan filial ichidagi arizalarni holat va ma'lumot bo'yicha ajratish."""
+    b = InlineKeyboardBuilder()
+    b.button(text="📋 Barcha arizalar", callback_data=f"fltbrall:{branch_id}")
+    b.button(text="🆕 Yangi", callback_data=f"fltbrstatus:{branch_id}:new")
+    b.button(text="📅 Suhbat", callback_data=f"fltbrstatus:{branch_id}:interview")
+    b.button(text="✅ Qabul", callback_data=f"fltbrstatus:{branch_id}:accepted")
+    b.button(text="❌ Rad etilgan", callback_data=f"fltbrstatus:{branch_id}:rejected")
+    b.button(text="⏳ Kutuvda", callback_data=f"fltbrstatus:{branch_id}:waiting")
+    b.button(text="🟢 Doimiy qabul", callback_data=f"fltbrkind:{branch_id}:hire")
+    b.button(text="🧪 Sinovga qabul", callback_data=f"fltbrkind:{branch_id}:trial")
+    b.button(text="🎓 O'rganuvchi", callback_data=f"fltbrkind:{branch_id}:learner")
+    for index, option in enumerate(EDUCATION_OPTIONS):
+        b.button(text=option, callback_data=f"fltbred:{branch_id}:{index}")
+    b.button(text="⬅️ Filiallar", callback_data="apps:filter")
+    b.adjust(1, 2, 2, 1, 2, 1)
+    return b.as_markup()
+
+
 def application_actions_kb(aid, favorite=False):
     b = InlineKeyboardBuilder()
     b.button(text="👁 Batafsil", callback_data=f"appview:{aid}")
@@ -1815,6 +1834,23 @@ def director_fine_target_kb():
     return b.as_markup()
 
 
+def director_fine_branches_kb(branches, category):
+    """Tanlangan jarima yo'nalishida xodimi bor filiallar."""
+    b = InlineKeyboardBuilder()
+    for branch in branches:
+        branch_id = branch.get("id")
+        callback_id = branch_id if branch_id is not None else 0
+        name = branch.get("name") or "Filialsiz"
+        count = branch.get("staff_count") or 0
+        b.button(
+            text=f"🏢 {name} · {count} ta",
+            callback_data=f"dfine:br:{category}:{callback_id}",
+        )
+    b.button(text="⬅️ Bo'limlar", callback_data="dfine:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def director_fine_people_kb(people, category):
     """Tanlangan bo'lim xodimlari — har biri yonida jarima tugmasi."""
     b = InlineKeyboardBuilder()
@@ -1827,7 +1863,7 @@ def director_fine_people_kb(people, category):
             text=f"👤 {name}{extra}",
             callback_data=f"dfine:pick:{p['user_id']}",
         )
-    b.button(text="⬅️ Bo'limlar", callback_data="dfine:back")
+    b.button(text="⬅️ Filiallar", callback_data=f"dfine:branches:{category}")
     b.adjust(1)
     return b.as_markup()
 
@@ -2453,9 +2489,10 @@ def staff_confirm_kb(update_mode=False):
 
 def staff_reg_actions_kb(rid):
     b = InlineKeyboardBuilder()
+    b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"srdocs:{rid}")
     b.button(text="✅ Tasdiqlash", callback_data=f"sracc:{rid}")
     b.button(text="❌ Rad etish", callback_data=f"srrej:{rid}")
-    b.adjust(2)
+    b.adjust(1, 2)
     return b.as_markup()
 
 

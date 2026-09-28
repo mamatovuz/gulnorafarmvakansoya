@@ -779,6 +779,49 @@ async def sr_view(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
+async def _send_staff_reg_file(bot, chat_id, file_id, caption):
+    """Turini alohida saqlamaydigan ID/diplom faylini xavfsiz yuboradi."""
+    if not file_id:
+        return False
+    try:
+        await bot.send_photo(chat_id, file_id, caption=caption)
+        return True
+    except Exception:
+        pass
+    try:
+        await bot.send_document(chat_id, file_id, caption=caption)
+        return True
+    except Exception:
+        return False
+
+
+@router.callback_query(F.data.startswith("srdocs:"))
+async def sr_documents(call: CallbackQuery, bot: Bot):
+    """Xodim so'rovidagi maxfiy ID/pasport va diplom fayllarini HR ga ko'rsatadi."""
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    reg = await q.get_staff_reg(rid)
+    if not reg:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    name = reg.get("full_name") or f"So'rov #{rid}"
+    files = (
+        (reg.get("passport_front"), f"🪪 {name} — pasport/ID old tomoni"),
+        (reg.get("passport_back"), f"🪪 {name} — pasport/ID orqa tomoni"),
+        (reg.get("diploma_file"), f"🎓 {name} — diplom"),
+    )
+    sent = 0
+    for file_id, caption in files:
+        if await _send_staff_reg_file(bot, call.message.chat.id, file_id, caption):
+            sent += 1
+    if not sent:
+        await call.answer("Bu arizaga hujjat biriktirilmagan.", show_alert=True)
+        return
+    await call.answer(f"{sent} ta hujjat yuborildi ✅")
+
+
 @router.callback_query(F.data.startswith("sracc:"))
 async def sr_approve(call: CallbackQuery, bot: Bot):
     if not await _is_staff(call.from_user.id):

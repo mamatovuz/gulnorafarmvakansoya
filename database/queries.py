@@ -738,6 +738,12 @@ async def filter_applications(filters=None, limit=30):
         if filters.get("branch_id"):
             q += " AND COALESCE(a.branch_id, v.branch_id)=?"
             params.append(filters["branch_id"])
+        if filters.get("accept_kind"):
+            q += " AND a.accept_kind=?"
+            params.append(filters["accept_kind"])
+        if filters.get("education"):
+            q += " AND a.education=?"
+            params.append(filters["education"])
         if filters.get("uniform_status"):
             q += " AND a.uniform_status=?"
             params.append(filters["uniform_status"])
@@ -999,10 +1005,13 @@ FINE_TARGET_FILTERS = {
 }
 
 
-async def list_staff_for_fine(category, limit=60):
+async def list_staff_for_fine(category, branch_id=None, limit=None,
+                              no_branch=False):
     """Direktor jarima qo'llashi uchun bo'lim/yo'nalish xodimlari ro'yxati.
 
-    category: hr / manager / accountant / ombor / logistika."""
+    category: pharmacist / hr / manager / accountant / it / tech / ombor /
+    logistika. `branch_id` berilsa faqat shu filial, `no_branch=True` bo'lsa
+    filiali biriktirilmagan xodimlar olinadi."""
     spec = FINE_TARGET_FILTERS.get(category)
     if not spec:
         return []
@@ -1016,15 +1025,20 @@ async def list_staff_for_fine(category, limit=60):
             sql = """SELECT u.id AS user_id, u.tg_id, u.full_name, u.username,
                             u.phone,
                             COALESCE(ep.position, '') AS position,
+                            COALESCE(ep.branch_id, u.branch_id) AS branch_id,
                             COALESCE(b.name, b2.name) AS branch_name
                      FROM users u
                      LEFT JOIN employee_profiles ep ON ep.user_id=u.id
                      LEFT JOIN branches b  ON b.id=ep.branch_id
                      LEFT JOIN branches b2 ON b2.id=u.branch_id
-                     WHERE u.role=? AND COALESCE(u.blocked,0)=0
-                     ORDER BY u.full_name
-                     LIMIT ?"""
-            cur = await db.execute(sql, (values[0], int(limit)))
+                     WHERE u.role=? AND COALESCE(u.blocked,0)=0"""
+            params = [values[0]]
+            if branch_id is not None:
+                sql += " AND COALESCE(ep.branch_id, u.branch_id)=?"
+                params.append(branch_id)
+            elif no_branch:
+                sql += " AND COALESCE(ep.branch_id, u.branch_id) IS NULL"
+            sql += " ORDER BY u.full_name"
         else:
             likes = " OR ".join(["pylower(COALESCE(ep.position,'')) LIKE ?"] * len(values))
             sql = f"""SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone,
@@ -1032,13 +1046,46 @@ async def list_staff_for_fine(category, limit=60):
                       FROM employee_profiles ep
                       JOIN users u ON u.id=ep.user_id
                       LEFT JOIN branches b ON b.id=ep.branch_id
-                      WHERE ({likes})
-                      ORDER BY u.full_name
-                      LIMIT ?"""
-            cur = await db.execute(sql, (*values, int(limit)))
+                      WHERE ({likes})"""
+            params = list(values)
+            if branch_id is not None:
+                sql += " AND ep.branch_id=?"
+                params.append(branch_id)
+            elif no_branch:
+                sql += " AND ep.branch_id IS NULL"
+            sql += " ORDER BY u.full_name"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        cur = await db.execute(sql, params)
         return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()
+
+
+async def list_staff_branches_for_fine(category):
+    """Jarima yo'nalishida xodimi bor filiallar va xodimlar soni.
+
+    Filialsiz xodimlar `id=None` bo'lgan alohida qatorda qaytadi. Natija
+    direktor oqimida yo'nalish -> filial -> xodim tartibini qurish uchun kerak.
+    """
+    people = await list_staff_for_fine(category)
+    grouped = {}
+    for person in people:
+        branch_id = person.get("branch_id")
+        item = grouped.setdefault(
+            branch_id,
+            {
+                "id": branch_id,
+                "name": person.get("branch_name") or "Filialsiz",
+                "staff_count": 0,
+            },
+        )
+        item["staff_count"] += 1
+    return sorted(
+        grouped.values(),
+        key=lambda row: (row["id"] is None, (row.get("name") or "").lower()),
+    )
 
 
 EMP_EDITABLE_FIELDS = {

@@ -69,6 +69,7 @@ STATUS_TITLES = {
     ST_INTERVIEW: "📅 Suhbat bosqichi",
     ST_ACCEPTED: "✅ Qabul qilinganlar",
     ST_REJECTED: "❌ Rad etilganlar",
+    ST_WAITING: "⏳ Kutuvdagilar",
 }
 
 FILTER_LABELS = {
@@ -278,13 +279,86 @@ async def app_filter_branch(call: CallbackQuery):
         return
     bid = int(call.data.split(":")[1])
     branch = await q.get_branch(bid)
-    apps = await q.filter_applications({"branch_id": bid})
+    if not branch:
+        await call.answer("Filial topilmadi.", show_alert=True)
+        return
+    await call.message.answer(
+        f"🔎 <b>{branch['name']}</b>\n\n"
+        "Endi ariza holati yoki ma'lumot turini tanlang:",
+        reply_markup=kb.application_branch_filter_kb(bid),
+    )
+    await call.answer()
+
+
+async def _send_branch_application_filter(call, branch_id, filters, label):
+    """Filialni saqlagan holda qo'shimcha ariza filtrini chiqaradi."""
+    branch = await q.get_branch(branch_id)
+    if not branch:
+        await call.answer("Filial topilmadi.", show_alert=True)
+        return
+    apps = await q.filter_applications({"branch_id": branch_id, **filters})
     await send_application_results(
         call.message,
         apps,
-        f"🔎 <b>Filter:</b> filial - {branch['name'] if branch else bid}",
+        f"🔎 <b>{branch['name']}</b> · {label}",
     )
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("fltbrall:"))
+async def app_filter_branch_all(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await _send_branch_application_filter(
+        call, int(call.data.split(":")[1]), {}, "barcha arizalar"
+    )
+
+
+@router.callback_query(F.data.startswith("fltbrstatus:"))
+async def app_filter_branch_status(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, bid, status = call.data.split(":", 2)
+    await _send_branch_application_filter(
+        call, int(bid), {"status": status}, STATUS_TITLES.get(status, status)
+    )
+
+
+@router.callback_query(F.data.startswith("fltbrkind:"))
+async def app_filter_branch_accept_kind(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, bid, kind = call.data.split(":", 2)
+    labels = {
+        "hire": "🟢 Doimiy qabul",
+        "trial": "🧪 Sinovga qabul",
+        "learner": "🎓 O'rganuvchi",
+    }
+    await _send_branch_application_filter(
+        call,
+        int(bid),
+        {"status": ST_ACCEPTED, "accept_kind": kind},
+        labels.get(kind, kind),
+    )
+
+
+@router.callback_query(F.data.startswith("fltbred:"))
+async def app_filter_branch_education(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, bid, option_index = call.data.split(":", 2)
+    try:
+        education = kb.EDUCATION_OPTIONS[int(option_index)]
+    except (ValueError, IndexError):
+        await call.answer("Ma'lumot turi topilmadi.", show_alert=True)
+        return
+    await _send_branch_application_filter(
+        call, int(bid), {"education": education}, education
+    )
 
 
 @router.callback_query(F.data.startswith("flttxt:"))

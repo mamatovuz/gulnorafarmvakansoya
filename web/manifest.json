@@ -1,0 +1,16 @@
+{
+  "name": "Gulnora Farm HR",
+  "short_name": "GF HR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f8f5",
+  "theme_color": "#0f8f6d",
+  "icons": [
+    {
+      "src": "/assets/gulnora-mark.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

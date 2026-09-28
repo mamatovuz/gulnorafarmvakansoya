@@ -257,17 +257,20 @@ async def hr_request_other(call: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     await call.message.answer(
-        "✉️ HR bo'limiga yubormoqchi bo'lgan murojaatingizni yozing:"
+        "✉️ HR bo'limiga yubormoqchi bo'lgan murojaatingizni yuboring.\n\n"
+        "Matn, rasm, video, ovozli xabar yoki hujjat yuborishingiz mumkin."
     )
     await call.answer()
 
 
-@router.message(HRMessageForm.text, F.text)
+@router.message(HRMessageForm.text)
 async def hr_request_other_send(message: Message, state: FSMContext, bot: Bot):
-    text = message.text.strip()
-    await state.clear()
     profile = await q.get_employee_profile_by_tg(message.from_user.id)
     user = await q.get_user(message.from_user.id)
+    if not profile or not user:
+        await state.clear()
+        await message.answer("⛔ Xodim profili topilmadi.")
+        return
     header = (
         "✉️ <b>Xodimdan murojaat</b>\n"
         "━━━━━━━━━━━━\n"
@@ -275,9 +278,33 @@ async def hr_request_other_send(message: Message, state: FSMContext, bot: Bot):
         f"🏢 Filial: {(profile or {}).get('branch_name') or '-'}\n"
         f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
         f"📱 Telefon: {(user or {}).get('phone') or '-'}\n"
-        "━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━"
     )
-    await _notify_hr(bot, header + text)
+    targets = set(
+        await q.all_user_tg_ids(role=ROLE_HR)
+        + await q.all_user_tg_ids(role=ROLE_ADMIN)
+    )
+    delivered = 0
+    for target_id in targets:
+        try:
+            await bot.send_message(target_id, header)
+            # copy_message rasm/video/hujjat/ovoz va ularning captionini aynan saqlaydi.
+            await bot.copy_message(
+                chat_id=target_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+            )
+            delivered += 1
+        except Exception:
+            # Bir HR botni bloklagan bo'lsa, qolgan HR'larga yuborish davom etadi.
+            continue
+    if not delivered:
+        await message.answer(
+            "⚠️ Murojaatni HR bo'limiga yetkazib bo'lmadi. "
+            "Iltimos, keyinroq qayta urinib ko'ring."
+        )
+        return
+    await state.clear()
     await q.add_log(message.from_user.id, message.from_user.full_name, "hr_murojaat", "")
     await message.answer("✅ Murojaatingiz HR bo'limiga yuborildi.")
     await _main_menu(message, message.from_user.id)
