@@ -1,4 +1,5 @@
 """Umumiy yordamchilar: DB ulanishi, xato turlari, javob formati, sahifalash."""
+import asyncio
 import json
 import math
 from contextlib import asynccontextmanager
@@ -13,11 +14,34 @@ TZ = timezone(timedelta(hours=5))  # Asia/Tashkent (DST yo'q) — bot bilan bir 
 
 
 # ---------------- DB ----------------
+# Bot (python bot.py) va API (python -m api) bitta SQLite faylga ALOHIDA jarayonlardan
+# yozadi. SQLite bir vaqtda faqat bitta yozuvchiga ruxsat beradi, shuning uchun:
+#   * API o'z yozuvlarini jarayon ichida ketma-ket bajaradi (write_lock) — bot bilan
+#     faqat BITTA yozuvchi sifatida raqobatlashadi, botning 5 s busy_timeout i yetadi;
+#   * API ulanishi lock bo'shashini 30 s kutadi (xato bermaydi);
+#   * synchronous=NORMAL (WAL rejimida xavfsiz, buzilish bo'lmaydi) — commit tez,
+#     lock qisqa ushlanadi.
+API_BUSY_TIMEOUT_MS = 30000
+_write_locks = {}
+
+
+def write_lock():
+    """Joriy event loop uchun yozish qulfi (testlarda loop har safar yangi)."""
+    loop = asyncio.get_running_loop()
+    lock = _write_locks.get(id(loop))
+    if lock is None:
+        _write_locks.clear()
+        lock = _write_locks[id(loop)] = asyncio.Lock()
+    return lock
+
+
 @asynccontextmanager
 async def connect():
-    """Botning o'zi ishlatadigan ulanish (WAL + busy_timeout + pylower)."""
+    """Botning o'zi ishlatadigan ulanish (WAL + pylower) + API sozlamalari."""
     db = await q._conn()
     try:
+        await db.execute(f"PRAGMA busy_timeout={API_BUSY_TIMEOUT_MS}")
+        await db.execute("PRAGMA synchronous=NORMAL")
         yield db
     finally:
         await db.close()

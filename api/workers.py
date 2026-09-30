@@ -3,14 +3,15 @@ import asyncio
 import logging
 
 from api import messaging, settings, telegram, webhooks
-from api.core import execute
+from api.core import execute, write_lock
 
 logger = logging.getLogger("hrbot.api.workers")
 
 
 async def run_once():
     """Bitta sikl (testlar ham shuni chaqiradi)."""
-    await webhooks.fanout_events()
+    async with write_lock():  # faqat DB ish (tarmoq so'rovi yo'q)
+        await webhooks.fanout_events()
     await webhooks.deliver_due()
     can_send = settings.API_TELEGRAM_SEND_ENABLED or telegram._custom_sender is not None
     if can_send:

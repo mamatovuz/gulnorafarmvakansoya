@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from api import API_VERSION, settings
-from api.core import ApiError, connect, error_response, ok
+from api.core import ApiError, connect, error_response, ok, write_lock
 from api.routers import comms, employees, integration, org, workforce
 
 logger = logging.getLogger("hrbot.api")
@@ -192,10 +192,27 @@ def create_app() -> FastAPI:
                         media_type=response.media_type)
 
     @app.middleware("http")
+    async def serialize_writes(request: Request, call_next):
+        """Yozuvchi so'rovlar API jarayoni ichida ketma-ket (SQLite yagona writer)."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and                 request.url.path.startswith("/api/v1/"):
+            async with write_lock():
+                return await call_next(request)
+        return await call_next(request)
+
+    @app.middleware("http")
     async def common_headers(request: Request, call_next):
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex
         request.state.request_id = rid[:64]
+        is_https = request.url.scheme == "https"
+        if (settings.API_REQUIRE_HTTPS and not is_https
+                and request.url.path.startswith("/api/")
+                and request.url.path != "/api/v1/health"):
+            response = error_response(403, "https_required", "Faqat HTTPS orqali ruxsat etiladi.")
+            response.headers["X-Request-Id"] = request.state.request_id
+            return response
         response = await call_next(request)
+        if is_https:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["X-Request-Id"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"

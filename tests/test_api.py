@@ -617,3 +617,44 @@ def test_existing_bot_database_migrates(tmp_path, monkeypatch):
     assert trig >= 20
     c.close()
     del shutil
+
+
+# ======================= PRODUCTION (Railway) =======================
+def test_production_https_and_ssrf(env, admin_headers, monkeypatch):
+    from api import settings
+    monkeypatch.setattr(settings, "API_REQUIRE_HTTPS", True)
+    monkeypatch.setattr(settings, "WEBHOOK_REQUIRE_HTTPS", True)
+    # health — ochiq (Railway/monitoring uchun), qolgani faqat HTTPS
+    assert env.get(f"{V1}/health").status_code == 200
+    r = env.get(f"{V1}/company", headers=admin_headers)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "https_required"
+    # TLS Railway edge'da tugaydi; https so'rov o'tadi va HSTS qo'yiladi
+    r = env.get(f"https://testserver{V1}/company", headers=admin_headers)
+    assert r.status_code == 200 and "Strict-Transport-Security" in r.headers
+    # webhook: http va ichki manzillar rad etiladi
+    for url in ("http://staffora.uz/h", "https://localhost/h", "https://127.0.0.1/h",
+                "https://10.0.0.5/h", "https://192.168.1.2/h"):
+        r = env.post(f"https://testserver{V1}/webhooks", json={"url": url, "events": ["*"]},
+                     headers=admin_headers)
+        assert r.status_code == 422, url
+    r = env.post(f"https://testserver{V1}/webhooks",
+                 json={"url": "https://api.staffora.uz/h", "events": ["*"]}, headers=admin_headers)
+    assert r.status_code == 201
+
+
+def test_port_from_railway_env(monkeypatch):
+    import importlib
+    from api import settings
+    monkeypatch.setenv("PORT", "4321")
+    monkeypatch.delenv("API_PORT", raising=False)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    monkeypatch.delenv("API_HOST", raising=False)
+    monkeypatch.delenv("API_DOCS_ENABLED", raising=False)
+    s = importlib.reload(settings)
+    try:
+        assert s.API_PORT == 4321 and s.API_HOST == "0.0.0.0"
+        assert s.API_DOCS_ENABLED is False and s.API_REQUIRE_HTTPS is True
+        assert s.WEBHOOK_REQUIRE_HTTPS is True
+    finally:
+        monkeypatch.undo()
+        importlib.reload(settings)

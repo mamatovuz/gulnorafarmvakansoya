@@ -9,14 +9,32 @@ qayta ishlatadi. Bot kodi o'zgartirilmagan.
 ```powershell
 pip install -r requirements.txt
 python -m api.manage create-key --name staffora --preset staffora   # kalit BIR MARTA ko'rsatiladi
-python bot.py        # bot (avvalgidek)
-python -m api        # API — alohida jarayon, standart port 8090
+python start.py      # bot + API birga (Railway Start Command)
+# yoki alohida:
+python bot.py        # faqat bot (avvalgidek)
+python -m api        # faqat API — standart port 8090 ($PORT bo'lsa o'sha)
 ```
 
 - Swagger: `http://127.0.0.1:8090/api/docs` · ReDoc: `/api/redoc` · OpenAPI: `/api/openapi.json`
 - Testlar: `pip install -r requirements-dev.txt` → `python -m pytest`
 
 API birinchi ishga tushganda migratsiya avtomatik bajariladi (qo'shimcha; bor ma'lumotlar o'chirilmaydi).
+
+## Railway (production)
+
+Bitta servis, bitta Start Command: **`python start.py`** (`railway.json` da ham yozilgan).
+`start.py` ikkita alohida jarayonni boshqaradi:
+
+| Jarayon | Buyruq | Yiqilsa |
+|---|---|---|
+| Bot | `python bot.py` (o'zgarishsiz) | butun servis chiqadi → Railway qayta ishga tushiradi (avvalgidek) |
+| REST API | `python -m api` (`$PORT`, `0.0.0.0`) | faqat API qayta ishga tushadi (5s→300s backoff), bot ishlashda davom etadi |
+
+- Migratsiya ikkala jarayondan OLDIN bir marta bajariladi (bir vaqtda ALTER TABLE to'qnashuvi bo'lmaydi). Xato bo'lsa — bot baribir ishga tushadi, API o'tkazib yuboriladi.
+- `START_API=0` — API ni kod o'zgartirmasdan o'chirish (faqat bot, avvalgi holat).
+- SQLite: bot va API bitta faylni ishlatadi (WAL). API yozuvlari jarayon ichida ketma-ket bajariladi, `busy_timeout=30s`, `synchronous=NORMAL`. Stress test (120 parallel API yozuvi + 200 bot yozuvi): 0 xato, integrity `ok`. **API ni bitta uvicorn worker bilan ishlating** (start.py shunday qiladi).
+- Productionda (Railway o'zgaruvchilari aniqlanadi) standart: `API_DOCS_ENABLED=false`, `API_REQUIRE_HTTPS=true` (TLS Railway edge'da, `X-Forwarded-Proto` tekshiriladi, HSTS), `WEBHOOK_REQUIRE_HTTPS=true` (+ localhost/ichki IP taqiqlanadi), CORS o'chiq.
+- Health check: `GET /api/v1/health` (ochiq, HTTP ham).
 
 ## Arxitektura
 

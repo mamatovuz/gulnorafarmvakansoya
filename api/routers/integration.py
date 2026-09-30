@@ -401,12 +401,28 @@ async def telegram_verify(body: TelegramVerify, p: Principal = Depends(require("
 
 
 # ================= WEBHOOK OBUNALARI =================
+def _is_internal_host(host):
+    import ipaddress
+    host = (host or "").strip("[]").lower()
+    if host in ("localhost",) or host.endswith((".localhost", ".internal", ".local")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved         or ip.is_multicast or ip.is_unspecified
+
+
 def _check_url(url):
     u = urlparse(url)
     allowed = ("https",) if settings.WEBHOOK_REQUIRE_HTTPS else ("http", "https")
-    if u.scheme not in allowed or not u.netloc:
+    if u.scheme not in allowed or not u.hostname:
         raise ApiError(422, "validation_error", "Webhook URL noto'g'ri.",
                        {"field": "url", "allowed_schemes": list(allowed)})
+    # Productionda ichki tarmoqqa (SSRF) webhook yuborishga yo'l qo'yilmaydi
+    if settings.WEBHOOK_REQUIRE_HTTPS and _is_internal_host(u.hostname):
+        raise ApiError(422, "validation_error", "Ichki/localhost manzilga webhook ruxsat etilmaydi.",
+                       {"field": "url"})
 
 
 def _check_events(events):
