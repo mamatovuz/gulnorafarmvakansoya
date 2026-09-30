@@ -41,6 +41,6 @@ kiradi. Masalan: `123456789`, `username`, yoki `+998901234567`.
 - GPS davomat: ishga kelish, ketish, tanaffus, filial radiusi bo'yicha tekshiruv.
 - Profilni ko'rish va asosiy ma'lumotlarni yangilash.
 - Vakansiya, ariza, xodim, so'rov va davomat hisobotlari.
-- HR/Admin/Rahbar uchun so'rovlarni tasdiqlash/rad etish.
+- HR/Admin/Rahbar uchun so'rovlarni tasdiqlash/rad etish..
 - Ilova ichki bildirishnomalari va CSV eksport.
 - PWA manifest va service worker: telefon ekraniga o'rnatib ishlatish mumkin.
