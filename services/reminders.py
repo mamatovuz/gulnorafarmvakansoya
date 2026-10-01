@@ -329,6 +329,43 @@ async def salary_report_loop(bot: Bot, interval_seconds=1800):
         await asyncio.sleep(interval_seconds)
 
 
+# ---------------- OY OXIRI EXCEL HISOBOTLARI (direktor + moliya) ----------------
+def monthly_report_day(year, month):
+    """Hisobot kuni — oyning oxirgi kunidan bir kun oldin (31 -> 30, 30 -> 29, 28 -> 27)."""
+    from calendar import monthrange
+    return monthrange(year, month)[1] - 1
+
+
+async def _run_monthly_reports(bot: Bot):
+    """Direktorga barcha «📑 Hisobotlar», moliya bo'limiga jarimalar hisoboti —
+    joriy oy uchun Excel. Soat `monthly_reports_time` sozlamasi (standart 06:00)."""
+    now = now_tk()
+    if now.day != monthly_report_day(now.year, now.month):
+        return
+    if not _time_reached(now, await q.get_setting("monthly_reports_time", "06:00"), "06:00"):
+        return
+    period = now.strftime("%Y-%m")
+    flag_key = f"monthly_reports_sent:{period}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return
+    # Avval bayroq — xatolik/qayta ishga tushishda ikki marta yuborilmasin
+    await q.set_setting(flag_key, "1")
+    from handlers.reports import send_monthly_reports
+    sent = await send_monthly_reports(bot)
+    logger.info("Oy oxiri Excel hisobotlari yuborildi: %s ta fayl (%s)", sent, period)
+
+
+async def monthly_reports_loop(bot: Bot, interval_seconds=300):
+    while True:
+        try:
+            await _run_monthly_reports(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Oy oxiri Excel hisobotlarini yuborishda xatolik")
+        await asyncio.sleep(interval_seconds)
+
+
 # ---------------- KUNLIK DAM OLISH: 17:00 RAHBARGA SO'ROV ----------------
 async def _run_dayoff_prompt(bot: Bot):
     now = now_tk()

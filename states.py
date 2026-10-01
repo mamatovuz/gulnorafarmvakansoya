@@ -184,6 +184,12 @@ class AccForm(StatesGroup):
     fine_cancel_search = State()  # jarimani bekor qilish — xodim qidirish
 
 
+class ReportRangeForm(StatesGroup):
+    """Excel hisobot — «🗓 Sana bo'yicha» davr (qaysi kundan qaysi kungacha)."""
+    start = State()
+    end = State()
+
+
 class ChannelForm(StatesGroup):
     chat_id = State()
     title = State()

@@ -1529,9 +1529,9 @@ async def cancel_fine(fid, cancelled_by):
         await db.close()
 
 
-async def fines_report(since_period):
-    """Moliya «📊 Hisobot olish» uchun: `since_period` (YYYY-MM) dan boshlab
-    yozilgan barcha jarimalar (bekor qilinganlari ham — holati bilan).
+async def fines_report(since, until="9999-12-31"):
+    """Moliya/direktor jarimalar hisoboti: [since, until) sanalari oralig'ida
+    ('YYYY-MM-DD') yozilgan barcha jarimalar (bekor qilinganlari ham — holati bilan).
 
     Ism, lavozim, rol, filial va kim yozgani bilan birga qaytaradi."""
     db = await _conn()
@@ -1549,9 +1549,9 @@ async def fines_report(since_period):
                LEFT JOIN branches b ON b.id=f.branch_id
                LEFT JOIN branches b2 ON b2.id=ep.branch_id
                LEFT JOIN users cb ON cb.id=f.created_by
-               WHERE COALESCE(f.period, substr(f.created_at,1,7)) >= ?
+               WHERE f.created_at>=? AND f.created_at<?
                ORDER BY f.created_at DESC, f.id DESC""",
-            (since_period,),
+            (since, until),
         )
         return [dict(r) for r in await cur.fetchall()]
     finally:
@@ -4464,3 +4464,92 @@ async def count_dayoff_off_items(plan_id):
         return dict(row) if row else {"off_cnt": 0, "work_cnt": 0, "total": 0}
     finally:
         await db.close()
+
+
+# ---------------- DIREKTOR / MOLIYA EXCEL HISOBOTLARI ----------------
+# `since` — 'YYYY-MM-DD' (davr boshi). created_at matn ko'rinishida
+# ('YYYY-MM-DD HH:MM:SS') saqlangani uchun satr taqqoslash to'g'ri ishlaydi.
+async def _report_rows(sql, params):
+    db = await _conn()
+    try:
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def report_hired(since, until="9999-12-31"):
+    """Davr ichida ishga olinganlar (hr_events 'hired'), joriy profil yoki
+    — keyin ketgan bo'lsa — ishdan bo'shaganlar arxividagi ma'lumot bilan."""
+    return await _report_rows(
+        """SELECT e.id, e.user_id, e.created_at,
+                  COALESCE(u.full_name, e.full_name) AS full_name, u.phone,
+                  COALESCE(ep.position, d.position) AS position,
+                  COALESCE(ep.role, d.role, u.role) AS emp_role,
+                  COALESCE(ep.monthly_salary, d.monthly_salary) AS monthly_salary,
+                  ep.emp_status, ep.shift,
+                  COALESCE(b.name, d.branch_name) AS branch_name,
+                  cb.full_name AS created_by_name,
+                  CASE WHEN ep.id IS NULL THEN 1 ELSE 0 END AS has_left
+           FROM hr_events e
+           LEFT JOIN users u ON u.id=e.user_id
+           LEFT JOIN employee_profiles ep ON ep.user_id=e.user_id
+           LEFT JOIN dismissed_employees d ON d.id=(
+               SELECT MAX(id) FROM dismissed_employees WHERE user_id=e.user_id)
+           LEFT JOIN branches b ON b.id=COALESCE(e.branch_id, ep.branch_id)
+           LEFT JOIN users cb ON cb.id=e.created_by
+           WHERE e.event_type='hired' AND e.created_at>=? AND e.created_at<?
+           ORDER BY e.created_at DESC""",
+        (since, until),
+    )
+
+
+async def report_dismissed(since, until="9999-12-31"):
+    """Davr ichida ishdan bo'shatilganlar (dismissed_employees arxivi)."""
+    return await _report_rows(
+        """SELECT d.*, cb.full_name AS dismissed_by_name
+           FROM dismissed_employees d
+           LEFT JOIN users cb ON cb.id=d.dismissed_by
+           WHERE d.dismissed_at>=? AND d.dismissed_at<?
+           ORDER BY d.dismissed_at DESC""",
+        (since, until),
+    )
+
+
+async def report_applications(since, until="9999-12-31"):
+    """Davr ichida tushgan arizalar (vakansiya va filial nomi bilan)."""
+    return await _report_rows(
+        """SELECT a.id, a.full_name, a.phone, a.position, a.status, a.accept_kind,
+                  a.gender, a.city, a.education, a.exp_years, a.expected_salary,
+                  a.created_at, v.title AS vacancy_title,
+                  b.name AS branch_name
+           FROM applications a
+           LEFT JOIN vacancies v ON v.id=a.vacancy_id
+           LEFT JOIN branches b ON b.id=COALESCE(a.branch_id, v.branch_id)
+           WHERE a.created_at>=? AND a.created_at<?
+           ORDER BY a.created_at DESC""",
+        (since, until),
+    )
+
+
+async def report_advances(since_period, until_period="9999-12"):
+    """Davr ichidagi tasdiqlangan avanslar (since_period <= period <= until_period)."""
+    return await _report_rows(
+        """SELECT ar.period, ar.amount, ar.user_id, ep.branch_id, b.name AS branch_name
+           FROM advance_requests ar
+           LEFT JOIN employee_profiles ep ON ep.user_id=ar.user_id
+           LEFT JOIN branches b ON b.id=ep.branch_id
+           WHERE ar.status='confirmed' AND ar.period>=? AND ar.period<=?""",
+        (since_period, until_period),
+    )
+
+
+async def report_tech_tasks(since, until="9999-12-31"):
+    """Davr ichida yaratilgan texnik topshiriqlar (holati va xarajati)."""
+    return await _report_rows(
+        """SELECT t.id, t.status, t.cost, t.created_at, b.name AS branch_name
+           FROM tech_tasks t
+           LEFT JOIN branches b ON b.id=t.branch_id
+           WHERE t.created_at>=? AND t.created_at<?""",
+        (since, until),
+    )

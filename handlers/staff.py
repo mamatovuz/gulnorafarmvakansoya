@@ -1517,18 +1517,6 @@ async def director_period_compare(message: Message):
     await message.answer(text)
 
 
-# ---------------- DIREKTOR EXCEL HISOBOT ----------------
-@router.message(F.text == "📑 Hisobot (Excel)")
-async def director_export(message: Message):
-    user = await ensure_role(message, ROLE_DIRECTOR, ROLE_ADMIN)
-    if not user:
-        return
-    await message.answer(
-        "📑 <b>Excel hisobot</b>\nQaysi ma'lumotni yuklab olasiz?",
-        reply_markup=kb.export_kb("director"),
-    )
-
-
 # ---------------- HAR QANDAY XODIM: «MENING JARIMALARIM» ----------------
 _FINE_SOURCE_LABELS = {"hr": "HR bo'limi", "finance": "Moliya bo'limi"}
 

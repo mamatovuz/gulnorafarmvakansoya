@@ -28,7 +28,7 @@ from services.reminders import (
     advance_prompt_loop, it_report_loop, dayoff_prompt_loop, dayoff_report_loop,
     dayoff_reminder_loop,
     attendance_reminder_loop, salary_report_loop,
-    tech_deadline_loop, tech_recurring_loop,
+    tech_deadline_loop, tech_recurring_loop, monthly_reports_loop,
 )
 
 
@@ -180,13 +180,15 @@ async def main():
     salary_report_task = asyncio.create_task(salary_report_loop(bot))
     tech_deadline_task = asyncio.create_task(tech_deadline_loop(bot))
     tech_recurring_task = asyncio.create_task(tech_recurring_loop(bot))
+    monthly_reports_task = asyncio.create_task(monthly_reports_loop(bot))
     try:
         await dp.start_polling(bot)
     finally:
         for task in (reminder_task, probation_task, advance_task,
                      it_report_task, dayoff_prompt_task, dayoff_report_task,
                      dayoff_reminder_task, attendance_reminder_task,
-                     salary_report_task, tech_deadline_task, tech_recurring_task):
+                     salary_report_task, tech_deadline_task, tech_recurring_task,
+                     monthly_reports_task):
             task.cancel()
             try:
                 await task

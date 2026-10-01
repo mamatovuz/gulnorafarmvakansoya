@@ -32,6 +32,7 @@ HR_REQUEST_BTN = "📩 HR ga murojaat"
 # Har qanday xodim o'z jarimalarini ko'radigan tugma (shu oy + o'tgan oy)
 MY_FINES_BTN = "💸 Mening jarimalarim"
 FINES_REPORT_BTN = "📊 Hisobot olish"  # Moliya paneli — jarimalar Excel hisoboti
+DIRECTOR_REPORTS_BTN = "📑 Hisobotlar"  # Direktor paneli — Excel hisobotlar menyusi
 
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
@@ -54,7 +55,7 @@ MENU_ESCAPE_BUTTONS = {
     "🔧 Texnik xodim panel", "🆕 Yangi topshiriqlar", "🔧 Jarayondagi ishlar",
     "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
-    FINES_REPORT_BTN,
+    FINES_REPORT_BTN, DIRECTOR_REPORTS_BTN, "📑 Hisobot (Excel)",
 }
 
 
@@ -1806,7 +1807,7 @@ def director_menu():
     b.button(text="📈 Taqqoslash")
     b.button(text="🔧 Texnik ishlar")
     b.button(text="💸 Jarima qo'llash")
-    b.button(text="📑 Hisobot (Excel)")
+    b.button(text=DIRECTOR_REPORTS_BTN)
     b.button(text="🏠 Asosiy menyu")
     b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
@@ -2542,15 +2543,39 @@ def accountant_menu():
     return b.as_markup(resize_keyboard=True)
 
 
-# Moliya «📊 Hisobot olish» — jarimalar Excel hisoboti (1/2/3 oylik)
-FINES_REPORT_MONTHS = (1, 2, 3)
+# ---------------- EXCEL HISOBOTLAR (direktor + moliya) ----------------
+# Davr: 1/2/3 oylik yoki «🗓 Sana bo'yicha» (qaysi kundan qaysi kungacha).
+REPORT_MONTHS = (1, 2, 3)
 
 
-def fines_report_period_kb():
+def reports_menu_kb():
+    """Direktor «📑 Hisobotlar» — hisobot turlari."""
+    from services.reports import DIRECTOR_REPORTS
     b = InlineKeyboardBuilder()
-    for n in FINES_REPORT_MONTHS:
-        b.button(text=f"📅 {n} oylik", callback_data=f"accrep:{n}")
-    b.adjust(3)
+    for kind, title, _ in DIRECTOR_REPORTS:
+        b.button(text=title, callback_data=f"rep:{kind}")
+    b.button(text="📦 Barcha hisobotlar", callback_data="rep:all")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def report_period_kb(kind, back=True):
+    """Hisobot davrini tanlash: 1/2/3 oylik yoki sana oralig'i."""
+    b = InlineKeyboardBuilder()
+    for n in REPORT_MONTHS:
+        b.button(text=f"📅 {n} oylik", callback_data=f"repp:{kind}:{n}")
+    b.button(text="🗓 Sana bo'yicha (kundan — kungacha)", callback_data=f"repd:{kind}")
+    sizes = [3, 1]
+    if back:
+        b.button(text="⬅️ Orqaga", callback_data="rep:menu")
+        sizes.append(1)
+    b.adjust(*sizes)
+    return b.as_markup()
+
+
+def report_cancel_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="❌ Bekor qilish", callback_data="repcancel")
     return b.as_markup()
 
 
