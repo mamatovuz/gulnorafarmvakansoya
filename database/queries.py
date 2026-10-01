@@ -1529,6 +1529,35 @@ async def cancel_fine(fid, cancelled_by):
         await db.close()
 
 
+async def fines_report(since_period):
+    """Moliya «📊 Hisobot olish» uchun: `since_period` (YYYY-MM) dan boshlab
+    yozilgan barcha jarimalar (bekor qilinganlari ham — holati bilan).
+
+    Ism, lavozim, rol, filial va kim yozgani bilan birga qaytaradi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """SELECT f.id, f.employee_user_id, f.period, f.amount, f.reason,
+                      f.source, f.cancelled, f.cancelled_at, f.created_at,
+                      owner.full_name AS employee_name, owner.phone,
+                      ep.position, COALESCE(ep.role, owner.role) AS emp_role,
+                      COALESCE(b.name, b2.name) AS branch_name,
+                      cb.full_name AS created_by_name
+               FROM fines f
+               LEFT JOIN users owner ON owner.id=f.employee_user_id
+               LEFT JOIN employee_profiles ep ON ep.user_id=f.employee_user_id
+               LEFT JOIN branches b ON b.id=f.branch_id
+               LEFT JOIN branches b2 ON b2.id=ep.branch_id
+               LEFT JOIN users cb ON cb.id=f.created_by
+               WHERE COALESCE(f.period, substr(f.created_at,1,7)) >= ?
+               ORDER BY f.created_at DESC, f.id DESC""",
+            (since_period,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
 async def employees_with_fines(branch_id=None, text=None, period=None, limit=60):
     """Bekor qilinmagan jarimasi bor xodimlar ro'yxati (jarima soni/summasi bilan).
 

@@ -8,6 +8,7 @@ from database import queries as q
 from database.db import ROLE_ADMIN, ROLE_ACCOUNTANT
 from states import AccForm, AccEmpSearch
 import keyboards as kb
+from services.export import build_fines_report_xlsx, period_label
 from utils import (
     fine_text, safe_send, now_tk, send_employee_profile,
     parse_money, fmt_money,
@@ -938,3 +939,72 @@ async def fine_cancel_apply(call: CallbackQuery, bot: Bot):
             "Jarimangiz <b>moliya bo'limi</b> tomonidan bekor qilindi va "
             "oyligingizdan kesilgan summa qaytarildi.",
         )
+
+
+# ================= HISOBOT OLISH (jarimalar Excel) =================
+def _last_periods(n):
+    """Joriy oy bilan birga oxirgi n oy, eskidan yangiga: ['2026-08', '2026-09', ...]."""
+    now = now_tk()
+    y, m = now.year, now.month
+    out = []
+    for _ in range(n):
+        out.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    return out[::-1]
+
+
+@router.message(F.text == kb.FINES_REPORT_BTN)
+async def fines_report_start(message: Message, state: FSMContext):
+    if not await _is_accountant(message.from_user.id):
+        await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
+        return
+    await state.clear()
+    await message.answer(
+        "📊 <b>Jarimalar hisoboti</b>\n\n"
+        "Qaysi davr uchun Excel hisobot kerak?\n"
+        "<i>1 oylik — joriy oy; 2 va 3 oylik — joriy oy bilan birga "
+        "oldingi oylar.</i>",
+        reply_markup=kb.fines_report_period_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("accrep:"))
+async def fines_report_send(call: CallbackQuery):
+    if not await _is_accountant(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    try:
+        n = int(call.data.split(":")[1])
+    except (IndexError, ValueError):
+        n = 0
+    if n not in kb.FINES_REPORT_MONTHS:
+        await call.answer("Noto'g'ri davr.", show_alert=True)
+        return
+    await call.answer("⏳ Hisobot tayyorlanmoqda...")
+    periods = _last_periods(n)
+    fines = await q.fines_report(periods[0])
+    doc = build_fines_report_xlsx(fines, periods)
+
+    active = [f for f in fines if not f.get("cancelled")]
+    total = sum(q._digits_to_int(f.get("amount")) for f in active)
+    people = len({f.get("employee_user_id") for f in active})
+    span = (period_label(periods[0]) if n == 1
+            else f"{period_label(periods[0])} — {period_label(periods[-1])}")
+    await call.message.answer_document(
+        doc,
+        caption=(
+            f"📊 <b>Jarimalar hisoboti — {n} oylik</b>\n"
+            f"📅 Davr: {span}\n\n"
+            f"🧾 Jarimalar: <b>{len(active)}</b> ta\n"
+            f"👥 Jarimalangan xodimlar: <b>{people}</b> nafar\n"
+            f"💸 Jami summa: <b>{fmt_money(total)}</b>\n"
+            f"🚫 Bekor qilingan: <b>{len(fines) - len(active)}</b> ta"
+        ),
+    )
+    me = await q.get_user(call.from_user.id)
+    await q.add_log(
+        call.from_user.id, (me or {}).get("full_name") or "?",
+        "jarima_hisobot", f"{n} oylik ({periods[0]}..{periods[-1]})",
+    )

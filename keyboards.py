@@ -31,6 +31,7 @@ HR_REQUEST_BTN = "📩 HR ga murojaat"
 
 # Har qanday xodim o'z jarimalarini ko'radigan tugma (shu oy + o'tgan oy)
 MY_FINES_BTN = "💸 Mening jarimalarim"
+FINES_REPORT_BTN = "📊 Hisobot olish"  # Moliya paneli — jarimalar Excel hisoboti
 
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
@@ -53,6 +54,7 @@ MENU_ESCAPE_BUTTONS = {
     "🔧 Texnik xodim panel", "🆕 Yangi topshiriqlar", "🔧 Jarayondagi ishlar",
     "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
+    FINES_REPORT_BTN,
 }
 
 
@@ -2534,9 +2536,22 @@ def accountant_menu():
     b.button(text="🚫 Jarimani bekor qilish")
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
+    b.button(text=FINES_REPORT_BTN)
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 1)
+    b.adjust(2, 2, 2, 1, 1)
     return b.as_markup(resize_keyboard=True)
+
+
+# Moliya «📊 Hisobot olish» — jarimalar Excel hisoboti (1/2/3 oylik)
+FINES_REPORT_MONTHS = (1, 2, 3)
+
+
+def fines_report_period_kb():
+    b = InlineKeyboardBuilder()
+    for n in FINES_REPORT_MONTHS:
+        b.button(text=f"📅 {n} oylik", callback_data=f"accrep:{n}")
+    b.adjust(3)
+    return b.as_markup()
 
 
 # ---------------- OYLIKDAN FOIZ KESISH ----------------
