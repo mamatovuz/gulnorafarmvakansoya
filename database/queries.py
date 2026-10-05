@@ -4375,7 +4375,11 @@ async def list_dayoff_plan_items(plan_id):
     db = await _conn()
     try:
         cur = await db.execute(
-            "SELECT * FROM dayoff_plan_items WHERE plan_id=? ORDER BY full_name",
+            """SELECT dpi.*, ep.rest_day
+               FROM dayoff_plan_items dpi
+               LEFT JOIN employee_profiles ep ON ep.user_id=dpi.user_id
+               WHERE dpi.plan_id=?
+               ORDER BY dpi.full_name""",
             (plan_id,),
         )
         return [dict(r) for r in await cur.fetchall()]
@@ -4384,19 +4388,27 @@ async def list_dayoff_plan_items(plan_id):
 
 
 async def toggle_dayoff_plan_item(item_id):
-    """Item holatini off<->work almashtiradi. Yangi holatni qaytaradi."""
+    """Holatni almashtiradi va rejani atomik ravishda qayta tasdiqqa qo'yadi."""
     db = await _conn()
     try:
+        await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute(
-            "SELECT day_status FROM dayoff_plan_items WHERE id=?", (item_id,)
+            "SELECT plan_id, day_status FROM dayoff_plan_items WHERE id=?", (item_id,)
         )
         row = await cur.fetchone()
         if not row:
+            await db.rollback()
             return None
-        new_status = "work" if row[0] == "off" else "off"
+        new_status = "work" if row["day_status"] == "off" else "off"
         await db.execute(
             "UPDATE dayoff_plan_items SET day_status=? WHERE id=?",
             (new_status, item_id),
+        )
+        await db.execute(
+            """UPDATE dayoff_plans
+               SET status='pending', confirmed_by=NULL, confirmed_at=NULL
+               WHERE id=?""",
+            (row["plan_id"],),
         )
         await db.commit()
         return new_status

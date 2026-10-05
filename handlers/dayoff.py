@@ -14,6 +14,7 @@ from states import DayoffForm
 import keyboards as kb
 from i18n import tf
 from utils import safe_send, broadcast_request, close_request_notices
+from handlers.dayoff_plan import canonical_weekday
 
 router = Router()
 
@@ -40,12 +41,12 @@ async def dayoff_start(message: Message, state: FSMContext):
         await message.answer("⛔ Bu funksiya faqat tasdiqlangan xodimlar uchun.")
         return
     cur = profile.get("rest_day") or "belgilanmagan"
-    await state.update_data(cur_rest=cur)
-    await state.set_state(DayoffForm.from_day)
+    await state.update_data(cur_rest=cur, from_day=cur)
+    await state.set_state(DayoffForm.to_day)
     await message.answer(
         "🔄 <b>Dam olish kunini almashtirish</b>\n\n"
         f"Hozirgi dam olish kuningiz: <b>{cur}</b>\n\n"
-        "Qaysi dam olish kuningizni almashtirmoqchisiz? (hozirgi kun)",
+        "Yangi dam olish kunini tanlang:",
         reply_markup=kb.dayoff_day_kb(),
     )
 
@@ -63,7 +64,19 @@ async def dayoff_cancel(message: Message, state: FSMContext):
 
 @router.message(DayoffForm.from_day, F.text)
 async def dayoff_from(message: Message, state: FSMContext):
-    await state.update_data(from_day=message.text.strip())
+    data = await state.get_data()
+    selected = canonical_weekday(message.text)
+    current = canonical_weekday(data.get("cur_rest"))
+    if not selected:
+        await message.answer("⚠️ Hafta kunini pastdagi tugmalardan tanlang.")
+        return
+    if current and selected != current:
+        await message.answer(
+            f"⚠️ Profilingizdagi hozirgi dam kuni <b>{data.get('cur_rest')}</b>. "
+            "Shu kunni tanlang."
+        )
+        return
+    await state.update_data(from_day=selected)
     await state.set_state(DayoffForm.to_day)
     await message.answer(
         "📆 Endi qaysi kunda dam olmoqchisiz? (yangi dam kuni)",
@@ -73,7 +86,15 @@ async def dayoff_from(message: Message, state: FSMContext):
 
 @router.message(DayoffForm.to_day, F.text)
 async def dayoff_to(message: Message, state: FSMContext):
-    await state.update_data(to_day=message.text.strip())
+    data = await state.get_data()
+    new_day = canonical_weekday(message.text)
+    if not new_day:
+        await message.answer("⚠️ Yangi dam kunini pastdagi tugmalardan tanlang.")
+        return
+    if new_day == canonical_weekday(data.get("from_day") or data.get("cur_rest")):
+        await message.answer("⚠️ Yangi dam kuni hozirgi dam kunidan farq qilishi kerak.")
+        return
+    await state.update_data(to_day=new_day)
     await state.set_state(DayoffForm.reason)
     await message.answer(
         "✍️ Sababini qisqacha yozing (masalan: <i>oilaviy tadbir</i>):",
@@ -126,6 +147,9 @@ async def dayoff_list(message: Message):
     if user["role"] == ROLE_MANAGER:
         profile = await q.get_employee_profile_by_tg(message.from_user.id)
         branch_id = user.get("branch_id") or (profile.get("branch_id") if profile else None)
+        if not branch_id:
+            await message.answer("⛔ Sizga filial biriktirilmagan.")
+            return
     reqs = await q.list_dayoff_requests(status="new", branch_id=branch_id, limit=30)
     approved = await q.list_dayoff_requests(status="approved", branch_id=branch_id, limit=20)
     if not reqs and not approved:
@@ -155,9 +179,13 @@ async def dayoff_view(call: CallbackQuery):
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
-    if req.get("status") == "new":
+    if not await _can_view(user, req):
+        await call.answer("⛔ Bu boshqa filial so'rovi.", show_alert=True)
+        return
+    can_handle = await _can_handle(user, req)
+    if req.get("status") == "new" and can_handle:
         markup = kb.dayoff_actions_kb(req["id"])
-    elif req.get("status") == "approved":
+    elif req.get("status") == "approved" and can_handle:
         markup = kb.dayoff_edit_actions_kb(req["id"])
     else:
         markup = None
@@ -169,13 +197,16 @@ async def dayoff_view(call: CallbackQuery):
 @router.callback_query(F.data.startswith("doedit:"))
 async def dayoff_edit_start(call: CallbackQuery):
     user = await q.get_user(call.from_user.id)
-    if not await _can_handle(user):
-        await call.answer("⛔", show_alert=True)
-        return
     rid = int(call.data.split(":")[1])
     req = await q.get_dayoff_request(rid)
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if not await _can_handle(user, req):
+        await call.answer("⛔", show_alert=True)
+        return
+    if req.get("status") != "approved":
+        await call.answer("Faqat tasdiqlangan so'rov tahrirlanadi.", show_alert=True)
         return
     await call.message.answer(
         f"✏️ <b>Dam kunini o'zgartirish</b> — {req.get('full_name') or '-'}\n"
@@ -190,14 +221,17 @@ async def dayoff_edit_start(call: CallbackQuery):
 @router.callback_query(F.data.startswith("doeday:"))
 async def dayoff_edit_apply(call: CallbackQuery, bot: Bot):
     user = await q.get_user(call.from_user.id)
-    if not await _can_handle(user):
-        await call.answer("⛔", show_alert=True)
-        return
     _, rid, idx = call.data.split(":")
     rid = int(rid)
     req = await q.get_dayoff_request(rid)
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if not await _can_handle(user, req):
+        await call.answer("⛔", show_alert=True)
+        return
+    if req.get("status") != "approved":
+        await call.answer("Faqat tasdiqlangan so'rov tahrirlanadi.", show_alert=True)
         return
     try:
         new_day = kb.WEEK_DAYS[int(idx)]
@@ -233,20 +267,48 @@ async def dayoff_edit_apply(call: CallbackQuery, bot: Bot):
 
 
 # ---------------- TASDIQLASH / RAD ----------------
-async def _can_handle(user):
-    return user and user["role"] in (ROLE_HR, ROLE_ADMIN, ROLE_MANAGER)
+async def _manager_branch_id(user):
+    if not user or user.get("role") != ROLE_MANAGER:
+        return None
+    branch_id = user.get("branch_id")
+    if not branch_id:
+        profile = await q.get_employee_profile(user["id"])
+        branch_id = profile.get("branch_id") if profile else None
+    return branch_id
+
+
+async def _can_view(user, req):
+    if not user:
+        return False
+    if user.get("role") in (ROLE_HR, ROLE_ADMIN, "accountant"):
+        return True
+    if user.get("role") == ROLE_MANAGER:
+        branch_id = await _manager_branch_id(user)
+        return bool(branch_id) and branch_id == req.get("branch_id")
+    return False
+
+
+async def _can_handle(user, req):
+    if not user:
+        return False
+    if user.get("role") in (ROLE_HR, ROLE_ADMIN):
+        return True
+    if user.get("role") == ROLE_MANAGER:
+        branch_id = await _manager_branch_id(user)
+        return bool(branch_id) and branch_id == req.get("branch_id")
+    return False
 
 
 @router.callback_query(F.data.startswith("doacc:"))
 async def dayoff_approve(call: CallbackQuery, bot: Bot):
     user = await q.get_user(call.from_user.id)
-    if not await _can_handle(user):
-        await call.answer("⛔", show_alert=True)
-        return
     rid = int(call.data.split(":")[1])
     req = await q.get_dayoff_request(rid)
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if not await _can_handle(user, req):
+        await call.answer("⛔ Bu boshqa filial so'rovi.", show_alert=True)
         return
     if req.get("status") != "new":
         await call.answer("Allaqachon ko'rib chiqilgan.", show_alert=True)
@@ -281,13 +343,13 @@ async def dayoff_approve(call: CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith("dorej:"))
 async def dayoff_reject(call: CallbackQuery, bot: Bot):
     user = await q.get_user(call.from_user.id)
-    if not await _can_handle(user):
-        await call.answer("⛔", show_alert=True)
-        return
     rid = int(call.data.split(":")[1])
     req = await q.get_dayoff_request(rid)
     if not req:
         await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if not await _can_handle(user, req):
+        await call.answer("⛔ Bu boshqa filial so'rovi.", show_alert=True)
         return
     if req.get("status") != "new":
         await call.answer("Allaqachon ko'rib chiqilgan.", show_alert=True)

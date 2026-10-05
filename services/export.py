@@ -213,7 +213,7 @@ def build_dayoff_xlsx(branches_data, date_display):
     center = Alignment(horizontal="center", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
-    headers = ["№", "Ism-familiya", "Lavozim", "Holat"]
+    headers = ["№", "Ism-familiya", "Lavozim", "Doimiy dam kuni", "Holat", "Izoh"]
     ncols = len(headers)
     last_col = get_column_letter(ncols)
 
@@ -268,16 +268,20 @@ def build_dayoff_xlsx(branches_data, date_display):
             row_i += 2
             continue
         for idx, it in enumerate(off_items, start=1):
-            values = [idx, it.get("full_name") or "-", it.get("position") or "-", "🛌 Dam oladi"]
+            note = "⚠️ Rahbar/HR o'zgartirgan" if it.get("is_override") else "Jadval bo'yicha"
+            values = [
+                idx, it.get("full_name") or "-", it.get("position") or "-",
+                it.get("rest_day") or "Belgilanmagan", "🛌 Dam oladi", note,
+            ]
             for col_i, val in enumerate(values, start=1):
                 cell = ws.cell(row=row_i, column=col_i, value=val)
                 cell.border = border
-                cell.alignment = center if col_i in (1, 4) else left
+                cell.alignment = center if col_i in (1, 4, 5) else left
                 cell.fill = off_fill
             row_i += 1
         row_i += 1  # bo'lim orasida bo'sh qator
 
-    widths = [6, 30, 24, 16]
+    widths = [6, 30, 24, 20, 16, 26]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     return _finish(wb, "dam_olish")

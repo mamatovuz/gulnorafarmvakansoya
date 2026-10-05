@@ -24,9 +24,49 @@ WEEKDAY_UZ = [
     "Juma", "Shanba", "Yakshanba",
 ]
 
+_WEEKDAY_ALIASES = {
+    "Dushanba": ("dushanba", "душанба", "понедельник"),
+    "Seshanba": ("seshanba", "сешанба", "вторник"),
+    "Chorshanba": ("chorshanba", "чоршанба", "среда"),
+    "Payshanba": ("payshanba", "пайшанба", "четверг"),
+    "Juma": ("juma", "жума", "пятница"),
+    # Uzunroq nom avval tekshiriladi: "yakshanba" ichida "shanba" bor.
+    "Yakshanba": ("yakshanba", "якшанба", "воскресенье"),
+    "Shanba": ("shanba", "шанба", "суббота"),
+}
+
 
 def weekday_uz(dt):
     return WEEKDAY_UZ[dt.weekday()]
+
+
+def canonical_weekday(value):
+    """Lotin, kirill yoki ruscha hafta kunini kanonik o'zbekcha nomga keltiradi."""
+    text = str(value or "").strip().casefold()
+    if not text:
+        return None
+    for canonical, aliases in _WEEKDAY_ALIASES.items():
+        if any(alias in text for alias in aliases):
+            return canonical
+    return None
+
+
+def expected_day_status(rest_day, plan_weekday):
+    """Doimiy jadval bo'yicha shu kuni xodim dam olishi yoki ishlashini qaytaradi."""
+    planned = canonical_weekday(plan_weekday)
+    if not planned:
+        return "work"
+    return "off" if canonical_weekday(rest_day) == planned else "work"
+
+
+def dayoff_plan_mismatches(plan, items):
+    """Rahbar holati doimiy dam olish jadvalidan farq qilgan xodimlar."""
+    weekday = plan.get("weekday")
+    return [
+        it for it in items
+        if it.get("day_status") in ("off", "work")
+        and it.get("day_status") != expected_day_status(it.get("rest_day"), weekday)
+    ]
 
 
 def plan_prompt_text(plan, items, *, reminder=False):
@@ -41,25 +81,38 @@ def plan_prompt_text(plan, items, *, reminder=False):
         "🟢 — ishga keladi   🔴 — kelmaydi (dam oladi)\n\n"
     )
     if items:
+        mismatched_ids = {it.get("id") for it in dayoff_plan_mismatches(plan, items)}
         for i, it in enumerate(items, start=1):
             dot = "🟢" if it.get("day_status") == "work" else "🔴"
-            header += f"{i}. {dot} {it.get('full_name') or '-'} — {it.get('position') or '-'}\n"
+            warning = " ⚠️ JADVALDAN FARQ QILADI" if it.get("id") in mismatched_ids else ""
+            rest_day = it.get("rest_day") or "belgilanmagan"
+            header += (
+                f"{i}. {dot} {it.get('full_name') or '-'} — {it.get('position') or '-'}"
+                f"\n    Doimiy dam kuni: {rest_day}{warning}\n"
+            )
     else:
         header += "Bu filialda xodim yo'q.\n"
     off_n = sum(1 for it in items if it.get("day_status") == "off")
     work_n = len(items) - off_n
+    mismatch_n = len(dayoff_plan_mismatches(plan, items))
     header += (
         f"\n🟢 Ishga keladi: <b>{work_n}</b> · 🔴 Kelmaydi: <b>{off_n}</b> "
         f"({len(items)} nafar)\n"
+    )
+    if mismatch_n:
+        header += f"⚠️ Doimiy jadvaldan farqli: <b>{mismatch_n}</b> nafar\n"
+    header += (
         "\n👇 Kimningdir holati noto'g'ri bo'lsa — <b>ustiga bosing</b> (🟢⇄🔴). "
         "Hammasi to'g'ri bo'lsa <b>✅ Tasdiqlash</b>ni bosing."
     )
     return header
 
 
-async def _report_already_sent(plan):
-    """Rejani tahrirlab bo'lmaydigan holat: 08:30 HR hisoboti shu sana uchun
-    yuborilgan, YOKI rejaning kuni allaqachon o'tган (eski xabar bosilgan)."""
+async def _editing_locked(user, plan):
+    """Eski rejani hamma uchun, yuborilgan rejani rahbar uchun qulflaydi.
+
+    HR/Admin bugungi xatoni tuzatib, yangilangan hisobotni qayta olishi mumkin.
+    """
     date_iso = plan.get("plan_date")
     if not date_iso:
         return False
@@ -68,6 +121,9 @@ async def _report_already_sent(plan):
         # Kuni o'tган reja — endi tahrirlanmaydi (odatda eski so'rov xabari bosiladi)
         return True
     flag = await q.get_setting(f"dayoff_report_sent:{date_iso}", "0")
+    # HR/Admin bugungi hisobotdagi xatoni tuzatib, hisobotni qayta olishi mumkin.
+    if user and user.get("role") in (ROLE_HR, ROLE_ADMIN):
+        return False
     return str(flag) == "1"
 
 
@@ -86,8 +142,7 @@ async def _can_manage(user, plan):
     if user["role"] == ROLE_ADMIN:
         return True
     if user["role"] == ROLE_HR:
-        # HR istalgan filial rejasini tahrirlashi mumkin — vaqt cheklovi yo'q.
-        # Blok faqat hisobot yuborilгач (_report_already_sent) qo'yiladi.
+        # HR istalgan filialning bugungi/ertangi rejasini tahrirlashi mumkin.
         return True
     if user["role"] == ROLE_MANAGER:
         # Rahbar faqat o'z filiali rejasini boshqaradi
@@ -114,7 +169,7 @@ async def dayoff_plan_edit(call: CallbackQuery):
     if not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if await _report_already_sent(plan):
+    if await _editing_locked(user, plan):
         await call.answer(_locked_alert(plan), show_alert=True)
         return
     items = await q.list_dayoff_plan_items(plan_id)
@@ -141,10 +196,17 @@ async def dayoff_plan_toggle(call: CallbackQuery):
     if not plan or not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if await _report_already_sent(plan):
+    if await _editing_locked(user, plan):
         await call.answer(_locked_alert(plan), show_alert=True)
         return
     new_status = await q.toggle_dayoff_plan_item(item_id)
+    # toggle query tasdiqni ham shu tranzaksiyada bekor qiladi. Aks holda tahrir
+    # qayta tasdiqlanmasdan HR hisobotiga kirib ketishi mumkin edi.
+    await q.add_log(
+        call.from_user.id, user.get("full_name"), "dam_olish_reja_tahrir",
+        f"plan#{item['plan_id']}, item#{item_id}, xodim#{item.get('user_id')}: "
+        f"{item.get('day_status')} -> {new_status}",
+    )
     items = await q.list_dayoff_plan_items(item["plan_id"])
     markup = kb.dayoff_plan_edit_kb(item["plan_id"], items)
     try:
@@ -181,6 +243,99 @@ async def _clear_plan_notices(bot: Bot, plan_id, keep_chat_id=None, keep_msg_id=
                 pass
 
 
+def _override_warning_text(plan, mismatches):
+    lines = [
+        "⚠️ <b>Doimiy dam olish jadvalidan farq bor</b>",
+        f"📆 {iso_to_display(plan.get('plan_date'))} ({plan.get('weekday')})",
+        f"🏢 {plan.get('branch_name') or '-'}",
+        "",
+    ]
+    for it in mismatches:
+        actual = "DAM OLADI" if it.get("day_status") == "off" else "ISHGA KELADI"
+        lines.append(
+            f"• {it.get('full_name') or '-'}: doimiy dam kuni "
+            f"<b>{it.get('rest_day') or 'belgilanmagan'}</b>, siz <b>{actual}</b> deb belgiladingiz."
+        )
+    lines.append("\nBu bir kunlik o'zgarish ataylab qilingan bo'lsa, yana tasdiqlang.")
+    return "\n".join(lines)
+
+
+async def _notify_hr_confirmed(bot, plan, items, confirmed_by, confirmed_by_tg):
+    """Rahbar tasdig'ini HR/Adminlarga shu zahoti ko'rsatadi."""
+    from utils import safe_send
+    off = [it for it in items if it.get("day_status") == "off"]
+    mismatches = dayoff_plan_mismatches(plan, items)
+    lines = [
+        "✅ <b>Filialning kunlik dam olish rejasi tasdiqlandi</b>",
+        f"📆 {iso_to_display(plan.get('plan_date'))} ({plan.get('weekday')})",
+        f"🏢 {plan.get('branch_name') or '-'}",
+        f"👤 Tasdiqladi: {confirmed_by or '-'}",
+        f"🛌 Dam oladi: <b>{len(off)}</b> nafar",
+    ]
+    for it in off:
+        marker = " ⚠️ jadvaldan farqli" if it in mismatches else ""
+        lines.append(f"  • {it.get('full_name') or '-'} — {it.get('rest_day') or 'dam kuni noma’lum'}{marker}")
+    if mismatches:
+        lines.append(f"\n⚠️ Doimiy jadvaldan farqli o'zgarish: <b>{len(mismatches)}</b> ta.")
+    targets = set(await q.all_user_tg_ids(role=ROLE_HR))
+    targets.update(await q.all_user_tg_ids(role=ROLE_ADMIN))
+    targets.discard(confirmed_by_tg)
+    for tid in targets:
+        await safe_send(
+            bot, tid, "\n".join(lines),
+            reply_markup=kb.dayoff_plan_edit_again_kb(plan["id"]),
+        )
+
+
+async def _confirm_plan(call, bot, user, plan, *, force=False):
+    items = await q.list_dayoff_plan_items(plan["id"])
+    mismatches = dayoff_plan_mismatches(plan, items)
+    if mismatches and not force:
+        text = _override_warning_text(plan, mismatches)
+        try:
+            await call.message.edit_text(
+                text, reply_markup=kb.dayoff_plan_override_confirm_kb(plan["id"])
+            )
+        except Exception:
+            await call.message.answer(
+                text, reply_markup=kb.dayoff_plan_override_confirm_kb(plan["id"])
+            )
+        await call.answer("Jadvaldan farqli holatlar bor", show_alert=True)
+        return
+
+    await q.set_dayoff_plan_status(plan["id"], "confirmed", confirmed_by=user["id"])
+    await _clear_plan_notices(
+        bot, plan["id"], keep_chat_id=call.from_user.id,
+        keep_msg_id=call.message.message_id,
+    )
+    await q.add_log(call.from_user.id, user.get("full_name"),
+                    "dam_olish_reja_tasdiq", f"plan#{plan['id']}")
+    off = [it for it in items if it.get("day_status") == "off"]
+    work_n = len(items) - len(off)
+    lines = [
+        "✅ <b>Tasdiqlandi. Rahmat!</b>",
+        f"📆 {iso_to_display(plan.get('plan_date'))} ({plan.get('weekday')})",
+        f"🏢 {plan.get('branch_name') or '-'}",
+        f"🟢 Ishga keladi: <b>{work_n}</b> nafar",
+        f"🔴 Kelmaydi (dam oladi): <b>{len(off)}</b> nafar",
+    ]
+    for it in off:
+        marker = " ⚠️" if it in mismatches else ""
+        lines.append(f"  🔴 {it.get('full_name')}{marker}")
+    if mismatches:
+        lines.append(f"\n⚠️ Jadvaldan farqli o'zgarishlar: <b>{len(mismatches)}</b> ta.")
+    lines.append("\n✏️ Xato bo'lsa — HR hisobotigacha tahrirlashingiz mumkin.")
+    edit_kb = kb.dayoff_plan_edit_again_kb(plan["id"])
+    try:
+        await call.message.edit_text("\n".join(lines), reply_markup=edit_kb)
+    except Exception:
+        await call.message.answer("\n".join(lines), reply_markup=edit_kb)
+    await call.answer("Tasdiqlandi ✅")
+    await _notify_hr_confirmed(
+        bot, plan, items, user.get("full_name"), call.from_user.id
+    )
+
+
 @router.callback_query(F.data.startswith("dopl_ok:"))
 async def dayoff_plan_confirm(call: CallbackQuery, bot: Bot):
     user = await q.get_user(call.from_user.id)
@@ -192,36 +347,27 @@ async def dayoff_plan_confirm(call: CallbackQuery, bot: Bot):
     if not await _can_manage(user, plan):
         await call.answer("⛔", show_alert=True)
         return
-    if await _report_already_sent(plan):
+    if await _editing_locked(user, plan):
         await call.answer(_locked_alert(plan), show_alert=True)
         return
-    await q.set_dayoff_plan_status(plan_id, "confirmed", confirmed_by=user["id"])
-    # Boshqa (eski so'rov/eslatma) xabarlardagi tugmalarni tozalaymiz — joriy
-    # xabar summary ga aylantiriladi.
-    await _clear_plan_notices(bot, plan_id,
-                              keep_chat_id=call.from_user.id,
-                              keep_msg_id=call.message.message_id)
-    await q.add_log(call.from_user.id, user.get("full_name"),
-                    "dam_olish_reja_tasdiq", f"plan#{plan_id}")
-    items = await q.list_dayoff_plan_items(plan_id)
-    off = [it for it in items if it.get("day_status") == "off"]
-    work_n = len(items) - len(off)
-    lines = [
-        "✅ <b>Tasdiqlandi. Rahmat!</b>",
-        f"📆 {iso_to_display(plan.get('plan_date'))} ({plan.get('weekday')})",
-        f"🏢 {plan.get('branch_name') or '-'}",
-        f"🟢 Ishga keladi: <b>{work_n}</b> nafar",
-        f"🔴 Kelmaydi (dam oladi): <b>{len(off)}</b> nafar",
-    ]
-    for it in off:
-        lines.append(f"  🔴 {it.get('full_name')}")
-    lines.append("\n✏️ Xato bo'lsa — hisobotgacha tahrirlashingiz mumkin.")
-    edit_kb = kb.dayoff_plan_edit_again_kb(plan_id)
-    try:
-        await call.message.edit_text("\n".join(lines), reply_markup=edit_kb)
-    except Exception:
-        await call.message.answer("\n".join(lines), reply_markup=edit_kb)
-    await call.answer("Tasdiqlandi ✅")
+    await _confirm_plan(call, bot, user, plan)
+
+
+@router.callback_query(F.data.startswith("dopl_force:"))
+async def dayoff_plan_force_confirm(call: CallbackQuery, bot: Bot):
+    user = await q.get_user(call.from_user.id)
+    plan_id = int(call.data.split(":")[1])
+    plan = await q.get_dayoff_plan(plan_id)
+    if not plan:
+        await call.answer("Reja topilmadi.", show_alert=True)
+        return
+    if not await _can_manage(user, plan):
+        await call.answer("⛔", show_alert=True)
+        return
+    if await _editing_locked(user, plan):
+        await call.answer(_locked_alert(plan), show_alert=True)
+        return
+    await _confirm_plan(call, bot, user, plan, force=True)
 
 
 # ---------------- HR: KUNLIK DAM OLISH HISOBOTI (on-demand) ----------------
@@ -239,8 +385,6 @@ async def hr_dayoff_report(message: Message, bot: Bot):
     if user["role"] in (ROLE_HR, ROLE_ADMIN):
         editable = []
         for d in (today, tomorrow):
-            if str(await q.get_setting(f"dayoff_report_sent:{d}", "0")) == "1":
-                continue  # bu kun hisoboti ketgan — tahrirlanmaydi
             editable.extend(await q.list_dayoff_plans_for_date(d))
         if not editable:
             return
@@ -280,34 +424,45 @@ async def send_dayoff_report(bot: Bot, target_tg_ids, date_iso, note_empty=False
     confirmed = await q.list_dayoff_plans_for_date(date_iso, status="confirmed")
     pending = await q.list_dayoff_plans_for_date(date_iso, status="pending")
     branches_data = []
-    # Tasdiqlangan + tasdiqlanmagan rejalarni ham qo'shamiz — rahbar tasdiqlamay
-    # qolsa ham o'sha filial xodimlari hisobotdan tushib qolmasligi uchun
-    # (tasdiqlanmaganlari «⏳» bilan alohida belgilanadi).
-    for plan in [*confirmed, *pending]:
+    # Rasmiy Excelga faqat rahbar/HR tasdiqlagan rejalar kiradi. Pending filiallar
+    # captionda aniq ko'rsatiladi, lekin tasdiqlangandek hisobotga aralashtirilmaydi.
+    for plan in confirmed:
         items = await q.list_dayoff_plan_items(plan["id"])
         name = plan.get("branch_name") or "Filialsiz"
-        if plan.get("status") != "confirmed":
-            name += " ⏳ (tasdiqlanmagan)"
+        enriched = []
+        for it in items:
+            item = dict(it)
+            item["scheduled_status"] = expected_day_status(
+                item.get("rest_day"), plan.get("weekday")
+            )
+            item["is_override"] = item.get("day_status") != item["scheduled_status"]
+            enriched.append(item)
         branches_data.append({
             "branch_name": name,
-            "items": items,
+            "weekday": plan.get("weekday"),
+            "items": enriched,
         })
     if not branches_data:
-        if note_empty:
-            for tid in target_tg_ids:
-                from utils import safe_send
-                await safe_send(
-                    bot, tid,
-                    f"🛌 <b>{iso_to_display(date_iso)}</b> uchun tasdiqlangan dam olish "
-                    "rejasi yo'q.\n"
-                    + (f"⏳ Tasdiq kutilayotgan: {len(pending)} filial." if pending else ""),
-                )
-        return
+        sent = 0
+        for tid in target_tg_ids:
+            from utils import safe_send
+            if await safe_send(
+                bot, tid,
+                f"🛌 <b>{iso_to_display(date_iso)}</b> uchun tasdiqlangan dam olish "
+                "rejasi yo'q.\n"
+                + (f"⏳ Tasdiq kutilayotgan: {len(pending)} filial." if pending else ""),
+            ):
+                sent += 1
+        return sent
     summary = _dayoff_summary_text(date_iso, branches_data, pending)
     xlsx = export.build_dayoff_xlsx(branches_data, iso_to_display(date_iso))
+    sent = 0
     for tid in target_tg_ids:
         try:
             await bot.send_document(tid, xlsx, caption=summary)
+            sent += 1
         except Exception:
             from utils import safe_send
-            await safe_send(bot, tid, summary)
+            if await safe_send(bot, tid, summary):
+                sent += 1
+    return sent

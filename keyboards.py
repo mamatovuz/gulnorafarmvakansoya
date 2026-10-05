@@ -3019,11 +3019,20 @@ def dayoff_plan_edit_kb(plan_id, items):
     b = InlineKeyboardBuilder()
     for it in items:
         if it.get("day_status") == "work":
-            label = f"🟢 {it.get('full_name') or '-'} — ishga keladi"
+            label = f"🟢 {it.get('full_name') or '-'} · KELADI ⇄"
         else:
-            label = f"🔴 {it.get('full_name') or '-'} — kelmaydi"
+            label = f"🔴 {it.get('full_name') or '-'} · DAM OLADI ⇄"
         b.button(text=label, callback_data=f"dopl_tog:{it['id']}")
     b.button(text="✅ Tasdiqlash", callback_data=f"dopl_ok:{plan_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_plan_override_confirm_kb(plan_id):
+    """Doimiy jadvaldan farq qiladigan holatlar uchun ikkinchi tasdiq."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, o'zgarishlar to'g'ri", callback_data=f"dopl_force:{plan_id}")
+    b.button(text="✏️ Yo'q, tekshiraman", callback_data=f"dopl_edit:{plan_id}")
     b.adjust(1)
     return b.as_markup()
 

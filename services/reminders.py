@@ -377,7 +377,7 @@ async def _run_dayoff_prompt(bot: Bot):
     flag_key = f"dayoff_prompt_sent:{plan_date}"
     if str(await q.get_setting(flag_key, "0")) == "1":
         return
-    from handlers.dayoff_plan import weekday_uz, plan_prompt_text
+    from handlers.dayoff_plan import weekday_uz, plan_prompt_text, expected_day_status
     weekday = weekday_uz(plan_dt)
     branches = await q.list_branches()
     for br in branches:
@@ -387,20 +387,23 @@ async def _run_dayoff_prompt(bot: Bot):
         if plan_id is None:
             continue  # allaqachon yaratilgan (qayta yubormaymiz)
         profiles = await q.list_employee_profiles(branch_id=br["id"])
-        # Filialning BARCHA xodimini rejaga qo'shamiz: rest_day ertangi kunga
-        # to'g'ri kelsa 🟢 dam oladi ('off'), aks holda 🔴 ishga keladi ('work').
+        # Filialning BARCHA xodimini rejaga qo'shamiz: doimiy dam kuni ertangi
+        # kunga to'g'ri kelsa 🔴 dam oladi, aks holda 🟢 ishga keladi.
         # Rahbar hammasini ko'rib, kerak bo'lsa tahrirlaydi.
         for p in profiles:
-            status = "off" if (p.get("rest_day") or "").strip() == weekday else "work"
+            status = expected_day_status(p.get("rest_day"), weekday)
             await q.add_dayoff_plan_item(
                 plan_id, p["user_id"], p.get("full_name"), p.get("position"),
                 day_status=status,
             )
         mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=br["id"])
-        if not mgr_ids or not profiles:
-            # Rahbari yo'q yoki filialda xodim yo'q — rejani avtomatik
-            # tasdiqlaymiz (tasdiqlaydigan rahbar yo'q / bezovta qilmaymiz).
+        if not profiles:
+            # Xodimsiz filialda tasdiqlaydigan ma'lumot yo'q.
             await q.set_dayoff_plan_status(plan_id, "confirmed")
+            continue
+        if not mgr_ids:
+            # Rahbarsiz filialni avtomatik tasdiqlamaymiz: HR hisobotida pending
+            # deb ko'rinadi va tasdiqlanmagan ma'lumot rasmiy Excelga kirmaydi.
             continue
         plan = await q.get_dayoff_plan(plan_id)
         items = await q.list_dayoff_plan_items(plan_id)
@@ -446,8 +449,11 @@ async def _run_dayoff_report(bot: Bot):
         return
     from handlers.dayoff_plan import send_dayoff_report
     ids = set(await q.all_user_tg_ids(role=ROLE_HR)) | set(await q.all_user_tg_ids(role=ROLE_ADMIN))
-    if ids:
-        await send_dayoff_report(bot, ids, date_iso, note_empty=False)
+    if not ids:
+        return
+    sent = await send_dayoff_report(bot, ids, date_iso, note_empty=False)
+    if not sent:
+        return  # Telegram xatosida keyingi loop qayta urinadi
     await q.set_setting(flag_key, "1")
     logger.info("Kunlik dam olish hisoboti HR ga yuborildi (%s)", date_iso)
 
@@ -767,7 +773,7 @@ async def _run_attendance_reminders(bot: Bot):
 
     if str(await q.get_setting("att_reminder_enabled", "1")) != "1":
         return
-    from handlers.dayoff_plan import weekday_uz
+    from handlers.dayoff_plan import weekday_uz, canonical_weekday
     today = weekday_uz(now)
 
     profiles = await q.list_employee_profiles()
@@ -777,7 +783,7 @@ async def _run_attendance_reminders(bot: Bot):
         if not tg:
             continue
         # Dam olish kuni bo'lsa — eslatma yubormaymiz
-        if (p.get("rest_day") or "").strip() == today:
+        if canonical_weekday(p.get("rest_day")) == today:
             continue
         wh = p.get("work_hours")
         if not wh:
