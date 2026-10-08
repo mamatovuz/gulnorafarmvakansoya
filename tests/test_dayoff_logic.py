@@ -165,3 +165,50 @@ async def test_official_report_excludes_pending_branches(monkeypatch):
     assert "Tasdiqlangan filial" in all_text
     assert "Kutilayotgan filial" not in all_text
     assert "Kutilayotgan filial" in caption
+
+
+def test_confirmed_plan_text_marks_overrides():
+    from handlers.dayoff_plan import confirmed_plan_text
+    plan = {"plan_date": "2026-10-09", "weekday": "Juma",
+            "branch_name": "Paytug' filiali", "confirmed_at": "2026-10-08 17:06:00"}
+    items = [
+        {"id": 1, "full_name": "Ulmasov Ahmadullo", "rest_day": "Juma", "day_status": "off"},
+        {"id": 2, "full_name": "Зокирова Раънохон", "rest_day": "Yakshanba", "day_status": "off"},
+        {"id": 3, "full_name": "Шамсутдинов", "rest_day": "Жума", "day_status": "work"},
+    ]
+    text = confirmed_plan_text(plan, items, "Солийев Султонбек")
+    assert "Tasdiqladi: Солийев Султонбек" in text
+    assert "Ulmasov Ahmadullo — Juma" in text
+    assert "doimiy dam kuni: Yakshanba ⚠️ jadvaldan farqli" in text
+    # Kirillcha dam kuni kanonik nomga keltiriladi va «keladi» farqi ko'rinadi
+    assert "Шамсутдинов — dam kuni bo'lsa ham ishga keladi" in text
+    assert "farqli o'zgarish: <b>2</b>" in text
+
+
+def test_hr_status_list_shows_confirmed_and_pending(env):
+    from database import queries as q
+    from handlers import dayoff_plan as module
+    for bid, name in ((701, "Asaka filiali"), (702, "Qo'rg'ontepa filiali"),
+                      (703, "Yangi filial")):
+        sql(env, "INSERT INTO branches (id,name) VALUES (?,?)", (bid, name))
+    # Rahbar: users.branch_id bo'sh, filial faqat profilda
+    sql(env, "INSERT INTO users (id,tg_id,full_name,role) VALUES (?,?,?,?)",
+        (801, 998000801, "Rahbar Profil", "manager"))
+    sql(env, "INSERT INTO employee_profiles (user_id,role,position,branch_id) "
+             "VALUES (?,?,?,?)", (801, "manager", "Filial rahbari", 702))
+    p1 = run(env, q.create_dayoff_plan, 701, "2026-10-09", "Juma")
+    p2 = run(env, q.create_dayoff_plan, 702, "2026-10-09", "Juma")
+    run(env, q.set_dayoff_plan_status, p1, "confirmed", None)
+
+    text, markup = run(env, module._status_list_view, "2026-10-09")
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    datas = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert "✅ Tasdiqlagan: <b>1</b>" in text
+    assert "❌ Tasdiqlamagan: <b>1</b>" in text
+    assert labels[0] == "❌ Qo'rg'ontepa filiali"  # tasdiqlamaganlar tepada
+    assert any(lbl.startswith("✅ Asaka filiali") for lbl in labels)
+    assert any(lbl.startswith("⚪ Yangi filial") for lbl in labels)
+    assert f"dolbr:{p2}" in datas
+
+    managers = run(env, module.branch_manager_tg_ids, 702)
+    assert managers == [998000801]

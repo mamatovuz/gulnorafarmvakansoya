@@ -377,3 +377,9 @@ class BranchTransferForm(StatesGroup):
     Filial tugmalar orqali tanlanadi — yozish faqat HR ⇄ xodim yozishmasida."""
     hr_message = State()   # HR xodimga xabar yozadi
     reply_text = State()   # xodim HR xabariga javob yozadi
+
+
+class DayoffNudgeForm(StatesGroup):
+    """HR kunlik dam olishni tasdiqlamagan filial rahbariga xabar yozadi."""
+    text = State()      # xabar matni
+    confirm = State()   # ko'rib chiqib yuborish / bekor qilish

@@ -56,6 +56,8 @@ MENU_ESCAPE_BUTTONS = {
     "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
     FINES_REPORT_BTN, DIRECTOR_REPORTS_BTN, "📑 Hisobot (Excel)",
+    "📋 Kunlik dam olish tasdiqlari", "🛌 Kunlik dam olish",
+    "🛌 Dam olish / sinov",
 }
 
 
@@ -554,6 +556,8 @@ HR_SEC_ADVANCE = "💵 Avans / maosh"
 HR_SEC_BROADCAST = "📢 Xabarnomalar"
 HR_SEC_MANAGE = "🛠 Xodimlarni boshqarish"
 HR_BACK_BTN = "👨‍💼 HR panel"
+# Filiallar kunlik dam olish rejasini tasdiqladimi — ✅/❌ ro'yxat
+DAYOFF_STATUS_BTN = "📋 Kunlik dam olish tasdiqlari"
 
 
 def hr_menu():
@@ -615,6 +619,7 @@ def hr_applications_menu():
 def hr_attendance_menu():
     return _hr_section_kb([
         "🛌 Dam olish so'rovlari",
+        DAYOFF_STATUS_BTN,
         "🛌 Kunlik dam olish",
         "🧪 Sinov muddati",
     ])
@@ -3047,5 +3052,63 @@ def dayoff_plan_branch_pick_kb(plans):
         if d:
             label += f" · {d}"
         b.button(text=label, callback_data=f"dopl_edit:{p['id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- HR: FILIALLAR KUNLIK TASDIG'I (✅ / ❌) ----------------
+def dayoff_status_list_kb(rows, date_iso, other_date=None, other_label=None):
+    """Filiallar ro'yxati: ✅ tasdiqlagan / ❌ tasdiqlamagan / ⚪ reja yo'q.
+
+    rows: [{"label": str, "cb": str}]"""
+    b = InlineKeyboardBuilder()
+    for r in rows:
+        b.button(text=r["label"], callback_data=r["cb"])
+    b.button(text="🔄 Yangilash", callback_data=f"dolst:{date_iso}")
+    if other_date:
+        b.button(text=other_label or other_date, callback_data=f"dolst:{other_date}")
+    b.adjust(*([1] * len(rows)), 2 if other_date else 1)
+    return b.as_markup()
+
+
+def dayoff_status_confirmed_kb(plan_id, date_iso):
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ Tahrirlash", callback_data=f"dopl_edit:{plan_id}")
+    b.button(text="⬅️ Filiallar", callback_data=f"dolst:{date_iso}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_status_pending_kb(plan_id, date_iso, has_manager=True):
+    b = InlineKeyboardBuilder()
+    if has_manager:
+        b.button(text="✉️ Filial rahbariga xabar yuborish", callback_data=f"dolmsg:{plan_id}")
+        b.button(text="🔔 Tasdiqlash so'rovini qayta yuborish", callback_data=f"dolrem:{plan_id}")
+    b.button(text="✏️ O'zim tahrirlab tasdiqlayman", callback_data=f"dopl_edit:{plan_id}")
+    b.button(text="⬅️ Filiallar", callback_data=f"dolst:{date_iso}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def dayoff_nudge_cancel_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="❌ Bekor qilish", callback_data="dolcancel")
+    return b.as_markup()
+
+
+def dayoff_nudge_confirm_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="📤 Yuborish", callback_data="dolsend")
+    b.button(text="✏️ Qayta yozish", callback_data="dolretype")
+    b.button(text="❌ Bekor qilish", callback_data="dolcancel")
+    b.adjust(1, 2)
+    return b.as_markup()
+
+
+def dayoff_nudge_manager_kb(plan_id):
+    """Rahbarga borgan HR xabari ostida: rejani ochish + HR ga javob."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🛌 Rejani ochib tasdiqlash", callback_data=f"dopl_edit:{plan_id}")
+    b.button(text="✍️ HR ga javob yozish", callback_data="dolreply")
     b.adjust(1)
     return b.as_markup()

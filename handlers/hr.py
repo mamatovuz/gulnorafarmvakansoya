@@ -1,6 +1,7 @@
 """HR panel handlerlari."""
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.fsm.context import FSMContext
 
 from database import queries as q
@@ -3338,7 +3339,8 @@ async def rejected_staff_reg_view(call: CallbackQuery):
 @router.message(F.text == "👥 Xodimlar")
 async def hr_employees(message: Message, state: FSMContext):
     if not await is_staff(message.from_user.id):
-        return
+        # Xuddi shu tugma IT panelida ham bor (handlers/it.py) — u ishlasin
+        raise SkipHandler()
     await state.clear()
     total = len(await q.list_employee_profiles())
     if not total:

@@ -377,7 +377,9 @@ async def _run_dayoff_prompt(bot: Bot):
     flag_key = f"dayoff_prompt_sent:{plan_date}"
     if str(await q.get_setting(flag_key, "0")) == "1":
         return
-    from handlers.dayoff_plan import weekday_uz, plan_prompt_text, expected_day_status
+    from handlers.dayoff_plan import (
+        weekday_uz, plan_prompt_text, expected_day_status, branch_manager_tg_ids,
+    )
     weekday = weekday_uz(plan_dt)
     branches = await q.list_branches()
     for br in branches:
@@ -396,7 +398,7 @@ async def _run_dayoff_prompt(bot: Bot):
                 plan_id, p["user_id"], p.get("full_name"), p.get("position"),
                 day_status=status,
             )
-        mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=br["id"])
+        mgr_ids = await branch_manager_tg_ids(br["id"])
         if not profiles:
             # Xodimsiz filialda tasdiqlaydigan ma'lumot yo'q.
             await q.set_dayoff_plan_status(plan_id, "confirmed")
@@ -502,7 +504,7 @@ async def _run_dayoff_reminders(bot: Bot):
         interval = int(await q.get_setting("dayoff_reminder_min", "30") or 30)
     except (TypeError, ValueError):
         interval = 30
-    from handlers.dayoff_plan import plan_prompt_text
+    from handlers.dayoff_plan import plan_prompt_text, branch_manager_tg_ids
     today = now.strftime("%Y-%m-%d")
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
     for date_iso in (today, tomorrow):
@@ -520,7 +522,7 @@ async def _run_dayoff_reminders(bot: Bot):
                         continue
                 except ValueError:
                     pass
-            mgr_ids = await q.all_user_tg_ids(role=ROLE_MANAGER, branch_id=plan["branch_id"])
+            mgr_ids = await branch_manager_tg_ids(plan["branch_id"])
             items = await q.list_dayoff_plan_items(plan["id"])
             if not mgr_ids or not items:
                 continue
