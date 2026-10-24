@@ -175,3 +175,28 @@ xuddi shu imzo formati, secret = `INTEGRATION_INBOUND_SECRET`. Bir xil `id` ikki
 - Maxfiy ma'lumotlar: kalit/secret/token javob va loglarga chiqmaydi (secret faqat yaratilganda bir marta ko'rsatiladi); maosh va hujjatlar alohida scope bilan beriladi; rasm bot token ko'rinmasligi uchun proksi orqali uzatiladi.
 - Rate limit har kalitga alohida (standart 120/daqiqa), muvaffaqiyatsiz auth urinishlari IP bo'yicha cheklanadi. CORS standart holatda o'chiq.
 - Production uchun API ni HTTPS reverse-proxy (nginx/caddy) ortida ishga tushiring va `WEBHOOK_REQUIRE_HTTPS=true` qiling.
+
+## 2026-10-13 yangilanish: maosh, to'liq xodim ma'lumoti, mustahkam xabar yuborish
+
+**Maosh (salary)**
+- `staffora` preset endi `employees:salary` ni ham beradi. Eski Staffora kaliti (employees:write + integration:write) **API ishga tushganda avtomatik** maosh ruxsatini oladi, uning webhooklarida `include_salary=1` yoqiladi (bir martalik migratsiya, `settings.api_salary_upgrade`).
+- Xodim javobida: `salary = {monthly_salary (botdagi matn), amount (so'm, int), currency, is_set, source, current_month}` va qisqa `monthly_salary` (int). `amount` «4 mln», «800 ming», «3 000 000 so'm» ni to'g'ri o'qiydi.
+- Profil oyligi bo'sh bo'lsa — kelishilgan oylik zaxira sifatida olinadi: sinov (`probation`) → ariza (`application`, agreed) → ro'yxatdan o'tish (`registration`). Hech biri bo'lmasa `is_set=false` — botda «💰 Oylik belgilash» orqali kiriting.
+- `current_month` — botdagi «🧮 Yakuniy oylik» formulasi: `final_amount = amount - jarimalar - tasdiqlangan avans - dorilar - KPI`.
+- `GET /employees/{id}/finance?period=YYYY-MM` — jarimalar, avanslar, dorilar, KPI kesimlar, to'lovlar, maosh oshirish so'rovlari (`employees:salary`).
+- Yozish: `monthly_salary` raqam (`3000000`) yoki matn bo'lishi mumkin — botda «3 000 000 so'm» bo'lib saqlanadi.
+- `/integration/changes` lentasi va webhooklar endi maoshni ham olib boradi (ruxsat bo'lmasa olib tashlanadi).
+
+**To'liq xodim ma'lumoti**: `first_name / last_name / middle_name`, `telegram_name`, `gender`, `questionnaire` (shahar, tuman, oilaviy holat, farzandlar, tillar, kompyuter, tajriba, qabul turi; maosh ruxsati bilan — avvalgi/kutilgan/kelishilgan oylik), `probation` (sinov/o'rganuvchi muddati), `updated_by_self_at`. `employees:sensitive` bilan: `GET /employees/{id}/documents/{passport_front|passport_back|diploma|photo}`.
+
+**Webhook hodisalari**: jarima, avans, dori, KPI, oylik to'lovi, maosh oshirish, sinov o'zgarsa va pasport/diplom yuklansa ham `employee.updated` ketadi (`TRIGGER_VERSION=2`).
+
+**Takroriy yaratish (idempotent)**: `POST /departments|branches|positions|employees` da `external_ids` allaqachon bog'langan bo'lsa — `external_id_conflict` o'rniga mavjud yozuv yangilanadi va o'sha `id` qaytadi. Bir xil `code` li bo'lim/filial, bir xil nomli lavozim ham shunga bog'lanadi.
+
+**Bildirishnomalar (`POST /notifications`)**
+- Qabul qiluvchi: `employee_id` | `telegram_id` | `external_id` (+`external_source`, standart `staffora`). Ishdan bo'shagan, lekin botdagi foydalanuvchiga ham yuboriladi.
+- `format: "html"` (Telegram HTML), `buttons: [{text, url}]` (inline URL tugma), `reference_id`, `message` 12000 belgigacha (4096 dan uzuni bo'linadi). `type` katta harf bo'lsa ham qabul qilinadi.
+- Yuborish: Telegram flood (429) da `retry_after` kutiladi; HTML xatosida oddiy matnga o'tadi; bloklagan/chat topilmadi — doimiy xato (`permanent_failure=true`, qayta urinilmaydi); vaqtinchalik xatoda 1/5/15/60 daqiqa backoff, 5 urinish; atomik egallash — ikki marta ketmaydi.
+- `POST /notifications/{id}/retry` — qo'lda qayta navbatga qo'yish. Javobda `next_attempt_at`, `telegram_message_id`.
+
+**API kalit ruxsatini o'zgartirish**: `PATCH /api-keys/{id}` `{"add_scopes": ["employees:salary"]}` (admin).

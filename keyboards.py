@@ -33,6 +33,12 @@ HR_REQUEST_BTN = "📩 HR ga murojaat"
 MY_FINES_BTN = "💸 Mening jarimalarim"
 FINES_REPORT_BTN = "📊 Hisobot olish"  # Moliya paneli — jarimalar Excel hisoboti
 DIRECTOR_REPORTS_BTN = "📑 Hisobotlar"  # Direktor paneli — Excel hisobotlar menyusi
+# Moliya: jarimalarni ijro etish / bekor qilish (sabab bilan) paneli
+FINES_CONTROL_BTN = "⚖️ Jarimalar nazorati"
+# HR / direktor / rahbar: qaysi jarima ijro etilgan, qaysisi bekor qilingan
+FINES_STATUS_BTN = "📋 Jarimalar holati"
+# Filial rahbari: o'z filiali xodimiga jarima qo'llash
+MANAGER_FINE_BTN = "💸 Jarima qo'llash"
 
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
@@ -56,6 +62,7 @@ MENU_ESCAPE_BUTTONS = {
     "✅ Bajarilgan ishlar", "🔧 Texnik ishlar",
     EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
     FINES_REPORT_BTN, DIRECTOR_REPORTS_BTN, "📑 Hisobot (Excel)",
+    FINES_CONTROL_BTN, FINES_STATUS_BTN, MANAGER_FINE_BTN, "🚫 Jarimani bekor qilish",
     "📋 Kunlik dam olish tasdiqlari", "🛌 Kunlik dam olish",
     "🛌 Dam olish / sinov",
 }
@@ -649,6 +656,7 @@ def hr_manage_menu():
         "🔀 Filial almashtirish",
         "🚫 Ishdan bo'shatish",
         "🧑‍💼 Ishdan bo'shaganlar",
+        FINES_STATUS_BTN,
     ])
 
 
@@ -667,14 +675,72 @@ def rejected_requests_kb(apps, regs):
     return b.as_markup()
 
 
-def probations_list_kb(probations, prefix="probview"):
+def _probation_btn_tail(p):
+    """Ro'yxat tugmasi oxiri: necha kun qoldi / qachon tugadi / qachon chiqadi."""
+    from utils import days_left_until, iso_to_display
+    st = p.get("status")
+    if st == "awaiting":
+        return f"chiqishi: {iso_to_display(p.get('start_date'))[:5]}"
+    if st == "active":
+        left = days_left_until(p.get("end_date"))
+        if left is not None and left >= 0:
+            return "bugun tugaydi" if left == 0 else f"{left} kun qoldi"
+    if st in ("active", "finished"):
+        return f"{iso_to_display(p.get('end_date'))[:5]} tugadi"
+    return {
+        "passed": "doimiy", "no_show": "kelmadi", "dismissed": "bo'shatilgan",
+        "replaced": "qayta qabul",
+    }.get(st, st or "-")
+
+
+def probations_list_kb(probations, prefix="probview", mark=None):
+    """Sinov/o'rganish ro'yxati. `mark` — barcha tugmalar uchun bitta belgi
+    (toifa: ⚠️ / 🟢 / ⏳ / 🏁). Berilmasa holatdan aniqlanadi."""
     b = InlineKeyboardBuilder()
     for p in probations:
-        mark = "🏁" if p.get("status") == "finished" else "🟢"
+        m = mark or {"finished": "🏁", "awaiting": "⏳"}.get(p.get("status"), "🟢")
+        kind = "🎓" if p.get("kind") == "learner" else ""
+        name = p.get("full_name") or "-"
+        branch = p.get("branch_name") or "-"
         b.button(
-            text=f"{mark} {p.get('full_name') or '-'} · {p.get('branch_name') or '-'}",
+            text=f"{m}{kind} {name} · {branch} · {_probation_btn_tail(p)}",
             callback_data=f"{prefix}:{p['id']}",
         )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def probation_panel_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="🗂 Yakunlanganlar arxivi", callback_data="probarch")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def probation_actions_kb(p):
+    """Sinov kartochkasi ostidagi amallar — holatga qarab."""
+    b = InlineKeyboardBuilder()
+    pid = p["id"]
+    st = p.get("status")
+    if st == "awaiting":
+        b.button(text="✅ Ishga keldi (HR tasdiqlaydi)", callback_data=f"probarr:ok:{pid}")
+        b.button(text="❌ Kelmadi", callback_data=f"probarr:no:{pid}")
+        b.button(text="🔔 Rahbarga qayta yuborish", callback_data=f"probnudge:{pid}")
+        b.adjust(2, 1)
+        return b.as_markup()
+    if st in ("active", "finished") and p.get("has_profile", 1):
+        b.button(text="✅ Doimiy xodim qilish", callback_data=f"probpass:{pid}")
+        b.button(text="🔁 Muddatni uzaytirish", callback_data=f"probext:{pid}")
+        b.button(text="🚫 Ishdan bo'shatish", callback_data=f"hrfask:{p['user_id']}")
+        b.adjust(1)
+        return b.as_markup()
+    return None
+
+
+def probation_pass_confirm_kb(pid):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, doimiy xodim", callback_data=f"probpassok:{pid}")
+    b.button(text="❌ Bekor qilish", callback_data=f"probpassno:{pid}")
     b.adjust(1)
     return b.as_markup()
 
@@ -740,13 +806,18 @@ def application_branch_filter_kb(branch_id):
     return b.as_markup()
 
 
-def application_actions_kb(aid, favorite=False):
+def application_actions_kb(aid, favorite=False, accepted=False):
+    """Ariza tugmalari. Qabul qilingan arizada 3 ta qabul tugmasi o'rniga bitta
+    «🔄 Boshidan qabul qilish» chiqadi (kim qabul qilgani alohida ko'rsatiladi)."""
     b = InlineKeyboardBuilder()
     b.button(text="👁 Batafsil", callback_data=f"appview:{aid}")
     b.button(text="📅 Suhbatga chaqirish", callback_data=f"appint:{aid}")
-    b.button(text="✅ Ishga qabul", callback_data=f"apphire:{aid}")
-    b.button(text="🧪 Sinovga qabul", callback_data=f"apptrial:{aid}")
-    b.button(text="🎓 O'rganuvchi qilib qabul", callback_data=f"applearn:{aid}")
+    if accepted:
+        b.button(text="🔄 Boshidan qabul qilish", callback_data=f"appagain:{aid}")
+    else:
+        b.button(text="✅ Ishga qabul", callback_data=f"apphire:{aid}")
+        b.button(text="🧪 Sinovga qabul", callback_data=f"apptrial:{aid}")
+        b.button(text="🎓 O'rganuvchi qilib qabul", callback_data=f"applearn:{aid}")
     b.button(text="💰 Oylik taklif qilish", callback_data=f"appsal:{aid}")
     b.button(text="⏳ Kutish (bazaga qo'shish)", callback_data=f"appwait:{aid}")
     b.button(text="❌ Rad etish", callback_data=f"apprej:{aid}")
@@ -754,7 +825,38 @@ def application_actions_kb(aid, favorite=False):
     b.button(text="💬 Nomzodga xabar", callback_data=f"appmsg:{aid}")
     fav_label = "⭐ Saralangan ✓" if favorite else "⭐ Saralashga qo'shish"
     b.button(text=fav_label, callback_data=f"appfav:{aid}")
-    b.adjust(1, 2, 2, 2, 2, 2)
+    if accepted:
+        b.adjust(1, 1, 1, 2)
+    else:
+        b.adjust(1, 2, 2, 2, 2, 2)
+    return b.as_markup()
+
+
+def application_accepted_kb(aid, pid=None, awaiting=False, with_reaccept=True):
+    """Qabul qilingan ariza holati ostidagi tugmalar (bo'lmasa None)."""
+    b = InlineKeyboardBuilder()
+    rows = []
+    if awaiting and pid:
+        b.button(text="✅ Ishga keldi (HR tasdiqlaydi)", callback_data=f"probarr:ok:{pid}")
+        b.button(text="❌ Kelmadi", callback_data=f"probarr:no:{pid}")
+        rows.append(2)
+    if with_reaccept:
+        b.button(text="🔄 Boshidan qabul qilish", callback_data=f"appagain:{aid}")
+        rows.append(1)
+    if not rows:
+        return None
+    b.adjust(*rows)
+    return b.as_markup()
+
+
+def application_reaccept_kb(aid):
+    """«🔄 Boshidan qabul qilish» — qaysi maqomda qayta qabul qilinadi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ishga (doimiy)", callback_data=f"appagk:hire:{aid}")
+    b.button(text="🧪 Sinovga", callback_data=f"appagk:trial:{aid}")
+    b.button(text="🎓 O'rganuvchi", callback_data=f"appagk:learner:{aid}")
+    b.button(text="❌ Bekor qilish", callback_data=f"appagno:{aid}")
+    b.adjust(1, 2, 1)
     return b.as_markup()
 
 
@@ -1121,6 +1223,22 @@ def search_field_kb():
     return b.as_markup()
 
 
+# Vakansiya yaratishda tayyor variantlar (qo'lda yozish ham mumkin)
+VACANCY_JOB_TYPES = ["To'liq stavka", "Yarim stavka", "Smenali ish", "Amaliyot (stajirovka)"]
+VACANCY_SHIFTS = ["🌞 Ertalabki smena", "🌙 Kechki smena", "🔄 Ikki smenali", "🕘 Kunduzgi (1 smena)"]
+VACANCY_WORK_TIMES = ["08:00 - 17:00", "09:00 - 18:00", "08:00 - 20:00", "14:00 - 00:00"]
+
+
+def vacancy_options_kb(options, row=2):
+    """Vakansiya maydoni uchun tayyor variantlar (reply tugmalar)."""
+    b = ReplyKeyboardBuilder()
+    for o in options:
+        b.button(text=o)
+    b.adjust(row)
+    return b.as_markup(resize_keyboard=True, one_time_keyboard=True,
+                       input_field_placeholder="Tanlang yoki o'zingiz yozing")
+
+
 def yes_no_active_kb():
     b = InlineKeyboardBuilder()
     b.button(text="✅ Faol", callback_data="vac_active:1")
@@ -1294,8 +1412,14 @@ def manager_requests_list_kb(requests, prefix="mrview"):
 def fines_list_kb(fines, prefix="fineview"):
     b = InlineKeyboardBuilder()
     for fine in fines:
+        if fine.get("cancelled") or fine.get("status") == "cancelled":
+            mark = "🚫 "
+        elif fine.get("status") == "executed":
+            mark = "✅ "
+        else:
+            mark = "⏳ "
         b.button(
-            text=f"#{fine['id']} · {fine['amount']} · {fine.get('created_at') or ''}",
+            text=f"{mark}#{fine['id']} · {fine['amount']} · {fine.get('created_at') or ''}",
             callback_data=f"{prefix}:{fine['id']}",
         )
     b.adjust(1)
@@ -1325,10 +1449,14 @@ def pharmacist_manage_kb(user_id, uniform_status=None):
     return b.as_markup()
 
 
-def staff_fire_kb(user_id):
-    """Xodim profili tagida «Hujjatlar» va «Ishdan bo'shatish» tugmalari (rahbar/direktor)."""
+def staff_fire_kb(user_id, with_fine=False):
+    """Xodim profili tagida «Hujjatlar» va «Ishdan bo'shatish» tugmalari (rahbar/direktor).
+
+    with_fine=True — filial rahbari uchun «💸 Jarima qo'llash» ham chiqadi."""
     b = InlineKeyboardBuilder()
     b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"empdocs:{user_id}")
+    if with_fine:
+        b.button(text="💸 Jarima qo'llash", callback_data=f"mgrfine:{user_id}")
     b.button(text="🚫 Ishdan bo'shatish", callback_data=f"fire:{user_id}")
     b.adjust(1)
     return b.as_markup()
@@ -1786,8 +1914,10 @@ def manager_menu():
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="📋 Mening so'rovlarim")
     b.button(text="💬 HR ga xabar")
+    b.button(text=MANAGER_FINE_BTN)
+    b.button(text=FINES_STATUS_BTN)
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -1812,6 +1942,7 @@ def director_menu():
     b.button(text="📈 Taqqoslash")
     b.button(text="🔧 Texnik ishlar")
     b.button(text="💸 Jarima qo'llash")
+    b.button(text=FINES_STATUS_BTN)
     b.button(text=DIRECTOR_REPORTS_BTN)
     b.button(text="🏠 Asosiy menyu")
     b.adjust(2, 2, 2, 2, 2, 2, 2, 2, 1)
@@ -2183,7 +2314,7 @@ EMP_EDIT_FIELDS = [
     ("birth_date", "📅 Tug'ilgan sana", "📅 Tug'ilgan sanani yozing (kun.oy.yil):"),
     ("address", "📍 Manzil", "📍 Yangi manzilni yozing:"),
     ("work_hours", "🕒 Ish vaqti", "🕒 Ish vaqtini yozing (masalan 08:00 - 17:00):"),
-    ("rest_day", "🛌 Dam olish kuni", "🛌 Dam olish kunini yozing (masalan Yakshanba):"),
+    ("rest_day", "🛌 Dam olish kuni", "🛌 Dam olish kunini tanlang:"),
     ("monthly_salary", "💰 Oylik", "💰 Oylik miqdorini yozing:"),
     ("education", "🎓 Ma'lumoti", "🎓 Ma'lumoti / diplomini yozing:"),
     ("since", "⏳ Gulnora Farmda", "⏳ Necha yildan beri ishlashini yozing:"),
@@ -2191,6 +2322,57 @@ EMP_EDIT_FIELDS = [
 ]
 
 EMP_EDIT_PROMPTS = {k: prompt for k, _label, prompt in EMP_EDIT_FIELDS}
+
+
+# Qo'lda yozish o'rniga tugma bilan tanlanadigan maydonlar (emmopt:{uid}:{field}:{i}).
+# Qiymat bazaga aynan shu matn bilan yoziladi (dam kuni — kanonik o'zbekcha nom).
+EMP_EDIT_CHOICES = {
+    "rest_day": i18n_choices("rest_day", "uz"),
+    "work_hours": [
+        "08:00 - 17:00", "09:00 - 18:00", "08:00 - 20:00",
+        "14:00 - 00:00", "20:00 - 08:00",
+    ],
+    "since": i18n_choices("since", "uz"),
+}
+# Tugmalardan tashqari «✍️ Qo'lda yozish» ham ruxsat etilgan maydonlar
+EMP_EDIT_ALLOW_TYPING = {"work_hours", "since", "position"}
+
+EMP_EDIT_CHOICE_TITLES = {
+    "rest_day": "🛌 <b>Dam olish kunini tanlang:</b>",
+    "work_hours": "🕒 <b>Ish vaqtini tanlang</b> (ro'yxatda bo'lmasa «✍️ Qo'lda yozish»):",
+    "since": "⏳ <b>Gulnora Farmda qancha vaqtdan beri ishlaydi?</b>",
+    "position": "💼 <b>Lavozimni tanlang</b> (ro'yxatda bo'lmasa «✍️ Qo'lda yozish»):",
+}
+
+
+def emp_manage_choice_kb(uid, field, current=None):
+    """Maydon qiymatini tugmalardan tanlash (joriy qiymat ✅ bilan belgilanadi)."""
+    b = InlineKeyboardBuilder()
+    options = EMP_EDIT_CHOICES.get(field, [])
+    for i, opt in enumerate(options):
+        mark = "✅ " if current and current.strip() == opt else ""
+        b.button(text=f"{mark}{opt}", callback_data=f"emmopt:{uid}:{field}:{i}")
+    sizes = [2] * (len(options) // 2) + ([1] if len(options) % 2 else [])
+    if field in EMP_EDIT_ALLOW_TYPING:
+        b.button(text="✍️ Qo'lda yozish", callback_data=f"emmtype:{uid}:{field}")
+        sizes.append(1)
+    b.button(text="⬅️ Orqaga", callback_data=f"emmedit:{uid}")
+    sizes.append(1)
+    b.adjust(*sizes)
+    return b.as_markup()
+
+
+def emp_manage_position_kb(uid, positions, current=None):
+    """Lavozimni «🏷 Lavozimlar» ro'yxatidan tanlash."""
+    b = InlineKeyboardBuilder()
+    for p in positions:
+        name = p.get("name") or "-"
+        mark = "✅ " if current and current.strip() == name else ""
+        b.button(text=f"{mark}{name}", callback_data=f"emmpos:{uid}:{p['id']}")
+    b.button(text="✍️ Qo'lda yozish", callback_data=f"emmtype:{uid}:position")
+    b.button(text="⬅️ Orqaga", callback_data=f"emmedit:{uid}")
+    b.adjust(1)
+    return b.as_markup()
 
 
 def emp_manage_field_kb(uid):
@@ -2504,6 +2686,32 @@ def staff_reg_actions_kb(rid):
     return b.as_markup()
 
 
+def staff_reg_handled_kb(rid, can_reapprove=True):
+    """Ko'rib chiqilgan xodim so'rovi: hujjatlar + «🔄 Boshidan tasdiqlash»."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🪪 Hujjatlar (ID/diplom)", callback_data=f"srdocs:{rid}")
+    if can_reapprove:
+        b.button(text="🔄 Boshidan tasdiqlash", callback_data=f"sragain:{rid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def staff_reg_reapprove_confirm_kb(rid):
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Ha, boshidan tasdiqlash", callback_data=f"sragok:{rid}")
+    b.button(text="❌ Bekor qilish", callback_data=f"sragno:{rid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def staff_regs_overview_kb():
+    """«🧾 Xodim so'rovlari» — ko'rib chiqilganlar tarixi."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🗂 Ko'rib chiqilganlar (oxirgi 20)", callback_data="srlist:done")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def staff_regs_list_kb(regs, prefix="srview"):
     b = InlineKeyboardBuilder()
     for r in regs:
@@ -2539,7 +2747,7 @@ def accountant_menu():
     b.button(text="🏢 Filial tanlab ko'rish")
     b.button(text="👥 Xodimlar (oylik/jarima)")
     b.button(text="✂️ Oylik kesish")
-    b.button(text="🚫 Jarimani bekor qilish")
+    b.button(text=FINES_CONTROL_BTN)
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
     b.button(text=FINES_REPORT_BTN)
@@ -2779,16 +2987,81 @@ def fine_cancel_people_kb(rows, prefix="fcperson"):
 
 
 def fine_cancel_list_kb(fines, user_id):
-    """Bitta xodimning jarimalari — har biri yonida «bekor qilish» tugmasi."""
+    """Bitta xodimning faol jarimalari — har biri bosilsa «✅ Ijro etildi» /
+    «🚫 Bekor qilish» tugmalari bilan to'liq ma'lumoti ochiladi."""
     b = InlineKeyboardBuilder()
     for f in fines:
         amt = f.get("amount") or "-"
         d = (f.get("created_at") or "")[:10]
-        b.button(
-            text=f"🚫 {amt} · {d} — bekor qilish",
-            callback_data=f"fcancel:{f['id']}",
-        )
+        mark = "✅" if f.get("status") == "executed" else "⏳"
+        b.button(text=f"{mark} #{f['id']} · {amt} · {d}", callback_data=f"fsv:{f['id']}")
     b.adjust(1)
+    return b.as_markup()
+
+
+# ---------------- JARIMA: IJRO ETILDI / BEKOR QILISH ----------------
+def fine_decision_kb(fid, status="pending"):
+    """Moliya uchun: kutilayotgan jarimada ikkala tugma, ijro etilganda —
+    faqat «🚫 Bekor qilish» (xato bo'lsa qaytarish uchun)."""
+    b = InlineKeyboardBuilder()
+    if status == "pending":
+        b.button(text="✅ Ijro etildi", callback_data=f"fexec:{fid}")
+    if status in ("pending", "executed"):
+        b.button(text="🚫 Bekor qilish", callback_data=f"fcanc:{fid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def fine_cancel_abort_kb():
+    b = InlineKeyboardBuilder()
+    b.button(text="↩️ Bekor qilmaslik", callback_data="fcx:abort")
+    return b.as_markup()
+
+
+FINE_STATUS_TABS = (
+    ("pending", "⏳ Ijro kutilayotganlar"),
+    ("executed", "✅ Ijro etilganlar"),
+    ("cancelled", "🚫 Bekor qilinganlar"),
+)
+
+
+def fines_status_home_kb(counts, scope, with_search=False):
+    """Jarimalar holati: 3 ta bo'lim + davr almashtirish (shu oy / barcha)."""
+    b = InlineKeyboardBuilder()
+    for st, label in FINE_STATUS_TABS:
+        cnt = counts.get(st, (0, 0))[0]
+        b.button(text=f"{label} ({cnt})", callback_data=f"fst:{st}:{scope}:0")
+    if scope == "all":
+        b.button(text="📅 Faqat shu oy", callback_data="fsth:cur")
+    else:
+        b.button(text="🗂 Barcha davr", callback_data="fsth:all")
+    if with_search:
+        b.button(text="🔍 Xodim bo'yicha qidirish", callback_data="fcpeople")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def fines_status_list_kb(fines, status, scope, page, has_next):
+    b = InlineKeyboardBuilder()
+    for f in fines:
+        name = f.get("employee_name") or "-"
+        b.button(
+            text=f"#{f['id']} · {name} · {f.get('amount') or '-'}",
+            callback_data=f"fsv:{f['id']}",
+        )
+    nav = []
+    if page > 0:
+        b.button(text="⬅️ Oldingi", callback_data=f"fst:{status}:{scope}:{page - 1}")
+        nav.append(1)
+    if has_next:
+        b.button(text="Keyingi ➡️", callback_data=f"fst:{status}:{scope}:{page + 1}")
+        nav.append(1)
+    b.button(text="🔙 Jarimalar holati", callback_data=f"fsth:{scope}")
+    rows = [1] * len(fines)
+    if nav:
+        rows.append(len(nav))
+    rows.append(1)
+    b.adjust(*rows)
     return b.as_markup()
 
 

@@ -84,7 +84,22 @@ class EmployeeFields(Strict):
     @field_validator("monthly_salary", mode="before")
     @classmethod
     def v_salary_str(cls, v):
-        return None if v is None else str(v)
+        # Staffora raqam yuboradi (3000000) — botda «3 000 000 so'm» ko'rinishida saqlanadi
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            v = int(v)
+            if v < 0:
+                raise ValueError("Oylik manfiy bo'lishi mumkin emas")
+            from utils import fmt_money
+            return fmt_money(v)
+        text = str(v).strip()
+        import re
+        compact = re.sub(r"[.,]\d{1,2}$", "", text.replace(" ", ""))  # tiyin qismi
+        if re.fullmatch(r"\d+([.,]\d{3})*", compact):
+            from utils import fmt_money
+            return fmt_money(int(re.sub(r"\D", "", compact)))
+        return text
 
     @model_validator(mode="after")
     def v_compose_name(self):
@@ -283,18 +298,47 @@ class AnnouncementCreate(Strict):
         return r
 
 
+class NotificationButton(Strict):
+    text: str = Field(..., min_length=1, max_length=64)
+    url: str = Field(..., max_length=500, pattern=r"^(https://|tg://)")
+
+
 class NotificationCreate(Strict):
     employee_id: Optional[int] = Field(None, gt=0)
     telegram_id: Optional[int] = Field(None, gt=0)
-    title: Optional[str] = Field(None, max_length=200)
-    message: str = Field(..., min_length=1, max_length=3500)
-    type: str = Field("info", max_length=40, pattern=r"^[a-z0-9_\-.]+$")
-    source: Optional[str] = Field(None, max_length=40, pattern=r"^[a-z0-9_\-]+$")
+    external_id: Optional[str] = Field(None, max_length=120,
+                                       description="Tashqi tizimdagi xodim ID (external_source bilan)")
+    external_source: str = Field("staffora", max_length=40, pattern=r"^[a-z0-9_\-]+$")
+    title: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=12000,
+                         description="4096 belgidan uzun bo'lsa bir nechta xabar bo'lib ketadi")
+    format: Literal["text", "html"] = Field(
+        "text", description="text — matn escape qilinadi; html — Telegram HTML (<b>, <i>, <a> ...)")
+    buttons: Optional[List[NotificationButton]] = Field(None, max_length=5,
+                                                        description="Inline URL tugmalar")
+    type: str = Field("info", max_length=60)
+    source: Optional[str] = Field(None, max_length=40)
+    reference_id: Optional[str] = Field(None, max_length=120,
+                                        description="Tashqi tizimdagi yetkazish ID (kuzatish uchun)")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def v_title(cls, v):
+        return None if v in (None, "") else str(v).strip()[:200]
+
+    @field_validator("type", "source", mode="before")
+    @classmethod
+    def v_slug(cls, v):
+        if v in (None, ""):
+            return None
+        return re.sub(r"[^a-z0-9_\-.]+", "_", str(v).strip().lower())[:60] or None
 
     @model_validator(mode="after")
     def v_who(self):
-        if not (self.employee_id or self.telegram_id):
-            raise ValueError("employee_id yoki telegram_id kerak")
+        if not (self.employee_id or self.telegram_id or self.external_id):
+            raise ValueError("employee_id, telegram_id yoki external_id kerak")
+        if self.type is None:
+            self.type = "info"
         return self
 
 
@@ -318,7 +362,8 @@ class WebhookCreate(Strict):
     url: str = Field(..., max_length=500)
     events: List[str] = Field(default_factory=lambda: ["*"])
     description: Optional[str] = Field(None, max_length=200)
-    include_salary: bool = False
+    include_salary: Optional[bool] = Field(
+        None, description="Standart: kalitda employees:salary bo'lsa — true")
     active: bool = True
 
 
@@ -335,6 +380,13 @@ class ApiKeyCreate(Strict):
     scopes: List[str]
     description: Optional[str] = Field(None, max_length=200)
     expires_at: Optional[datetime] = None
+    rate_limit_per_minute: Optional[int] = Field(None, ge=1, le=10000)
+
+
+class ApiKeyPatch(Strict):
+    scopes: Optional[List[str]] = None
+    add_scopes: Optional[List[str]] = None
+    description: Optional[str] = Field(None, max_length=200)
     rate_limit_per_minute: Optional[int] = Field(None, ge=1, le=10000)
 
 

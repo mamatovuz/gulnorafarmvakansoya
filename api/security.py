@@ -51,9 +51,9 @@ SCOPES = {
     "admin": "Barcha ruxsatlar + API kalitlarini boshqarish",
 }
 
-# Staffora uchun tavsiya etilgan to'plam (salary/sensitive/admin yo'q)
+# Staffora uchun tavsiya etilgan to'plam (maosh bilan; sensitive/admin yo'q)
 STAFFORA_DEFAULT_SCOPES = [
-    "employees:read", "employees:write", "branches:read", "branches:write",
+    "employees:read", "employees:write", "employees:salary", "branches:read", "branches:write",
     "departments:read", "departments:write", "positions:read", "positions:write",
     "schedules:read", "schedules:write", "attendance:read", "attendance:write",
     "leaves:read", "leaves:write", "announcements:read", "announcements:write",
@@ -117,6 +117,25 @@ async def rotate_api_key(kid):
         (prefix, hash_key(raw), kid),
     )
     return await get_api_key(kid), raw
+
+
+async def add_scopes(kid, scopes):
+    """Mavjud kalitga ruxsat qo'shadi (kalitning o'zi o'zgarmaydi)."""
+    row = await get_api_key(kid)
+    if not row:
+        return None
+    merged = validate_scopes((row.get("scopes") or "").split() + list(scopes))
+    await execute("UPDATE api_keys SET scopes=? WHERE id=?", (" ".join(merged), kid))
+    return await get_api_key(kid)
+
+
+async def set_scopes(kid, scopes):
+    row = await get_api_key(kid)
+    if not row:
+        return None
+    await execute("UPDATE api_keys SET scopes=? WHERE id=?",
+                  (" ".join(validate_scopes(scopes)), kid))
+    return await get_api_key(kid)
 
 
 def public_key(row):

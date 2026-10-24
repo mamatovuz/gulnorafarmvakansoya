@@ -569,6 +569,12 @@ def _ranked_section(title, groups, name_header, color=GREEN, amount=False, limit
 
 
 # ================= 1) JARIMALAR =================
+def _fine_status_label(f):
+    if f.get("cancelled") or f.get("status") == "cancelled":
+        return "Bekor qilingan"
+    return "Ijro etildi" if f.get("status") == "executed" else "Kutilmoqda"
+
+
 def build_fines_report(fines, rng):
     active = [f for f in fines if not f.get("cancelled")]
     cancelled = [f for f in fines if f.get("cancelled")]
@@ -590,7 +596,9 @@ def build_fines_report(fines, rng):
         s[0] += 1
         s[1] += money(f.get("amount"))
 
-    src_names = {"hr": "HR", "finance": "Moliya"}
+    src_names = {"hr": "HR", "finance": "Moliya", "director": "Direktor",
+                 "manager": "Filial rahbari"}
+    executed_cnt = sum(1 for f in active if f.get("status") == "executed")
     rows, muted = [], []
     for i, f in enumerate(fines, start=1):
         who = src_names.get(f.get("source"), f.get("source") or "-")
@@ -599,8 +607,8 @@ def build_fines_report(fines, rng):
         rows.append([
             i, fmt_date(f.get("created_at")), f.get("employee_name") or "-", position_of(f),
             f.get("branch_name") or "-", money(f.get("amount")),
-            (f.get("reason") or "-").strip(), who,
-            "Bekor qilingan" if f.get("cancelled") else "Faol",
+            (f.get("reason") or "-").strip(), who, _fine_status_label(f),
+            (f.get("cancel_reason") or "").strip() if f.get("cancelled") else "",
         ])
         muted.append(bool(f.get("cancelled")))
 
@@ -638,15 +646,25 @@ def build_fines_report(fines, rng):
               f"{top['name']} ({top['cnt']} ta)" if top else "—", RED),
              ("HR yozgan", f"{src['hr'][0]} ta · {som(src['hr'][1])}", BLUE),
              ("Moliya yozgan", f"{src['finance'][0]} ta · {som(src['finance'][1])}", PURPLE)],
+            [("Ijro etilgan", f"{executed_cnt} ta", GREEN_DARK),
+             ("Ijro kutilmoqda", f"{len(active) - executed_cnt} ta", ORANGE),
+             ("Direktor yozgan",
+              f"{src.get('director', [0, 0])[0]} ta · {som(src.get('director', [0, 0])[1])}",
+              BLUE),
+             ("Filial rahbari yozgan",
+              f"{src.get('manager', [0, 0])[0]} ta · {som(src.get('manager', [0, 0])[1])}",
+              PURPLE)],
         ],
         sheet_name="Jarimalar",
         headers=["№", "Sana", "Ism-familiya", "Lavozim", "Filial", "Jarima summasi",
-                 "Jarima sababi", "Kim yozgan", "Holat"],
-        widths=[6, 18, 30, 22, 24, 20, 46, 26, 16],
+                 "Jarima sababi", "Kim yozgan", "Holat", "Bekor qilish sababi"],
+        widths=[6, 18, 30, 22, 24, 20, 46, 26, 16, 40],
         rows=rows, money_cols=(6,), center_cols=(1, 2, 9), muted=muted, strike=True,
-        badge_col=9, badges={"Faol": (RED_LIGHT, RED), "Bekor qilingan": ("EEEEEE", MUTED)},
+        badge_col=9, badges={"Kutilmoqda": ("FFF4E0", ORANGE),
+                             "Ijro etildi": (RED_LIGHT, RED),
+                             "Bekor qilingan": ("EEEEEE", MUTED)},
         total=["JAMI (faol jarimalar):", "", "", "", "", total_sum, "", "",
-               f"{len(active)} ta"],
+               f"{len(active)} ta", ""],
         empty_text="Bu davrda jarimalar yozilmagan",
         stats_title="JARIMALAR STATISTIKASI",
         sections=[

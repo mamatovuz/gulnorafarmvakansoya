@@ -89,6 +89,18 @@ async def build_data(event, include_salary=False):
     return data or {"id": event["entity_id"], "deleted": True}
 
 
+def strip_salary(event, data):
+    """Maosh ruxsati bo'lmagan qabul qiluvchi uchun maosh maydonlarini olib tashlaydi."""
+    if event["entity_type"] != "employee" or not isinstance(data, dict):
+        return data
+    out = {k: v for k, v in data.items() if k not in ("salary", "monthly_salary")}
+    q = out.get("questionnaire")
+    if isinstance(q, dict):
+        out["questionnaire"] = {k: v for k, v in q.items()
+                                if k not in ("previous_salary", "expected_salary", "agreed_salary")}
+    return out
+
+
 def envelope(event, data):
     return {
         "id": f"evt_{event['id']}",
@@ -108,7 +120,10 @@ async def fanout_events(limit=200):
         return 0
     hooks = await fetch_all("SELECT * FROM api_webhooks WHERE active=1")
     for ev in events:
-        base = await build_data(ev, include_salary=False)
+        # Lentada (api_events.payload) to'liq ma'lumot saqlanadi; maosh faqat
+        # employees:salary ruxsati bor kalitga /integration/changes da beriladi.
+        full = await build_data(ev, include_salary=True)
+        base = strip_salary(ev, full)
         payload_plain = json.dumps(envelope(ev, base), ensure_ascii=False, default=str)
         rich = None
         async with connect() as db:
@@ -119,8 +134,7 @@ async def fanout_events(limit=200):
                 if h.get("include_salary") and ev["entity_type"] == "employee" \
                         and not ev["event_type"].endswith(".deleted"):
                     if rich is None:
-                        rich = json.dumps(envelope(ev, await build_data(ev, True)),
-                                          ensure_ascii=False, default=str)
+                        rich = json.dumps(envelope(ev, full), ensure_ascii=False, default=str)
                     body = rich
                 await db.execute(
                     "INSERT INTO api_webhook_deliveries (webhook_id, event_id, event_type, payload) "
@@ -129,7 +143,7 @@ async def fanout_events(limit=200):
                 )
             await db.execute(
                 "UPDATE api_events SET processed=1, processed_at=?, payload=? WHERE id=?",
-                (now_sql(), json.dumps(base, ensure_ascii=False, default=str), ev["id"]),
+                (now_sql(), json.dumps(full, ensure_ascii=False, default=str), ev["id"]),
             )
             await db.commit()
     return len(events)

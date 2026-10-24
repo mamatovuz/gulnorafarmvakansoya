@@ -1,4 +1,5 @@
 """/api/v1/announcements, /notifications, /users, /company."""
+import html
 import json
 from typing import Optional
 
@@ -93,11 +94,18 @@ async def cancel_announcement(announcement_id: int = Path(..., gt=0),
 
 # ================= NOTIFICATIONS =================
 def _notif(r):
+    from api.telegram import is_permanent
+    status = "queued" if r["status"] == "sending" else r["status"]
     return {
-        "id": r["id"], "employee_id": r["user_id"], "title": r.get("title"),
-        "message": r["message"], "type": r["type"], "source": r.get("source"),
-        "channel": "telegram", "status": r["status"], "attempts": r["attempts"],
-        "error": r.get("error"), "created_at": iso(r["created_at"]), "sent_at": iso(r.get("sent_at")),
+        "id": r["id"], "employee_id": r["user_id"], "telegram_id": r.get("tg_id"),
+        "title": r.get("title"), "message": r["message"], "type": r["type"],
+        "source": r.get("source"), "reference_id": r.get("external_ref"),
+        "channel": "telegram", "status": status, "attempts": r["attempts"],
+        "error": r.get("error"),
+        "permanent_failure": bool(r["status"] == "failed" and is_permanent(r.get("error"))),
+        "next_attempt_at": iso(r.get("next_attempt_at")) if status == "queued" else None,
+        "telegram_message_id": r.get("tg_message_id"),
+        "created_at": iso(r["created_at"]), "sent_at": iso(r.get("sent_at")),
     }
 
 
@@ -107,10 +115,14 @@ async def list_notifications(page: Page = Depends(), employee_id: Optional[int] 
                              type: Optional[str] = Query(None, max_length=40),
                              p: Principal = Depends(require("notifications:read"))):
     where, params = ["1=1"], []
-    for col, val in (("user_id", employee_id), ("status", status), ("type", type)):
+    for col, val in (("user_id", employee_id), ("type", type)):
         if val is not None:
             where.append(f"{col}=?")
             params.append(val)
+    if status:
+        where.append("status IN ('queued','sending')" if status == "queued" else "status=?")
+        if status != "queued":
+            params.append(status)
     w = " WHERE " + " AND ".join(where)
     total = await fetch_val("SELECT COUNT(*) FROM api_notifications" + w, tuple(params))
     rows = await fetch_all("SELECT * FROM api_notifications" + w +
@@ -127,25 +139,52 @@ async def get_notification(notification_id: int = Path(..., gt=0),
     return ok(_notif(r))
 
 
+@notifications.post("/{notification_id}/retry", summary="Muvaffaqiyatsiz bildirishnomani qayta navbatga qo'yish")
+async def retry_notification(notification_id: int = Path(..., gt=0),
+                             p: Principal = Depends(require("notifications:write"))):
+    r = await fetch_one("SELECT * FROM api_notifications WHERE id=?", (notification_id,))
+    if not r:
+        raise not_found("Bildirishnoma", notification_id)
+    if r["status"] == "sent":
+        raise ApiError(409, "already_sent", "Allaqachon yuborilgan.")
+    await execute("UPDATE api_notifications SET status='queued', attempts=0, next_attempt_at=NULL, "
+                  "error=NULL WHERE id=?", (notification_id,))
+    return ok(_notif(await fetch_one("SELECT * FROM api_notifications WHERE id=?", (notification_id,))))
+
+
 @notifications.post("", status_code=202,
                     summary="Xodimga bot orqali bildirishnoma (navbatga qo'yiladi, retry bilan)")
 async def create_notification(body: NotificationCreate,
                               p: Principal = Depends(require("notifications:write"))):
-    if body.employee_id:
-        row = await fetch_one(
-            "SELECT u.id, u.tg_id FROM employee_profiles ep JOIN users u ON u.id=ep.user_id "
-            "WHERE ep.user_id=?", (body.employee_id,))
-    else:
-        row = await fetch_one(
-            "SELECT u.id, u.tg_id FROM employee_profiles ep JOIN users u ON u.id=ep.user_id "
-            "WHERE u.tg_id=?", (body.telegram_id,))
+    row = None
+    uid = body.employee_id
+    if not uid and body.external_id:
+        uid = await repo.find_by_external("employee", body.external_source, body.external_id)
+    if uid:
+        row = await fetch_one("SELECT id, tg_id, COALESCE(blocked,0) AS blocked FROM users "
+                              "WHERE id=?", (uid,))
+    if not row and body.telegram_id:
+        row = await fetch_one("SELECT id, tg_id, COALESCE(blocked,0) AS blocked FROM users "
+                              "WHERE tg_id=?", (body.telegram_id,))
     if not row:
-        raise ApiError(422, "invalid_reference", "Xodim topilmadi.")
+        raise ApiError(422, "invalid_reference",
+                       "Xodim topilmadi (botda bunday foydalanuvchi yo'q).",
+                       {"employee_id": body.employee_id, "telegram_id": body.telegram_id,
+                        "external_id": body.external_id})
+    if not row["tg_id"]:
+        raise ApiError(422, "no_telegram", "Xodimning Telegram ID si yo'q — bot xabar yubora olmaydi.")
+    if body.format == "html":
+        message = (f"<b>{html.escape(body.title)}</b>\n\n" if body.title else "") + body.message
+        is_html = 1
+    else:
+        message, is_html = body.message, 0
+    buttons = (json.dumps([b.model_dump() for b in body.buttons], ensure_ascii=False)
+               if body.buttons else None)
     nid, _ = await execute(
-        "INSERT INTO api_notifications (user_id, tg_id, title, message, type, source, api_key_id) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (row["id"], row["tg_id"], body.title, body.message, body.type, body.source or "api",
-         p.key_id))
+        "INSERT INTO api_notifications (user_id, tg_id, title, message, type, source, api_key_id, "
+        "is_html, buttons, external_ref) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (row["id"], row["tg_id"], body.title, message, body.type, body.source or "api",
+         p.key_id, is_html, buttons, body.reference_id))
     return ok(_notif(await fetch_one("SELECT * FROM api_notifications WHERE id=?", (nid,))),
               status=202)
 

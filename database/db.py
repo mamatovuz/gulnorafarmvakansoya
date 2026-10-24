@@ -117,6 +117,7 @@ REQUEST_STATUS_LABELS = {
     "waiting": "⏳ Kutuvda",
     "interview": "📅 Suhbatga chaqirilgan",
     "accepted": "✅ Qabul qilingan",
+    "agreed": "✅ Kelishilgan",
 }
 
 
@@ -436,6 +437,10 @@ CREATE TABLE IF NOT EXISTS fines (
     cancelled INTEGER NOT NULL DEFAULT 0,   -- 1 => bekor qilingan (oylikdan qaytariladi)
     cancelled_by INTEGER,
     cancelled_at TEXT,
+    cancel_reason TEXT,                   -- moliya bekor qilgandagi sabab
+    status TEXT NOT NULL DEFAULT 'pending', -- pending / executed (ijro etildi) / cancelled
+    executed_by INTEGER,
+    executed_at TEXT,
     created_by INTEGER,
     created_at TEXT DEFAULT (datetime('now','+5 hours'))
 );
@@ -622,8 +627,10 @@ CREATE TABLE IF NOT EXISTS probations (
     days INTEGER NOT NULL DEFAULT 15,
     kind TEXT NOT NULL DEFAULT 'trial',      -- trial (sinov) / learner (o'rganuvchi)
     -- awaiting => filial rahbari «Ishga keldi» tasdig'i kutilmoqda (hali xodimlar
-    -- ro'yxatiga qo'shilmagan); active => ishga chiqqan; finished => muddat tugadi;
-    -- no_show => kelmadi (rahbar rad etdi).
+    -- ro'yxatiga qo'shilmagan); active => ishga chiqqan; finished => muddat tugadi
+    -- (HR qarori kutilmoqda); passed => doimiy xodim qilindi; no_show => kelmadi;
+    -- dismissed => ishdan bo'shatildi; replaced => ariza boshidan qabul qilinib,
+    -- o'rniga yangi yozuv ochildi.
     status TEXT NOT NULL DEFAULT 'active',
     shift TEXT,
     agreed_salary TEXT,
@@ -820,6 +827,7 @@ APP_COLUMNS = {
     "channel_chat_id": "TEXT", "channel_message_id": "INTEGER",
     "accept_kind": "TEXT",
     "gender": "TEXT",                 # male / female — vakansiyaga moslik uchun
+    "handled_at": "TEXT",             # qachon qabul qilingan (kim — handled_by)
 }
 
 VACANCY_COLUMNS = {
@@ -845,6 +853,12 @@ PROBATION_COLUMNS = {
     "shift": "TEXT",
     "agreed_salary": "TEXT",
     "uniform_status": "TEXT",
+    # Kim «✅ Ishga keldi» ni tasdiqlagan (rahbar yoki HR) va qachon
+    "arrived_by": "INTEGER",
+    "arrived_at": "TEXT",
+    # Muddat tugagach HR qarori (doimiy xodim / uzaytirish) — kim va qachon
+    "decided_by": "INTEGER",
+    "decided_at": "TEXT",
 }
 
 INTERVIEW_COLUMNS = {
@@ -901,6 +915,10 @@ FINES_COLUMNS = {
     "cancelled": "INTEGER NOT NULL DEFAULT 0",
     "cancelled_by": "INTEGER",
     "cancelled_at": "TEXT",
+    "cancel_reason": "TEXT",
+    "status": "TEXT NOT NULL DEFAULT 'pending'",
+    "executed_by": "INTEGER",
+    "executed_at": "TEXT",
 }
 
 STAFF_REG_COLUMNS = {
@@ -911,6 +929,7 @@ STAFF_REG_COLUMNS = {
     "passport_front": "TEXT",
     "passport_back": "TEXT",
     "diploma_file": "TEXT",
+    "handled_at": "TEXT",             # qachon tasdiqlangan / rad etilgan
 }
 
 
@@ -1134,6 +1153,11 @@ async def _migrate(db):
         await db.execute(
             "UPDATE fines SET period=substr(created_at,1,7) "
             "WHERE period IS NULL OR period=''"
+        )
+        # Eski bekor qilingan jarimalar holatini status ustuniga ko'chiramiz
+        await db.execute(
+            "UPDATE fines SET status='cancelled' "
+            "WHERE cancelled=1 AND status!='cancelled'"
         )
     await db.commit()
 

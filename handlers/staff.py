@@ -701,7 +701,7 @@ async def manager_employee_view(call: CallbackQuery):
         return
     await send_employee_profile(
         call.message, profile,
-        reply_markup=kb.staff_fire_kb(profile["user_id"]),
+        reply_markup=kb.staff_fire_kb(profile["user_id"], with_fine=True),
     )
     await call.answer()
 
@@ -908,6 +908,12 @@ async def _is_director(tg_id):
 
 @router.message(F.text == "💸 Jarima qo'llash")
 async def director_fine_menu(message: Message):
+    user = await q.get_user(message.from_user.id)
+    # Filial rahbari ham shu tugmani ko'radi — o'z filiali xodimlari ro'yxati
+    if user and user["role"] == ROLE_MANAGER:
+        from handlers.fines import manager_fine_menu
+        await manager_fine_menu(message, user)
+        return
     if not await _is_director(message.from_user.id):
         await message.answer("⛔ Sizda ruxsat yo'q.")
         return
@@ -1056,22 +1062,9 @@ async def director_fine_save(message: Message, state: FSMContext, bot: Bot):
             f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
             "\n\nBu summa oyligingizdan ayiriladi."
         )
-    # Moliya bo'limiga xabar
-    branch = await q.get_branch(branch_id) if branch_id else None
-    fin_text = (
-        "💸 <b>Direktordan yangi jarima</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"👤 Xodim: <b>{target_name}</b>\n"
-        f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
-        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
-        f"💰 Summa: <b>{amount}</b>\n"
-        f"✍️ Sabab: {reason}\n"
-        f"👔 Yozdi: {me['full_name']} (Direktor)\n\n"
-        "Bu jarima yakuniy oylikdan avtomatik ayiriladi. Bekor qilish uchun "
-        "moliya panelidagi «🚫 Jarimani bekor qilish» dan foydalaning."
-    )
-    for tid in set(await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)):
-        await safe_send(bot, tid, fin_text)
+    # Moliya bo'limiga xabar — «✅ Ijro etildi» / «🚫 Bekor qilish» tugmalari bilan
+    from handlers.fines import notify_finance_new_fine
+    await notify_finance_new_fine(bot, fid, "Direktor")
 
 
 @router.callback_query(F.data.startswith("diremp:"))

@@ -171,7 +171,23 @@ def test_salary_scope(env, admin_headers):
     r = env.patch(f"{V1}/employees/{d['id']}", json={"monthly_salary": "1"}, headers=H(raw))
     assert r.status_code == 403
     d = env.get(f"{V1}/employees/by-telegram/700001", headers=admin_headers).json()["data"]
-    assert d["salary"]["monthly_salary"] == "5000000"
+    assert d["salary"]["monthly_salary"] == "5 000 000 so'm"  # botdagi ko'rinish
+    assert d["salary"]["amount"] == 5000000 and d["monthly_salary"] == 5000000
+    cm = d["salary"]["current_month"]
+    assert cm["base"] == 5000000 and cm["final_amount"] == 5000000
+    # moliya tafsiloti: jarima + avans yakuniy oylikdan ayiriladi
+    sql(env, "INSERT INTO fines (employee_user_id, amount, reason) VALUES (?, ?, ?)",
+        (d["id"], "200 000", "kechikish"))
+    period = sql(env, "SELECT substr(created_at,1,7) p FROM fines")[0]["p"]
+    sql(env, "INSERT INTO advance_requests (user_id, period, amount, status) VALUES (?,?,?,?)",
+        (d["id"], period, 1000000, "confirmed"))
+    f = env.get(f"{V1}/employees/{d['id']}/finance?period={period}", headers=admin_headers).json()["data"]
+    assert f["salary"]["current_month"]["final_amount"] == 3800000
+    assert f["fines"][0]["amount"] == 200000 and f["advances"][0]["amount"] == 1000000
+    assert env.get(f"{V1}/employees/{d['id']}/finance", headers=H(raw)).status_code == 403
+    # Staffora raqam yuborsa ham qabul qilinadi
+    r = env.patch(f"{V1}/employees/{d['id']}", json={"monthly_salary": 6500000}, headers=admin_headers)
+    assert r.json()["data"]["salary"]["amount"] == 6500000
 
 
 def test_employee_list_pagination_search_filter(env, admin_headers):
@@ -413,7 +429,21 @@ def test_webhook_delivery_signature_and_bot_side_events(env, admin_headers):
     last = bodies[-1]
     assert last["event"] == "employee.updated" and last["source"] == "employee_bot"
     assert last["data"]["schedule"]["rest_day"] == "Shanba"
-    assert "salary" not in last["data"]
+    # kalitda employees:salary bor (admin) — webhook standart bo'yicha maosh bilan
+    assert "salary" in last["data"]
+    assert env.get(f"{V1}/webhooks", headers=admin_headers).json()["data"][0]["include_salary"] is True
+    # include_salary=false bo'lsa — maosh yuborilmaydi
+    hid = env.get(f"{V1}/webhooks", headers=admin_headers).json()["data"][0]["id"]
+    env.patch(f"{V1}/webhooks/{hid}", json={"include_salary": False}, headers=admin_headers)
+    run(env, q.update_rest_day, emp["id"], "Juma")
+    run(env, run_once)
+    plain = json.loads(rec.calls[-1].content)["data"]
+    assert "salary" not in plain and "monthly_salary" not in plain
+    # moliya o'zgarishi (jarima) ham employee.updated beradi
+    n_before = len(rec.calls)
+    sql(env, "INSERT INTO fines (employee_user_id, amount) VALUES (?, '50000')", (emp["id"],))
+    run(env, run_once)
+    assert json.loads(rec.calls[-1].content)["event"] == "employee.updated" and len(rec.calls) > n_before
     # imzo
     req = rec.calls[-1]
     sig = dict(p.split("=", 1) for p in req.headers["X-Webhook-Signature"].split(","))
@@ -658,3 +688,112 @@ def test_port_from_railway_env(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(settings)
+
+
+# ======================= MUSTAHKAMLIK (2026-10) =======================
+def test_create_is_idempotent_by_external_id(env, admin_headers):
+    """Staffora navbati qayta urinsa external_id_conflict emas — mavjud yozuv yangilanadi."""
+    body = {"name": "Moliya", "code": "FIN", "external_ids": {"staffora": "DEP-1"}}
+    r1 = env.post(f"{V1}/departments", json=body, headers=admin_headers)
+    r2 = env.post(f"{V1}/departments", json={**body, "description": "yangi"}, headers=admin_headers)
+    assert r1.status_code == 201 and r2.status_code == 201, r2.text
+    assert r1.json()["data"]["id"] == r2.json()["data"]["id"]
+    assert r2.json()["data"]["description"] == "yangi"
+    assert sql(env, "SELECT COUNT(*) c FROM api_departments")[0]["c"] == 1
+    # bir xil kodli bo'lim boshqa external_id bilan kelsa — o'shanga bog'lanadi
+    r3 = env.post(f"{V1}/departments", json={"name": "Moliya", "code": "FIN",
+                                              "external_ids": {"staffora": "DEP-9"}},
+                  headers=admin_headers)
+    assert r3.status_code == 201 and r3.json()["data"]["id"] == r1.json()["data"]["id"]
+    # lavozim / filial ham
+    p1 = env.post(f"{V1}/positions", json={"name": "Kassir", "external_ids": {"staffora": "P1"}},
+                  headers=admin_headers).json()["data"]["id"]
+    p2 = env.post(f"{V1}/positions", json={"name": "Kassir", "external_ids": {"staffora": "P1"}},
+                  headers=admin_headers).json()["data"]["id"]
+    assert p1 == p2
+    b1 = env.post(f"{V1}/branches", json={"name": "Yangi filial", "external_ids": {"staffora": "B1"}},
+                  headers=admin_headers).json()["data"]["id"]
+    b2 = env.post(f"{V1}/branches", json={"name": "Yangi filial 2", "external_ids": {"staffora": "B1"}},
+                  headers=admin_headers).json()["data"]
+    assert b2["id"] == b1 and b2["name"] == "Yangi filial 2"
+    # xodim: bir xil external_id + telegram_id — yangilanadi
+    e1 = new_employee(env, admin_headers, external_ids={"staffora": "E1"}, notify=False)
+    r = env.post(f"{V1}/employees", json={"telegram_id": 700001, "full_name": "Valiyev Ali Vali",
+                                           "external_ids": {"staffora": "E1"}}, headers=admin_headers)
+    assert r.status_code == 201 and r.json()["data"]["id"] == e1["id"]
+    assert r.json()["data"]["full_name"] == "Valiyev Ali Vali"
+    assert r.json()["data"]["first_name"] == "Ali" and r.json()["data"]["last_name"] == "Valiyev"
+
+
+def test_notification_robustness(env, admin_headers):
+    from api.workers import run_once
+    emp = new_employee(env, admin_headers, notify=False, external_ids={"staffora": "ST-77"})
+    # external_id orqali, katta harfli type, html format, tugma
+    r = env.post(f"{V1}/notifications", json={
+        "external_id": "ST-77", "title": "Kirish", "message": "<b>Salom</b>", "format": "html",
+        "type": "staffora_ACCESS", "buttons": [{"text": "Ochish", "url": "https://staffora.uz/x"}],
+        "reference_id": "dlv-1"}, headers=admin_headers)
+    assert r.status_code == 202, r.text
+    nid = r.json()["data"]["id"]
+    assert r.json()["data"]["type"] == "staffora_access"
+    run(env, run_once)
+    m = env.sent.messages[-1]
+    assert m["text"].startswith("<b>Kirish</b>") and "<b>Salom</b>" in m["text"]
+    assert "staffora.uz" in json.dumps(m["markup"].model_dump())
+    assert env.get(f"{V1}/notifications/{nid}", headers=admin_headers).json()["data"]["status"] == "sent"
+    # uzun xabar bo'linadi
+    n0 = len(env.sent.messages)
+    env.post(f"{V1}/notifications", json={"employee_id": emp["id"], "message": "a " * 4000},
+             headers=admin_headers)
+    run(env, run_once)
+    assert len(env.sent.messages) - n0 == 2
+    # bloklagan xodim — doimiy xato, qayta urinilmaydi
+    env.sent.fail_ids.add(700001)
+    r = env.post(f"{V1}/notifications", json={"employee_id": emp["id"], "message": "x"},
+                 headers=admin_headers)
+    nid = r.json()["data"]["id"]
+    run(env, run_once)
+    d = env.get(f"{V1}/notifications/{nid}", headers=admin_headers).json()["data"]
+    assert d["status"] == "failed" and d["attempts"] == 1 and d["permanent_failure"] is True
+    # qo'lda qayta navbatga
+    env.sent.fail_ids.clear()
+    assert env.post(f"{V1}/notifications/{nid}/retry", headers=admin_headers).json()["data"]["status"] == "queued"
+    run(env, run_once)
+    assert env.get(f"{V1}/notifications/{nid}", headers=admin_headers).json()["data"]["status"] == "sent"
+    # ishdan bo'shagan (profilsiz) bot foydalanuvchisiga ham yuboriladi
+    env.delete(f"{V1}/employees/{emp['id']}", headers=admin_headers)
+    assert env.post(f"{V1}/notifications", json={"employee_id": emp["id"], "message": "x"},
+                    headers=admin_headers).status_code == 202
+
+
+def test_html_parse_error_falls_back_to_plain(env):
+    from api import telegram
+    calls = []
+
+    async def sender(chat_id, text, markup):
+        calls.append(text)
+        if "<" in text:
+            raise RuntimeError("Bad Request: can't parse entities: unsupported start tag")
+        return 1
+    telegram.set_sender(sender)
+    ok, mid, err = run(env, telegram.send_text, 1, "<b>Salom <x> dunyo</b>")
+    assert ok and calls[-1] == "Salom  dunyo"
+
+
+def test_salary_upgrade_for_old_staffora_key(env):
+    from api.migrations import _salary_upgrade
+    import aiosqlite
+    old = [s for s in __import__("api.security", fromlist=["x"]).STAFFORA_DEFAULT_SCOPES
+           if s != "employees:salary"]
+    raw, row = make_key(env, old)
+    sql(env, "INSERT INTO api_webhooks (url, secret, api_key_id) VALUES ('https://x.uz', 's', ?)",
+        (row["id"],))
+    sql(env, "DELETE FROM settings WHERE key='api_salary_upgrade'")
+
+    async def go():
+        async with aiosqlite.connect(env.dbfile) as db:
+            await _salary_upgrade(db)
+            await db.commit()
+    run(env, go)
+    assert "employees:salary" in sql(env, "SELECT scopes FROM api_keys WHERE id=?", (row["id"],))[0]["scopes"]
+    assert sql(env, "SELECT include_salary FROM api_webhooks")[0]["include_salary"] == 1

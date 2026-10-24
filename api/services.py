@@ -109,6 +109,20 @@ async def _upsert_meta(db, user_id, data, replace=False):
         (*[data.get(k) for k in keys], now_sql(), user_id))
 
 
+async def _existing_by_external(db, entity, external_ids):
+    """Yaratish so'rovi takror kelsa (tarmoq uzilib qayta yuborilgan, Staffora navbati
+    qayta urinib ko'rgan) — external_id allaqachon bog'langan yozuvni topadi. Shunda
+    yangi yozuv o'rniga mavjudi yangilanadi va `external_id_conflict` chiqmaydi."""
+    for source, ext in (external_ids or {}).items():
+        if source and ext not in (None, ""):
+            row = await _exists(
+                db, "SELECT entity_id FROM api_external_ids WHERE entity_type=? AND source=? "
+                    "AND external_id=?", (entity, source, str(ext)))
+            if row:
+                return row[0]
+    return None
+
+
 async def _set_external_ids(db, entity, entity_id, external_ids):
     for source, ext in (external_ids or {}).items():
         if source and ext not in (None, ""):
@@ -126,15 +140,29 @@ async def create_employee(data, principal):
     data["role"] = role
     full_name = data["full_name"].strip()
 
+    # Takroriy yaratish (Staffora qayta urinishi) — mavjud xodimni yangilaymiz.
+    async with connect() as db:
+        existing = await _existing_by_external(db, "employee", data.get("external_ids"))
+        if existing is not None:
+            row = await _exists(db, "SELECT tg_id FROM users WHERE id=?", (existing,))
+            linked_tg = row[0] if row else None
+    if existing is not None and await employee_exists(existing) and linked_tg != tg_id:
+        raise ApiError(409, "duplicate", "Bu external_id bilan boshqa xodim mavjud.",
+                       {"existing_id": existing, "telegram_id": linked_tg})
+    if existing is not None and not await employee_exists(existing):
+        # Ishdan bo'shatilgan xodimning eski bog'lanishi — qayta ishga olishga xalaqit bermasin
+        async with connect() as db:
+            await db.execute("DELETE FROM api_external_ids WHERE entity_type='employee' "
+                             "AND entity_id=?", (existing,))
+            await db.commit()
+        existing = None
+    if existing is not None:
+        upd = {k: v for k, v in data.items() if k not in ("telegram_id", "notify")}
+        await update_employee(existing, upd, principal)
+        return existing
+
     async with connect() as db:
         await _check_refs(db, data)
-        for source, ext in (data.get("external_ids") or {}).items():
-            row = await _exists(
-                db, "SELECT entity_id FROM api_external_ids WHERE entity_type='employee' "
-                    "AND source=? AND external_id=?", (source, str(ext)))
-            if row:
-                raise ApiError(409, "duplicate", "Bu external_id bilan xodim allaqachon mavjud.",
-                               {"existing_id": row[0], "source": source, "external_id": ext})
         user = await _exists(db, "SELECT id, role FROM users WHERE tg_id=?", (tg_id,))
         if user:
             uid = user[0]
@@ -318,10 +346,14 @@ BRANCH_COLS = {"name": "name", "address": "address", "phone": "phone",
 
 async def save_branch(data, principal, bid=None, replace=False):
     async with connect() as db:
+        if bid is None:
+            bid = await _existing_by_external(db, "branch", data.get("external_ids"))
         if data.get("code"):
             row = await _exists(db, "SELECT branch_id FROM api_branch_meta WHERE code=?",
                                 (data["code"],))
-            if row and row[0] != bid:
+            if row and bid is None and data.get("external_ids"):
+                bid = row[0]  # bir xil kodli filial — yangisini emas, o'shani bog'laymiz
+            elif row and row[0] != bid:
                 raise ApiError(409, "duplicate", "Bu kod bilan filial mavjud.",
                                {"existing_id": row[0], "code": data["code"]})
         if bid is None:
@@ -383,6 +415,17 @@ async def delete_branch(bid, principal):
 # ---------------- POSITION ----------------
 async def save_position(data, principal, pid=None, replace=False):
     async with connect() as db:
+        if pid is None:
+            pid = await _existing_by_external(db, "position", data.get("external_ids"))
+        if pid is None and data.get("external_ids") and (data.get("name") or "").strip():
+            row = await _exists(db, "SELECT id FROM positions WHERE name=?",
+                                (data["name"].strip(),))
+            if row and not await _exists(
+                    db, "SELECT 1 FROM api_external_ids WHERE entity_type='position' "
+                        "AND entity_id=? AND source IN (%s)" % ",".join(
+                            "?" * len(data["external_ids"])),
+                    (row[0], *data["external_ids"].keys())):
+                pid = row[0]  # botdagi shu nomli lavozim — bog'lab qo'yamiz
         if data.get("code"):
             row = await _exists(db, "SELECT position_id FROM api_position_meta WHERE code=?",
                                 (data["code"],))
@@ -453,9 +496,13 @@ async def save_department(data, principal, did=None, replace=False):
     if "head_id" in data:
         data["head_user_id"] = data.pop("head_id")
     async with connect() as db:
+        if did is None:
+            did = await _existing_by_external(db, "department", data.get("external_ids"))
         if data.get("code"):
             row = await _exists(db, "SELECT id FROM api_departments WHERE code=?", (data["code"],))
-            if row and row[0] != did:
+            if row and did is None and data.get("external_ids"):
+                did = row[0]  # bir xil kodli bo'lim — yangisini emas, o'shani bog'laymiz
+            elif row and row[0] != did:
                 raise ApiError(409, "duplicate", "Bu kod bilan bo'lim mavjud.",
                                {"existing_id": row[0]})
         if data.get("parent_id") is not None:

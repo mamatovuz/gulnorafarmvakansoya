@@ -246,6 +246,20 @@ ATTENDANCE_COLUMNS = {
 }
 
 
+# API jadvallariga keyin qo'shilgan ustunlar (eski bazalar uchun)
+API_COLUMNS = {
+    "api_notifications": {
+        "next_attempt_at": "TEXT",       # vaqtinchalik xatodan keyin qayta urinish vaqti
+        "buttons": "TEXT",               # JSON: [{"text","url"}] — inline URL tugmalar
+        "external_ref": "TEXT",          # Staffora delivery id (ixtiyoriy)
+        "updated_at": "TEXT",
+    },
+    "api_announcement_recipients": {
+        "attempts": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
+
+
 def _coalesce(entity, types):
     """Ishlov berilmagan bir xil hodisa bo'lsa, yangisini yozmaydi (bitta PATCH
     bir nechta jadvalni o'zgartirsa ham bitta `*.updated` webhook ketadi)."""
@@ -273,8 +287,19 @@ _EMP_PROFILE_COLS = [
     "role", "position", "branch_id", "uniform_status", "monthly_salary",
     "birth_date", "address", "work_hours", "rest_day", "photo_file_id",
     "extra_info", "since", "emp_status", "education", "shift", "parent_phone",
+    "passport_front", "passport_back", "diploma_file", "update_required", "application_id",
 ]
-_USER_COLS = ["full_name", "phone", "role", "branch_id", "username", "blocked"]
+_USER_COLS = ["full_name", "phone", "role", "branch_id", "username", "blocked", "lang",
+              "tg_name", "tg_id"]
+
+# Maosh/moliya jadvallari: o'zgarsa xodim payload'idagi `salary.current_month`
+# o'zgaradi — Staffora'ga `employee.updated` ketadi. (jadval, xodim ustuni)
+_FINANCE_TABLES = [
+    ("fines", "employee_user_id"), ("advance_requests", "user_id"),
+    ("staff_medicines", "employee_user_id"), ("salary_deductions", "employee_user_id"),
+    ("salary_payments", "employee_user_id"), ("salary_raise_requests", "user_id"),
+    ("probations", "user_id"),
+]
 
 _EMP_UPD_GUARD = _coalesce("employee", ["employee.created", "employee.updated"])
 _BRANCH_UPD_GUARD = _coalesce("branch", ["branch.created", "branch.updated"])
@@ -314,6 +339,13 @@ TRIGGERS = {
             'phone', (SELECT phone FROM users WHERE id=OLD.user_id),
             'role', OLD.role, 'position', OLD.position, 'branch_id', OLD.branch_id,
             'hired_at', OLD.created_at)''')} END""",
+    **{
+        f"trg_api_fin_{tbl}_{op.lower()}": f"""
+        CREATE TRIGGER trg_api_fin_{tbl}_{op.lower()} AFTER {op} ON {tbl}
+        WHEN EXISTS (SELECT 1 FROM employee_profiles WHERE user_id=NEW.{col})
+        BEGIN {_ins('employee.updated', 'employee', f'NEW.{col}', guard=_EMP_UPD_GUARD)} END"""
+        for tbl, col in _FINANCE_TABLES for op in ("INSERT", "UPDATE")
+    },
     # ---- branch ----
     "trg_api_branch_insert": f"""
         CREATE TRIGGER trg_api_branch_insert AFTER INSERT ON branches
@@ -380,7 +412,7 @@ TRIGGERS = {
 }
 
 # Trigger sxemasi o'zgarsa versiya oshiriladi — eski triggerlar qayta yaratiladi.
-TRIGGER_VERSION = "1"
+TRIGGER_VERSION = "2"
 
 
 async def run_migrations(db_path):
@@ -398,6 +430,15 @@ async def run_migrations(db_path):
             if col not in existing:
                 await db.execute(f"ALTER TABLE attendance ADD COLUMN {col} {coltype}")
 
+        for table, cols in API_COLUMNS.items():
+            cur = await db.execute(f"PRAGMA table_info({table})")
+            have = {row[1] for row in await cur.fetchall()}
+            for col, coltype in cols.items():
+                if col not in have:
+                    await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_api_notifications_due "
+                         "ON api_notifications(status, next_attempt_at)")
+
         cur = await db.execute("SELECT value FROM settings WHERE key='api_trigger_version'")
         row = await cur.fetchone()
         rebuild = not row or row[0] != TRIGGER_VERSION
@@ -414,4 +455,27 @@ async def run_migrations(db_path):
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (TRIGGER_VERSION,),
         )
+        await _salary_upgrade(db)
         await db.commit()
+
+
+async def _salary_upgrade(db):
+    """Bir martalik: eski «staffora» preset bilan yaratilgan kalitlarda maosh ruxsati
+    yo'q edi — Staffora'ga oylik bormasdi. Integratsiya kalitlariga (employees:write +
+    integration:write) `employees:salary` qo'shiladi va ularning webhooklarida
+    include_salary yoqiladi."""
+    cur = await db.execute("SELECT value FROM settings WHERE key='api_salary_upgrade'")
+    if await cur.fetchone():
+        return
+    cur = await db.execute("SELECT id, scopes FROM api_keys WHERE revoked_at IS NULL")
+    for kid, scopes in await cur.fetchall():
+        have = set((scopes or "").split())
+        if {"employees:write", "integration:write"} <= have and "employees:salary" not in have:
+            have.add("employees:salary")
+            await db.execute("UPDATE api_keys SET scopes=? WHERE id=?",
+                             (" ".join(sorted(have)), kid))
+    await db.execute(
+        "UPDATE api_webhooks SET include_salary=1 WHERE api_key_id IN "
+        "(SELECT id FROM api_keys WHERE (' ' || scopes || ' ') LIKE '% employees:salary %' "
+        "OR (' ' || scopes || ' ') LIKE '% admin %')")
+    await db.execute("INSERT INTO settings (key, value) VALUES ('api_salary_upgrade', '1')")

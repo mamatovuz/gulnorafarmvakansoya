@@ -4,6 +4,7 @@
 kiritadi, so'ng ariza HR/Adminga tasdiq uchun yuboriladi. Tasdiqlangach xodimga
 tegishli rol va davomat paneli ochiladi.
 """
+import logging
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -22,10 +23,11 @@ from i18n import t, tf, canon
 from utils import (
     safe_send, staff_reg_text, uniform_label, now_tk, normalize_phone, PHONE_HINT,
     post_staff_reg_to_channel, PROFILE_UPDATE_NOTICE, broadcast_request,
-    close_request_notices,
+    close_request_notices, handled_by_text, handled_alert_text, employee_state,
 )
 
 router = Router()
+logger = logging.getLogger("hrbot.staffreg")
 
 ROLE_LABELS = {
     ROLE_MANAGER: "🏢 Filial rahbari",
@@ -745,13 +747,92 @@ async def hr_staff_regs(message: Message):
         await message.answer("⛔ Sizda ruxsat yo'q.")
         return
     regs = await q.list_staff_regs(status="new", limit=30)
-    if not regs:
-        await message.answer("🧾 Yangi xodim so'rovlari yo'q.")
+    missing = await q.list_staff_regs_missing_profile(limit=30)
+    if regs:
+        await message.answer(
+            f"🧾 <b>Yangi xodim so'rovlari</b>\n\nJami: <b>{len(regs)}</b> ta\n"
+            "Batafsil ko'rish uchun tanlang:",
+            reply_markup=kb.staff_regs_list_kb(regs),
+        )
+    else:
+        await message.answer(
+            "🧾 Yangi xodim so'rovlari yo'q.",
+            reply_markup=kb.staff_regs_overview_kb(),
+        )
+    if missing:
+        await message.answer(
+            f"⚠️ <b>Tasdiqlangan, lekin xodimlar ro'yxatida yo'q</b> — {len(missing)} ta\n"
+            "Bu so'rovlar «✅ Tasdiqlangan» bo'lib qolgan, ammo xodim ro'yxatga "
+            "tushmagan. Ochib, «🔄 Boshidan tasdiqlash» ni bosing:",
+            reply_markup=kb.staff_regs_list_kb(missing),
+        )
+    if regs:
+        await message.answer(
+            "🗂 Avval ko'rib chiqilgan so'rovlarni ham ochishingiz mumkin:",
+            reply_markup=kb.staff_regs_overview_kb(),
+        )
+
+
+@router.callback_query(F.data.startswith("srlist:"))
+async def hr_staff_regs_list(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
         return
-    await message.answer(
-        f"🧾 <b>Yangi xodim so'rovlari</b>\n\nJami: <b>{len(regs)}</b> ta\n"
-        "Batafsil ko'rish uchun tanlang:",
+    what = call.data.split(":")[1]
+    if what == "missing":
+        regs = await q.list_staff_regs_missing_profile(limit=30)
+        title = "⚠️ <b>Tasdiqlangan, lekin ro'yxatda yo'q</b>"
+    else:
+        regs = await q.list_staff_regs(statuses=("approved", "rejected"), limit=20)
+        title = "🗂 <b>Ko'rib chiqilgan xodim so'rovlari</b> (oxirgi 20)"
+    await call.answer()
+    if not regs:
+        await call.message.answer(f"{title}\n\nHech narsa yo'q.")
+        return
+    await call.message.answer(
+        f"{title}\n\nTanlang — kartochkada kim ko'rib chiqqani va «🔄 Boshidan "
+        "tasdiqlash» tugmasi bor:",
         reply_markup=kb.staff_regs_list_kb(regs),
+    )
+
+
+async def _reg_state(reg):
+    """(holat kaliti, matn qatorlari) — kim ko'rib chiqqan + xodim hozir qayerda."""
+    lines = [handled_by_text(reg.get("status"), reg.get("handled_by_name"),
+                             reg.get("handled_at"))]
+    pres = await q.employee_presence(reg["user_id"])
+    key, state_line = employee_state(pres)
+    if reg.get("status") == "rejected" and key == "missing":
+        state_line = "ℹ️ Xodim ro'yxatda yo'q (so'rov rad etilgan)."
+        key = "rejected"
+    lines.append(state_line)
+    return key, lines, pres
+
+
+async def _send_reg_card(message: Message, reg, markup=None, extra=None):
+    """Xodim so'rovi kartochkasi (rasm bo'lsa — rasm bilan)."""
+    text = staff_reg_text(reg)
+    if extra:
+        text += "\n━━━━━━━━━━━━\n" + extra
+    if reg.get("photo_file_id"):
+        try:
+            if len(text) <= 1024:
+                await message.answer_photo(reg["photo_file_id"], caption=text,
+                                           reply_markup=markup)
+                return
+            await message.answer_photo(reg["photo_file_id"])
+        except Exception:
+            pass
+    await message.answer(text, reply_markup=markup)
+
+
+async def _send_handled_reg(message: Message, reg):
+    """Ko'rib chiqilgan so'rov: kim/qachon + xodim holati + «🔄 Boshidan tasdiqlash»."""
+    _, lines, _ = await _reg_state(reg)
+    can_again = reg.get("status") in ("approved", "rejected")
+    await _send_reg_card(
+        message, reg, markup=kb.staff_reg_handled_kb(reg["id"], can_reapprove=can_again),
+        extra="\n".join(lines),
     )
 
 
@@ -765,17 +846,10 @@ async def sr_view(call: CallbackQuery, bot: Bot):
     if not reg:
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
-    markup = kb.staff_reg_actions_kb(rid) if reg.get("status") == "new" else None
-    if reg.get("photo_file_id"):
-        try:
-            await call.message.answer_photo(
-                reg["photo_file_id"], caption=staff_reg_text(reg), reply_markup=markup
-            )
-            await call.answer()
-            return
-        except Exception:
-            pass
-    await call.message.answer(staff_reg_text(reg), reply_markup=markup)
+    if reg.get("status") == "new":
+        await _send_reg_card(call.message, reg, markup=kb.staff_reg_actions_kb(rid))
+    else:
+        await _send_handled_reg(call.message, reg)
     await call.answer()
 
 
@@ -822,6 +896,69 @@ async def sr_documents(call: CallbackQuery, bot: Bot):
     await call.answer(f"{sent} ta hujjat yuborildi ✅")
 
 
+async def _reg_already_handled(call: CallbackQuery, rid):
+    """So'rov allaqachon ko'rib chiqilgan: alertda KIM ko'rib chiqqani, keyin
+    kartochka — xodim holati va «🔄 Boshidan tasdiqlash» tugmasi bilan."""
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    info = await q.request_handler_info("staff_regs", rid)
+    await call.answer(handled_alert_text(info), show_alert=True)
+    reg = await q.get_staff_reg(rid)
+    if reg:
+        await _send_handled_reg(call.message, reg)
+
+
+async def _after_staff_approve(bot: Bot, chat: Message, me, rid, res, again=False):
+    """Tasdiqdan keyingi xabarlar: HR ga natija, xodimga panel, kanalga post."""
+    reg, role = res["reg"], res["role"]
+    if res["created"]:
+        state = "👥 Xodimlar ro'yxatiga <b>qo'shildi</b>."
+    else:
+        state = "👥 Xodim ro'yxatda edi — ma'lumotlari so'rovdagi bilan yangilandi."
+    head = "🔄 Boshidan tasdiqlandi" if again else "✅ Tasdiqlandi"
+    await chat.answer(
+        f"{head}: xodim so'rovi #{rid}\n"
+        f"👤 {reg.get('full_name')} — {ROLE_LABELS.get(role, role)}\n{state}"
+    )
+    if again and not res["created"]:
+        employee_text = (
+            "ℹ️ <b>Ma'lumotlaringiz HR tomonidan qayta tasdiqlandi.</b>\n"
+            f"Panel: <b>{ROLE_LABELS.get(role, role)}</b>. Menyuni yangilash uchun /start bosing."
+        )
+    else:
+        employee_text = (
+            "🎉 <b>Tabriklaymiz!</b>\n\n"
+            "Siz <b>Gulnora Farm hodimi</b> sifatida tasdiqlandingiz.\n"
+            f"Sizga <b>{ROLE_LABELS.get(role, role)}</b> paneli ochildi.\n"
+            "Yangilangan menyuni ko'rish uchun /start bosing."
+        )
+    await safe_send(bot, reg["user_tg"], employee_text, reply_markup=kb.main_menu(role))
+
+    # Ma'lumotlarni kanalga joylash (admin «⚙️ Sozlamalar»da maxfiy kanalni ulagan
+    # bo'lsa). Boshidan tasdiqlashda faqat avval rad etilgan bo'lsa joylanadi —
+    # aks holda kanalda shu xodim ikki marta chiqib qolardi.
+    if again and res["prev_status"] != "rejected":
+        return
+    full = await q.get_staff_reg(rid)
+    posted = await post_staff_reg_to_channel(
+        bot,
+        await q.get_setting("secret_channel"),
+        full,
+        header=(
+            "🏢 <b>YANGI XODIM — TASDIQLANDI</b>\n"
+            f"🎯 Rol: {ROLE_LABELS.get(role, role)}\n"
+            f"👔 Tasdiqladi: {me['full_name']}"
+        ),
+    )
+    if posted is False:
+        await chat.answer(
+            "⚠️ Xodim ma'lumotlari kanalga joylanmadi. Bot kanalda administrator "
+            "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
+        )
+
+
 @router.callback_query(F.data.startswith("sracc:"))
 async def sr_approve(call: CallbackQuery, bot: Bot):
     if not await _is_staff(call.from_user.id):
@@ -833,87 +970,140 @@ async def sr_approve(call: CallbackQuery, bot: Bot):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     if reg.get("status") != "new":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await _reg_already_handled(call, rid)
         return
     me = await q.get_user(call.from_user.id)
-    role = reg.get("role") or ROLE_EMPLOYEE
-    # ATOMIK — bir marta tasdiqlanadi
-    if not await q.claim_request("staff_regs", rid, "approved", me["id"], "new"):
-        try:
-            await call.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+    # ATOMIK — status, rol, profil va kadrlar harakati BITTA tranzaksiyada.
+    # Avval status alohida yozilardi va profil yaratishda xato bo'lsa so'rov
+    # «tasdiqlangan» bo'lib qolib, xodim ro'yxatga tushmasdi.
+    try:
+        res = await q.approve_staff_reg(rid, me["id"], allowed=("new",))
+    except Exception:
+        logger.exception("Xodim so'rovi #%s ni tasdiqlashda xatolik", rid)
+        await call.answer(
+            "⚠️ Tasdiqlashda xatolik yuz berdi — hech narsa o'zgarmadi. "
+            "Bir ozdan keyin qayta bosing.", show_alert=True,
+        )
+        return
+    if not res:
+        await _reg_already_handled(call, rid)
         return
     # Bitta HR tasdiqladi — qolgan HR/adminlardagi so'rov xabari o'chiriladi
     await close_request_notices(bot, "staff_reg", rid, keep_chat_id=call.from_user.id)
-    await q.set_role(reg["user_tg"], role, reg.get("branch_id"))
-    # Panellarda so'rovda kiritilgan ism ko'rinsin (Telegram nomi emas)
-    await q.set_real_name(user_id=reg["user_id"], full_name=reg.get("full_name"))
-    await q.upsert_employee_profile(
-        user_id=reg["user_id"],
-        application_id=None,
-        role=role,
-        position=reg.get("position"),
-        branch_id=reg.get("branch_id"),
-        uniform_status=reg.get("uniform_status") or "unknown",
-        monthly_salary=reg.get("salary"),
-        birth_date=reg.get("birth_date"),
-        address=reg.get("address"),
-        work_hours=reg.get("work_hours"),
-        rest_day=reg.get("rest_day"),
-        photo_file_id=reg.get("photo_file_id"),
-        extra_info=reg.get("extra_info"),
-        since=reg.get("since"),
-        education=reg.get("education"),
-        parent_phone=reg.get("parent_phone"),
-        passport_front=reg.get("passport_front"),
-        passport_back=reg.get("passport_back"),
-        diploma_file=reg.get("diploma_file"),
-    )
     await q.add_log(call.from_user.id, me["full_name"], "hodim_tasdiqlandi", f"#{rid}")
-    # Kadrlar harakati (IT hisoboti): ishga kirdi
-    await q.add_hr_event(
-        "hired", user_id=reg["user_id"], full_name=reg.get("full_name"),
-        branch_id=reg.get("branch_id"), details=f"hodim ro'yxati #{rid}",
-        created_by=me["id"],
-    )
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await call.message.answer(
-        f"✅ Xodim so'rovi #{rid} tasdiqlandi.\n"
-        f"👤 {reg.get('full_name')} — {ROLE_LABELS.get(role, role)}"
-    )
     await call.answer("Tasdiqlandi ✅")
-    await safe_send(
-        bot, reg["user_tg"],
-        "🎉 <b>Tabriklaymiz!</b>\n\n"
-        "Siz <b>Gulnora Farm hodimi</b> sifatida tasdiqlandingiz.\n"
-        f"Sizga <b>{ROLE_LABELS.get(role, role)}</b> paneli ochildi.\n"
-        "Yangilangan menyuni ko'rish uchun /start bosing.",
-        reply_markup=kb.main_menu(role),
-    )
+    await _after_staff_approve(bot, call.message, me, rid, res)
 
-    # Ma'lumotlarni kanalga joylash (admin «⚙️ Sozlamalar»da maxfiy kanalni ulagan bo'lsa)
+
+# ------- «🔄 Boshidan tasdiqlash» (tasdiqlangan / rad etilgan so'rov) -------
+_REAPPROVE_HINTS = {
+    "in_list": (
+        "Xodim hozir ro'yxatda. Boshidan tasdiqlasangiz u ro'yxatdan chiqmaydi, "
+        "lekin <b>profili so'rovdagi ma'lumotlar bilan yangilanadi</b> (rol, lavozim, "
+        "filial, oylik, ish vaqti...). Keyinchalik qo'lda o'zgartirilgan qiymatlar "
+        "ustidan yoziladi."
+    ),
+    "dismissed": (
+        "Xodim ishdan bo'shatilgan. Boshidan tasdiqlasangiz u <b>ishga qayta "
+        "olinadi</b> va «Ishdan bo'shaganlar» arxividan chiqadi."
+    ),
+    "missing": (
+        "So'rov tasdiqlangan, lekin xodim ro'yxatga tushmay qolgan. Boshidan "
+        "tasdiqlasangiz — xodim <b>ro'yxatga qo'shiladi</b> va unga panel ochiladi."
+    ),
+    "rejected": (
+        "So'rov avval rad etilgan. Boshidan tasdiqlasangiz — xodim <b>ro'yxatga "
+        "qo'shiladi</b>, unga panel ochiladi va xabar boradi."
+    ),
+    "awaiting": (
+        "Xodim sinov muddatiga qabul qilingan va rahbar «Ishga keldi» ni kutmoqda. "
+        "Boshidan tasdiqlasangiz — xodim darhol ro'yxatga qo'shiladi."
+    ),
+    "no_show": (
+        "Rahbar «Ishga kelmadi» deb belgilagan. Boshidan tasdiqlasangiz — xodim "
+        "ro'yxatga qo'shiladi."
+    ),
+}
+
+
+@router.callback_query(F.data.startswith("sragain:"))
+async def sr_reapprove_ask(call: CallbackQuery):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
     reg = await q.get_staff_reg(rid)
-    posted = await post_staff_reg_to_channel(
-        bot,
-        await q.get_setting("secret_channel"),
-        reg,
-        header=(
-            "🏢 <b>YANGI XODIM — TASDIQLANDI</b>\n"
-            f"🎯 Rol: {ROLE_LABELS.get(role, role)}\n"
-            f"👔 Tasdiqladi: {me['full_name']}"
-        ),
-    )
-    if posted is False:
-        await call.message.answer(
-            "⚠️ Xodim ma'lumotlari kanalga joylanmadi. Bot kanalda administrator "
-            "ekanini va kanal ID to'g'ri ulanganini tekshiring (⚙️ Sozlamalar)."
+    if not reg:
+        await call.answer("So'rov topilmadi.", show_alert=True)
+        return
+    if reg.get("status") not in ("approved", "rejected"):
+        await call.answer(
+            "Bu so'rovni boshidan tasdiqlab bo'lmaydi (holati: "
+            f"{reg.get('status')}).", show_alert=True,
         )
+        return
+    key, lines, pres = await _reg_state(reg)
+    role = reg.get("role") or ROLE_EMPLOYEE
+    cur_role = (pres.get("user") or {}).get("role")
+    role_line = ""
+    if key == "in_list" and cur_role and cur_role != role:
+        role_line = (
+            f"\n⚠️ Rol o'zgaradi: hozirgi <b>{cur_role}</b> → so'rovdagi "
+            f"<b>{ROLE_LABELS.get(role, role)}</b>"
+        )
+    await call.message.answer(
+        f"🔄 <b>Boshidan tasdiqlash — so'rov #{rid}</b>\n"
+        f"👤 {reg.get('full_name') or '-'} · {reg.get('position') or '-'}\n"
+        "━━━━━━━━━━━━\n" + "\n".join(lines) + "\n\n"
+        f"ℹ️ {_REAPPROVE_HINTS.get(key, _REAPPROVE_HINTS['missing'])}{role_line}\n\n"
+        "Davom etamizmi?",
+        reply_markup=kb.staff_reg_reapprove_confirm_kb(rid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("sragno:"))
+async def sr_reapprove_cancel(call: CallbackQuery):
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Bekor qilindi")
+
+
+@router.callback_query(F.data.startswith("sragok:"))
+async def sr_reapprove_do(call: CallbackQuery, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    rid = int(call.data.split(":")[1])
+    me = await q.get_user(call.from_user.id)
+    try:
+        res = await q.approve_staff_reg(rid, me["id"], allowed=("approved", "rejected"))
+    except Exception:
+        logger.exception("Xodim so'rovi #%s ni boshidan tasdiqlashda xatolik", rid)
+        await call.answer(
+            "⚠️ Xatolik yuz berdi — hech narsa o'zgarmadi. Qayta urinib ko'ring.",
+            show_alert=True,
+        )
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if not res:
+        await call.answer("So'rov holati o'zgargan — qaytadan oching.", show_alert=True)
+        return
+    # Rad etilgan so'rov xabarlari hali HR larda turgan bo'lishi mumkin
+    await close_request_notices(bot, "staff_reg", rid, keep_chat_id=call.from_user.id)
+    await q.add_log(call.from_user.id, me["full_name"], "hodim_qayta_tasdiqlandi",
+                    f"#{rid} (avval: {res['prev_status']})")
+    await call.answer("Boshidan tasdiqlandi ✅")
+    await _after_staff_approve(bot, call.message, me, rid, res, again=True)
 
 
 @router.callback_query(F.data.startswith("srrej:"))
@@ -928,7 +1118,7 @@ async def sr_reject_start(call: CallbackQuery, state: FSMContext):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     if reg.get("status") != "new":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await _reg_already_handled(call, rid)
         return
     await state.set_state(StaffRegRejectForm.reason)
     await state.update_data(sreg_rid=rid)
@@ -959,7 +1149,8 @@ async def sr_reject_reason(message: Message, state: FSMContext, bot: Bot):
     me = await q.get_user(message.from_user.id)
     # ATOMIK — bir marta rad etiladi
     if not await q.claim_request("staff_regs", rid, "rejected", me["id"], "new"):
-        await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
+        info = await q.request_handler_info("staff_regs", rid)
+        await message.answer("⚠️ " + handled_alert_text(info))
         return
     # Bitta HR rad etdi — qolgan HR/adminlardagi so'rov xabari o'chiriladi
     await close_request_notices(bot, "staff_reg", rid, keep_chat_id=message.from_user.id)

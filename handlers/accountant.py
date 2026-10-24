@@ -558,14 +558,15 @@ async def acc_fine_save(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     me = await q.get_user(message.from_user.id)
     profile = await q.get_employee_profile(uid)
-    await q.add_fine(
+    fid = await q.add_fine(
         uid, amount, reason, me["id"],
         branch_id=(profile or {}).get("branch_id"), source="finance",
     )
     await q.add_log(message.from_user.id, me["full_name"], "jarima_yozdi", f"user#{uid} {amount}")
     await message.answer(
-        f"✅ Jarima yozildi: <b>{amount}</b>\nSabab: {reason}\n\n"
-        "<i>Bu summa yakuniy oylikdan ayiriladi.</i>"
+        f"✅ Jarima yozildi (#{fid}): <b>{amount}</b>\nSabab: {reason}\n\n"
+        "<i>Bu summa yakuniy oylikdan ayiriladi. Ijro etilgach «✅ Ijro etildi» ni bosing.</i>",
+        reply_markup=kb.fine_decision_kb(fid),
     )
     if profile and profile.get("tg_id"):
         await safe_send(
@@ -581,7 +582,7 @@ async def acc_fines_list(call: CallbackQuery):
         await call.answer("⛔", show_alert=True)
         return
     uid = int(call.data.split(":")[1])
-    fines = await q.list_fines(uid)
+    fines = await q.list_fines(uid, include_cancelled=True)
     if not fines:
         await call.answer("Jarimalar yo'q.", show_alert=True)
         return
@@ -793,10 +794,10 @@ async def acc_send_report(call: CallbackQuery, bot: Bot):
                       show_alert=not ok)
 
 
-# ================= JARIMANI BEKOR QILISH =================
-# Moliya bo'limi jarimani bekor qiladi — oylikdan kesilgani avtomatik
-# qaytariladi (yakuniy oylik cancelled=0 jarimalarnigina hisoblaydi) va
-# xodimga xabar boradi.
+# ================= JARIMALAR: XODIM BO'YICHA QIDIRUV =================
+# «⚖️ Jarimalar nazorati» (handlers/fines.py) dagi «🔍 Xodim bo'yicha» oqimi.
+# Jarima ochilganda «✅ Ijro etildi» / «🚫 Bekor qilish» (sabab bilan) chiqadi;
+# bekor qilingan jarima yakuniy oylikdan ayirilmaydi.
 async def _show_fine_cancel_list(target, rows, header=None):
     if not rows:
         await target.answer(
@@ -812,16 +813,6 @@ async def _show_fine_cancel_list(target, rows, header=None):
         ),
         reply_markup=kb.fine_cancel_people_kb(rows),
     )
-
-
-@router.message(F.text == "🚫 Jarimani bekor qilish")
-async def fine_cancel_start(message: Message, state: FSMContext):
-    if not await _is_accountant(message.from_user.id):
-        await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
-        return
-    await state.clear()
-    rows = await q.employees_with_fines(limit=60)
-    await _show_fine_cancel_list(message, rows)
 
 
 @router.callback_query(F.data == "fcfind")
@@ -880,7 +871,8 @@ async def fine_cancel_person(call: CallbackQuery):
     extra = (
         f"\n\n💸 <b>Faol jarimalar:</b> {len(fines)} ta · "
         f"jami <b>{fmt_money(total)}</b>\n"
-        "Bekor qilish uchun kerakli jarimani tanlang 👇"
+        "⏳ — ijro kutilmoqda, ✅ — ijro etilgan.\n"
+        "Ijro etish yoki bekor qilish uchun jarimani tanlang 👇"
     )
     if profile:
         await send_employee_profile(
@@ -893,48 +885,3 @@ async def fine_cancel_person(call: CallbackQuery):
             reply_markup=kb.fine_cancel_list_kb(fines, uid),
         )
     await call.answer()
-
-
-@router.callback_query(F.data.startswith("fcancel:"))
-async def fine_cancel_apply(call: CallbackQuery, bot: Bot):
-    if not await _is_accountant(call.from_user.id):
-        await call.answer("⛔", show_alert=True)
-        return
-    fid = int(call.data.split(":")[1])
-    fine = await q.get_fine(fid)
-    if not fine:
-        await call.answer("Jarima topilmadi.", show_alert=True)
-        return
-    if fine.get("cancelled"):
-        await call.answer("Bu jarima allaqachon bekor qilingan.", show_alert=True)
-        return
-    me = await q.get_user(call.from_user.id)
-    ok = await q.cancel_fine(fid, me["id"] if me else None)
-    if not ok:
-        await call.answer("Bu jarima allaqachon bekor qilingan.", show_alert=True)
-        return
-    await q.add_log(
-        call.from_user.id, me["full_name"] if me else "?", "jarima_bekor",
-        f"fine#{fid} user#{fine.get('employee_user_id')} {fine.get('amount')}",
-    )
-    try:
-        await call.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-    await call.message.answer(
-        f"✅ <b>Jarima bekor qilindi</b>\n"
-        f"👤 {fine.get('employee_name') or '-'}\n"
-        f"💸 Summa: <b>{fine.get('amount')}</b>\n"
-        f"✍️ Sabab (asl): {fine.get('reason') or '-'}\n\n"
-        "Bu summa yakuniy oylikdan endi ayirilmaydi (oylikka qaytarildi)."
-    )
-    await call.answer("Bekor qilindi ✅")
-    if fine.get("employee_tg"):
-        await safe_send(
-            bot, fine["employee_tg"],
-            f"♻️ <b>Jarimangiz bekor qilindi</b>\n\n"
-            f"💸 Summa: <b>{fine.get('amount')}</b>\n"
-            f"✍️ Sabab (asl): {fine.get('reason') or '-'}\n\n"
-            "Jarimangiz <b>moliya bo'limi</b> tomonidan bekor qilindi va "
-            "oyligingizdan kesilgan summa qaytarildi.",
-        )

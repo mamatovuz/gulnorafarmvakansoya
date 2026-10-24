@@ -5,6 +5,7 @@ ishlatiladi: `trust_notices` yozuvi yaratiladi, har bir xabar «✅ Ko'rib chiqd
 (`trustack:<id>`) tugmasi bilan boradi va botdagi mavjud handler bosilganini
 qayd etadi — HR botdagi «📊 Bildirishnoma statistika» da ham ko'radi.
 """
+import asyncio
 import html
 import json
 import logging
@@ -130,9 +131,13 @@ async def send_announcement(aid):
             WHERE r.announcement_id=? AND r.status='pending'""", (aid,))
     for r in pending:
         ok, mid, err = await telegram.send_text(r["tg_id"], text, reply_markup=markup)
+        if not ok and not telegram.is_permanent(err) and err != "telegram_send_disabled":
+            # Vaqtinchalik xato (tarmoq) — bir marta qayta urinamiz
+            await asyncio.sleep(1)
+            ok, mid, err = await telegram.send_text(r["tg_id"], text, reply_markup=markup)
         await execute(
-            "UPDATE api_announcement_recipients SET status=?, message_id=?, error=?, sent_at=? "
-            "WHERE id=?",
+            "UPDATE api_announcement_recipients SET status=?, message_id=?, error=?, sent_at=?, "
+            "attempts=COALESCE(attempts,0)+1 WHERE id=?",
             ("sent" if ok else "failed", mid, err, now_sql() if ok else None, r["id"]))
         if ok and notice_id:
             try:
@@ -159,6 +164,10 @@ async def send_announcement(aid):
 
 
 async def send_due_announcements():
+    # Jarayon yuborish o'rtasida to'xtagan bo'lsa — qolgan (pending) qabul qiluvchilarga davom
+    await execute(
+        "UPDATE api_announcements SET status='scheduled' WHERE status='sending' "
+        "AND updated_at < datetime('now','+5 hours','-30 minutes')")
     rows = await fetch_all(
         "SELECT id FROM api_announcements WHERE status='scheduled' "
         "AND (scheduled_at IS NULL OR scheduled_at<=?) ORDER BY id", (now_sql(),))
@@ -171,26 +180,82 @@ async def send_due_announcements():
     return len(rows)
 
 
-NOTIFICATION_MAX_ATTEMPTS = 3
+NOTIFICATION_MAX_ATTEMPTS = 5
+# Vaqtinchalik xatodan keyin kutish (soniya): 1 daq, 5 daq, 15 daq, 1 soat
+NOTIFICATION_BACKOFF = [60, 300, 900, 3600]
+
+
+def buttons_markup(raw):
+    """JSON [{"text","url"}] -> InlineKeyboardMarkup (har tugma alohida qatorda)."""
+    if not raw:
+        return None
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = [[InlineKeyboardButton(text=str(b["text"])[:64], url=str(b["url"]))]
+            for b in items if b.get("text") and b.get("url")]
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+async def _release_stale():
+    """Jarayon to'xtab qolgan 'sending' holatidagi bildirishnomalarni navbatga qaytaradi."""
+    await execute(
+        "UPDATE api_notifications SET status='queued' WHERE status='sending' "
+        "AND COALESCE(updated_at, created_at) < datetime('now','+5 hours','-10 minutes')")
+
+
+async def send_one_notification(n):
+    """Bitta bildirishnomani yuboradi. Atomik egallash — ikki marta ketmaydi."""
+    from datetime import timedelta
+
+    from api.core import now_tk
+    _, claimed = await execute(
+        "UPDATE api_notifications SET status='sending', updated_at=? WHERE id=? AND status='queued'",
+        (now_sql(), n["id"]))
+    if not claimed:
+        return None
+    text = n["message"] if n.get("is_html") else render(n.get("title"), n["message"])
+    try:
+        markup = buttons_markup(n.get("buttons"))
+    except Exception:
+        markup = None
+    ok, mid, err = await telegram.send_text(n["tg_id"], text, reply_markup=markup)
+    attempts = int(n["attempts"] or 0)
+    nxt = None
+    if ok:
+        status, attempts = "sent", attempts + 1
+    elif err == "telegram_send_disabled":
+        status = "queued"  # urinish hisoblanmaydi
+    else:
+        attempts += 1
+        if telegram.is_permanent(err) or attempts >= NOTIFICATION_MAX_ATTEMPTS:
+            status = "failed"
+        else:
+            status = "queued"
+            delay = NOTIFICATION_BACKOFF[min(attempts - 1, len(NOTIFICATION_BACKOFF) - 1)]
+            nxt = (now_tk() + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S")
+    await execute(
+        "UPDATE api_notifications SET status=?, attempts=?, tg_message_id=?, error=?, sent_at=?, "
+        "next_attempt_at=?, updated_at=? WHERE id=?",
+        (status, attempts, mid, err, now_sql() if ok else None, nxt, now_sql(), n["id"]))
+    if not ok and err != "telegram_send_disabled":
+        logger.warning("Bildirishnoma #%s yuborilmadi (%s): %s", n["id"], status, err)
+    return status
 
 
 async def send_queued_notifications(limit=100):
+    await _release_stale()
     rows = await fetch_all(
-        "SELECT * FROM api_notifications WHERE status='queued' ORDER BY id LIMIT ?", (limit,))
+        "SELECT * FROM api_notifications WHERE status='queued' "
+        "AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY id LIMIT ?",
+        (now_sql(), limit))
     for n in rows:
-        text = n["message"] if n.get("is_html") else render(n.get("title"), n["message"])
-        ok, mid, err = await telegram.send_text(n["tg_id"], text)
-        attempts = int(n["attempts"] or 0) + 1
-        if ok:
-            status = "sent"
-        elif attempts >= NOTIFICATION_MAX_ATTEMPTS or err == "telegram_send_disabled":
-            status = "failed" if err != "telegram_send_disabled" else "queued"
-        else:
-            status = "queued"
-        if err == "telegram_send_disabled":
-            attempts = n["attempts"] or 0
-        await execute(
-            "UPDATE api_notifications SET status=?, attempts=?, tg_message_id=?, error=?, sent_at=? "
-            "WHERE id=?",
-            (status, attempts, mid, err, now_sql() if ok else None, n["id"]))
+        try:
+            await send_one_notification(n)
+        except Exception:
+            logger.exception("Bildirishnoma #%s xatosi", n["id"])
+            await execute("UPDATE api_notifications SET status='queued', updated_at=? "
+                          "WHERE id=? AND status='sending'", (now_sql(), n["id"]))
     return len(rows)

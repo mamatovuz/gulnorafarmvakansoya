@@ -13,13 +13,13 @@ from pydantic import ValidationError
 from api import API_VERSION, repo, services, settings, webhooks
 from api.core import (ApiError, Page, connect, execute, fetch_all, fetch_one, fetch_val, iso,
                       not_found, now_sql, ok)
-from api.schemas import (ApiKeyCreate, BranchCreate, BranchFields, DepartmentCreate,
+from api.schemas import (ApiKeyCreate, ApiKeyPatch, BranchCreate, BranchFields, DepartmentCreate,
                          DepartmentFields, EmployeeCreate, EmployeePatch, ExternalIdLink,
                          PositionCreate, PositionFields, SyncRequest, TelegramVerify,
                          WebhookCreate, WebhookPatch)
-from api.security import (SCOPES, STAFFORA_DEFAULT_SCOPES, Principal, create_api_key,
+from api.security import (SCOPES, STAFFORA_DEFAULT_SCOPES, Principal, add_scopes, create_api_key,
                           get_api_key, list_api_keys, public_key, require, revoke_api_key,
-                          rotate_api_key)
+                          rotate_api_key, set_scopes)
 
 integration = APIRouter(prefix="/integration", tags=["Integration"])
 hooks = APIRouter(prefix="/webhooks", tags=["Webhooks"])
@@ -94,10 +94,10 @@ async def changes(since_id: int = Query(0, ge=0, description="Oldingi javobdagi 
     rows = await fetch_all(sql + " ORDER BY id LIMIT ?", (*params, limit))
     items = []
     for ev in rows:
-        data = json.loads(ev["payload"]) if ev.get("payload") else await webhooks.build_data(ev)
-        if ev["entity_type"] == "employee" and isinstance(data, dict) and "salary" in data \
-                and not p.has("employees:salary"):
-            data.pop("salary", None)
+        data = (json.loads(ev["payload"]) if ev.get("payload")
+                else await webhooks.build_data(ev, include_salary=True))
+        if not p.has("employees:salary"):
+            data = webhooks.strip_salary(ev, data)
         items.append(webhooks.envelope(ev, data))
     nxt = rows[-1]["id"] if rows else since_id
     return ok(items, {"next_cursor": nxt, "has_more": len(rows) == limit})
@@ -445,6 +445,8 @@ async def create_hook(body: WebhookCreate, p: Principal = Depends(require("webho
     _check_events(body.events)
     if body.include_salary and not p.has("employees:salary"):
         raise ApiError(403, "insufficient_scope", "include_salary uchun employees:salary kerak.")
+    if body.include_salary is None:
+        body.include_salary = p.has("employees:salary")
     secret = "whsec_" + secrets.token_urlsafe(32)
     hid, _ = await execute(
         "INSERT INTO api_webhooks (url, description, events, secret, include_salary, active, "
@@ -576,6 +578,22 @@ async def get_key(key_id: int = Path(..., gt=0), p: Principal = Depends(require(
     if not row:
         raise not_found("API kalit", key_id)
     return ok(public_key(row))
+
+
+@keys.patch("/{key_id}", summary="Kalit ruxsatlarini o'zgartirish (masalan employees:salary qo'shish)")
+async def patch_key(body: ApiKeyPatch, key_id: int = Path(..., gt=0),
+                    p: Principal = Depends(require("admin"))):
+    if not await get_api_key(key_id):
+        raise not_found("API kalit", key_id)
+    if body.scopes is not None:
+        await set_scopes(key_id, body.scopes)
+    if body.add_scopes:
+        await add_scopes(key_id, body.add_scopes)
+    extra = body.model_dump(exclude_unset=True, include={"description", "rate_limit_per_minute"})
+    if extra:
+        await execute(f"UPDATE api_keys SET {', '.join(k + '=?' for k in extra)} WHERE id=?",
+                      (*extra.values(), key_id))
+    return ok(public_key(await get_api_key(key_id)))
 
 
 @keys.post("/{key_id}/revoke", summary="Kalitni bekor qilish")

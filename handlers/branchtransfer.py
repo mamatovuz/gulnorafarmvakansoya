@@ -18,7 +18,7 @@ from database import queries as q
 from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import BranchTransferForm
 import keyboards as kb
-from utils import safe_send, broadcast_request, close_request_notices
+from utils import safe_send, broadcast_request, close_request_notices, handled_alert_text
 
 router = Router()
 
@@ -270,7 +270,10 @@ async def hr_transfer_approve(call: CallbackQuery, bot: Bot):
     rid = int(call.data.split(":")[1])
     req = await q.get_branch_transfer_request(rid)
     if not req or req.get("status") != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("branch_transfer_requests", rid)),
+            show_alert=True,
+        )
         return
     me = await q.get_user(call.from_user.id)
     # ATOMIK — bir so'rov faqat bir marta tasdiqlanadi
@@ -280,8 +283,10 @@ async def hr_transfer_approve(call: CallbackQuery, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("branch_transfer_requests", rid)),
+            show_alert=True,
+        )
         return
     await close_request_notices(bot, NOTICE_KIND, rid, keep_chat_id=call.from_user.id)
     await q.set_employee_branch(req["user_id"], req["to_branch_id"])
@@ -373,7 +378,10 @@ async def hr_transfer_reject(call: CallbackQuery, bot: Bot):
     rid = int(call.data.split(":")[1])
     req = await q.get_branch_transfer_request(rid)
     if not req or req.get("status") != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("branch_transfer_requests", rid)),
+            show_alert=True,
+        )
         return
     me = await q.get_user(call.from_user.id)
     if not await q.claim_request("branch_transfer_requests", rid, "rejected",
@@ -382,8 +390,10 @@ async def hr_transfer_reject(call: CallbackQuery, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("branch_transfer_requests", rid)),
+            show_alert=True,
+        )
         return
     await close_request_notices(bot, NOTICE_KIND, rid, keep_chat_id=call.from_user.id)
     await q.close_branch_transfer_request(rid, "rejected",
@@ -416,7 +426,10 @@ async def hr_transfer_message_start(call: CallbackQuery, state: FSMContext):
     rid = int(call.data.split(":")[1])
     req = await q.get_branch_transfer_request(rid)
     if not req or req.get("status") != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("branch_transfer_requests", rid)),
+            show_alert=True,
+        )
         return
     await state.set_state(BranchTransferForm.hr_message)
     await state.update_data(btr_rid=rid)

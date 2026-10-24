@@ -1,6 +1,6 @@
 """HR panel handlerlari."""
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.fsm.context import FSMContext
 
@@ -9,12 +9,13 @@ from database.db import (
     ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, ROLE_EMPLOYEE, ROLE_PHARMACIST,
     ROLE_DIRECTOR, ROLE_ACCOUNTANT, ROLE_CANDIDATE, ROLE_IT, ROLE_TECH,
     ST_NEW, ST_INTERVIEW, ST_ACCEPTED, ST_REJECTED, ST_WAITING,
+    application_status_label,
 )
 from states import (
     VacancyForm, InterviewForm, CommentForm, RejectForm, Broadcast, SearchForm,
     SalaryForm, FineForm, ApplicationFilterForm, CandidateMessageForm,
     ProbationForm, TerminationRejectForm, SalaryNegoForm, EmployeeSearchForm,
-    RejectTemplateForm, DismissedForm,
+    RejectTemplateForm, DismissedForm, ProbationExtendForm,
 )
 import keyboards as kb
 from utils import (
@@ -27,6 +28,8 @@ from utils import (
     interview_confirm_label, interview_attendance_label,
     effective_reject_template, broadcast_trust, broadcast_request,
     staff_reg_text, tech_task_text, post_open_tech_task_to_channel,
+    handled_by_text, handled_alert_text, employee_state, probation_bucket,
+    probation_state_label, PROBATION_SOON_DAYS, today_tk, days_between_iso,
 )
 from services import export
 
@@ -213,6 +216,16 @@ async def hr_applications(message: Message):
         "yoki keng filterdan foydalaning.",
         reply_markup=kb.applications_filter_kb(),
     )
+    # Qabul qilingan, lekin xodim ro'yxatga tushmay qolgan arizalar (xatolik)
+    missing = await q.list_accepted_apps_missing_profile(limit=30)
+    if missing:
+        await message.answer(
+            f"⚠️ <b>Qabul qilingan, lekin xodimlar ro'yxatida yo'q</b> — "
+            f"{len(missing)} ta\n"
+            "Arizani oching va «🔄 Boshidan qabul qilish» ni bosing — xodim "
+            "ro'yxatga qo'shiladi.",
+            reply_markup=kb.applications_list_kb(missing, prefix="appview"),
+        )
 
 
 @router.callback_query(F.data.startswith("apps:"))
@@ -397,12 +410,18 @@ async def app_view(call: CallbackQuery, bot: Bot):
     if not a:
         await call.answer("Topilmadi.", show_alert=True)
         return
+    accepted = a.get("status") == ST_ACCEPTED
     # Rasm + captionda ma'lumot + tugmalar — hammasi BITTA xabarda
     await send_application_card(
         bot, call.message.chat.id, a,
-        reply_markup=kb.application_actions_kb(aid, favorite=bool(a.get("favorite"))),
+        reply_markup=kb.application_actions_kb(
+            aid, favorite=bool(a.get("favorite")), accepted=accepted,
+        ),
     )
     await send_application_resume(bot, call.message.chat.id, a)
+    if accepted:
+        # Kim qabul qilgan, qachon va xodim hozir ro'yxatdami
+        await _send_accepted_block(call.message, a, with_reaccept=False)
     await call.answer()
 
 
@@ -487,24 +506,93 @@ ACCEPT_KINDS = {
 }
 
 
-async def _start_accept(call: CallbackQuery, state: FSMContext, kind: str):
+async def _accepted_app_block(a, with_reaccept=True):
+    """Qabul qilingan ariza holati: kim qabul qilgan, qachon, xodim hozir
+    ro'yxatdami, sinov holati. (matn, tugmalar, holat kaliti) qaytaradi."""
+    pres = await q.employee_presence(a["user_id"])
+    key, state_line = employee_state(pres)
+    prob = pres.get("probation") or {}
+    lines = [
+        f"📌 <b>Ariza #{a['id']} — {application_status_label(a)}</b>",
+        handled_by_text("accepted", a.get("handled_by_name"), a.get("handled_at")),
+        state_line,
+    ]
+    if prob.get("status") in ("awaiting", "active", "finished"):
+        noun = "O'rganish" if prob.get("kind") == "learner" else "Sinov"
+        lines.append(
+            f"🧪 {noun}: {iso_to_display(prob.get('start_date'))} — "
+            f"{iso_to_display(prob.get('end_date'))} · {probation_state_label(prob)}"
+        )
+    awaiting = key == "awaiting" and prob.get("id")
+    markup = kb.application_accepted_kb(
+        a["id"], pid=prob.get("id"), awaiting=bool(awaiting),
+        with_reaccept=with_reaccept,
+    )
+    return "\n".join(lines), markup, key
+
+
+# «🔄 Boshidan qabul qilish» — holatga qarab nima bo'lishi tushuntiriladi
+REACCEPT_HINTS = {
+    "in_list": (
+        "Xodim hozir ro'yxatda. Boshidan qabul qilsangiz u ro'yxatdan "
+        "<b>chiqmaydi</b> — faqat maqomi, filiali, smenasi yangilanadi; ochiq sinov "
+        "muddati yopilib, tanlangan maqom bo'yicha yangisi ochiladi."
+    ),
+    "awaiting": (
+        "Filial rahbari hali «✅ Ishga keldi» ni bosmagan. Boshidan qabul qilsangiz "
+        "eski so'rov bekor bo'ladi va rahbarga yangi sana bilan qayta yuboriladi. "
+        "Xodim allaqachon ishga kelgan bo'lsa — «✅ Ishga keldi (HR tasdiqlaydi)» "
+        "tugmasidan foydalaning."
+    ),
+    "no_show": (
+        "Rahbar «Ishga kelmadi» deb belgilagan. Boshidan qabul qilsangiz — yangi "
+        "sana bilan qaytadan qabul qilinadi."
+    ),
+    "dismissed": (
+        "Xodim ishdan bo'shatilgan. Boshidan qabul qilsangiz — u <b>ishga qayta "
+        "olinadi</b> va «Ishdan bo'shaganlar» arxividan chiqadi."
+    ),
+    "missing": (
+        "Ariza qabul qilingan, lekin xodim ro'yxatga tushmay qolgan. Boshidan "
+        "qabul qilsangiz — xodim ro'yxatga qo'shiladi."
+    ),
+}
+
+
+async def _send_accepted_block(target, a, with_reaccept=True):
+    text, markup, _ = await _accepted_app_block(a, with_reaccept=with_reaccept)
+    await target.answer(text, reply_markup=markup)
+
+
+async def _start_accept(call: CallbackQuery, state: FSMContext, kind: str,
+                        aid=None, reaccept=False):
     if not await is_staff(call.from_user.id):
         await call.answer("⛔", show_alert=True)
         return
-    aid = int(call.data.split(":")[1])
+    if aid is None:
+        aid = int(call.data.split(":")[1])
     a = await q.get_application(aid)
     if not a:
         await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    if a.get("status") == ST_ACCEPTED and not reaccept:
+        # Eski kartochkadagi qabul tugmasi bosildi — butun oqimni o'tkazib, oxirida
+        # «allaqachon qabul qilingan» deyish o'rniga darhol holatni ko'rsatamiz.
+        who = a.get("handled_by_name") or "boshqa HR"
+        await call.answer(f"Bu ariza allaqachon qabul qilingan — {who}.", show_alert=True)
+        await _send_accepted_block(call.message, a)
         return
     meta = ACCEPT_KINDS[kind]
     await state.set_state(ProbationForm.branch)
     await state.update_data(
         prob_aid=aid, prob_suggest_branch=a.get("branch_id"), accept_kind=kind,
+        prob_reaccept=bool(reaccept),
     )
     branches = await q.list_branches()
     hint = f"\n\nArizada ko'rsatilgan filial: <b>{a.get('branch_name') or '—'}</b>"
+    head = "🔄 <b>Boshidan qabul</b> — " if reaccept else ""
     await call.message.answer(
-        f"{meta['emoji']} <b>{meta['short']}</b>\n\n"
+        f"{head}{meta['emoji']} <b>{meta['short']}</b>\n\n"
         f"👤 {a.get('full_name')} · {a.get('position') or a.get('vacancy_title')}\n"
         f"Xodim <b>qaysi filialga</b> chiqadi? Tanlang:{hint}",
         reply_markup=kb.branch_pick_kb(branches, prefix="probr"),
@@ -525,6 +613,55 @@ async def app_accept_trial(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("applearn:"))
 async def app_accept_learn(call: CallbackQuery, state: FSMContext):
     await _start_accept(call, state, "learner")
+
+
+# ------- «🔄 Boshidan qabul qilish» (qabul qilingan ariza) -------
+@router.callback_query(F.data.startswith("appagain:"))
+async def app_reaccept_prompt(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    aid = int(call.data.split(":")[1])
+    a = await q.get_application(aid)
+    if not a:
+        await call.answer("Ariza topilmadi.", show_alert=True)
+        return
+    if a.get("status") != ST_ACCEPTED:
+        await call.answer(
+            "Bu ariza hozir qabul qilinmagan — oddiy «✅ Ishga qabul» tugmalaridan "
+            "foydalaning.", show_alert=True,
+        )
+        return
+    text, _, key = await _accepted_app_block(a, with_reaccept=False)
+    await call.message.answer(
+        f"🔄 <b>Boshidan qabul qilish</b>\n━━━━━━━━━━━━\n{text}\n\n"
+        f"ℹ️ {REACCEPT_HINTS.get(key, REACCEPT_HINTS['missing'])}\n\n"
+        "Qaysi maqomda qabul qilamiz? (keyin filial, sana va smena so'raladi)",
+        reply_markup=kb.application_reaccept_kb(aid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("appagk:"))
+async def app_reaccept_kind(call: CallbackQuery, state: FSMContext):
+    _, kind, aid = call.data.split(":")
+    if kind not in ACCEPT_KINDS:
+        await call.answer("Noma'lum maqom.", show_alert=True)
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _start_accept(call, state, kind, aid=int(aid), reaccept=True)
+
+
+@router.callback_query(F.data.startswith("appagno:"))
+async def app_reaccept_cancel(call: CallbackQuery, state: FSMContext):
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Bekor qilindi")
 
 
 @router.callback_query(ProbationForm.branch, F.data.startswith("probr:"))
@@ -604,11 +741,12 @@ async def app_accept_shift(call: CallbackQuery, state: FSMContext, bot: Bot):
     aid = data.get("prob_aid")
     branch_id = data.get("prob_branch_id")
     start_iso = data.get("prob_start_iso")
+    reaccept = bool(data.get("prob_reaccept"))
     await state.clear()
     me = await actor(call.from_user.id)
-    await _finalize_accept(bot, call.message, me, aid, branch_id, start_iso, kind,
-                           shift=shift)
     await call.answer()
+    await _finalize_accept(bot, call.message, me, aid, branch_id, start_iso, kind,
+                           shift=shift, reaccept=reaccept)
 
 
 @router.message(ProbationForm.days, F.text)
@@ -626,22 +764,22 @@ async def app_accept_learner_days(message: Message, state: FSMContext, bot: Bot)
     branch_id = data.get("prob_branch_id")
     start_iso = data.get("prob_start_iso")
     shift = data.get("prob_shift")
+    reaccept = bool(data.get("prob_reaccept"))
     await state.clear()
     me = await actor(message.from_user.id)
     await _finalize_accept(bot, message, me, aid, branch_id, start_iso, "learner",
-                           days=days, shift=shift)
+                           days=days, shift=shift, reaccept=reaccept)
 
 
 async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
-                           start_iso, kind, days=None, shift=None):
-    """Arizani qabul qiladi. kind: hire (doimiy) / trial (sinov) / learner (o'rganuvchi)."""
+                           start_iso, kind, days=None, shift=None, reaccept=False):
+    """Arizani qabul qiladi. kind: hire (doimiy) / trial (sinov) / learner (o'rganuvchi).
+
+    Bazadagi barcha yozuvlar (status, rol, profil, sinov, kadrlar harakati)
+    `q.accept_application_tx` da BITTA tranzaksiyada bajariladi — ariza
+    «qabul qilingan» bo'lib qolib, xodim ro'yxatga tushmay qolishi endi mumkin emas.
+    `reaccept=True` — «🔄 Boshidan qabul qilish»."""
     meta = ACCEPT_KINDS.get(kind, ACCEPT_KINDS["trial"])
-    # ATOMIK — bir ariza faqat bir marta qabul qilinadi
-    if not await q.accept_application_once(aid, me["id"], kind):
-        await message.answer(
-            "⚠️ Bu ariza allaqachon qabul qilingan (ehtimol boshqa HR tomonidan)."
-        )
-        return
     a = await q.get_application(aid)
     if not a:
         await message.answer("Ariza topilmadi.")
@@ -649,70 +787,46 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
     if branch_id is None:
         branch_id = a.get("branch_id")
     new_role = role_from_position(a.get("position") or a.get("vacancy_title"))
-    # Kelishilgan oylik bo'lsa — profilga yozamiz
-    agreed_salary = a.get("offered_salary") if a.get("salary_status") == "agreed" else None
-    eff_shift = shift or a.get("shift")
-    uniform = a.get("uniform_status") or "unknown"
-    # Panellarda arizadagi ism ko'rinsin (Telegram nomi emas)
-    await q.set_real_name(user_id=a["user_id"], full_name=a.get("full_name"))
-
     manager_ids = await q.branch_manager_tg_ids(branch_id)
-    # Sinov / o'rganuvchi + filialda rahbar bor bo'lsa — xodim DARHOL xodimlar
-    # ro'yxatiga qo'shilMAYDI. Filial rahbari «✅ Ishga keldi» ni bosgach qo'shiladi.
-    # (Aks holda ishga chiqmagan xodim ham ro'yxatga tushib qolar edi.)
-    defer = kind in ("trial", "learner") and bool(manager_ids)
-
-    if not defer:
-        # Doimiy ishga qabul YOKI filialga rahbar biriktirilmagan — darhol qo'shamiz
-        # (tasdiqlaydigan rahbar yo'q).
-        if a.get("applicant_tg"):
-            await q.set_role(a["applicant_tg"], new_role, branch_id)
-        await q.upsert_employee_profile(
-            user_id=a["user_id"],
-            application_id=aid,
-            role=new_role,
-            position=a.get("position") or a.get("vacancy_title"),
-            branch_id=branch_id,
-            uniform_status=uniform,
-            monthly_salary=agreed_salary,
-            shift=eff_shift,
-        )
-
-    # Sinov / o'rganuvchi bo'lsa — muddat yozuvini yaratamiz
-    pid = None
-    end_iso = None
-    period_days = None
+    period_days = end_iso = None
     if kind in ("trial", "learner"):
         period_days = 15 if kind == "trial" else (days or 15)
         end_iso = add_days_iso(start_iso, period_days - 1)
-        pid = await q.add_probation({
-            "application_id": aid,
-            "user_id": a["user_id"],
-            "branch_id": branch_id,
-            "full_name": a.get("full_name"),
-            "position": a.get("position") or a.get("vacancy_title"),
-            "start_date": start_iso,
-            "end_date": end_iso,
-            "days": period_days,
-            "kind": kind,
-            # Kechiktirilgan bo'lsa — rahbar tasdig'ini kutadi
-            "status": "awaiting" if defer else "active",
-            "shift": eff_shift,
-            "agreed_salary": agreed_salary,
-            "uniform_status": uniform,
-            "created_by": me["id"],
-        })
-    await q.add_log(
-        message.from_user.id, me["full_name"], "ariza_qabul",
-        f"Ariza #{aid} · {kind}" + (f" · muddat #{pid}" if pid else "")
+
+    res = await q.accept_application_tx(
+        aid, me["id"], kind, new_role, branch_id,
+        start_iso=start_iso, end_iso=end_iso, days=period_days, shift=shift,
+        # Sinov / o'rganuvchi + filialda rahbar bor bo'lsa — xodim rahbar «✅ Ishga
+        # keldi» ni bosgach ro'yxatga qo'shiladi (ishga chiqmagan xodim tushmasin).
+        want_defer=bool(manager_ids), reaccept=reaccept,
     )
-    # Kadrlar harakati (IT hisoboti): ishga kirdi — faqat DARHOL qo'shilganda.
-    # Kechiktirilganda «✅ Ishga keldi» tasdig'ida qayd etiladi.
-    if not defer:
-        await q.add_hr_event(
-            "hired", user_id=a["user_id"], full_name=a.get("full_name"),
-            branch_id=branch_id, details=f"ariza #{aid} · {kind}", created_by=me["id"],
+    if res is None:
+        fresh = await q.get_application(aid) or a
+        if reaccept:
+            await message.answer(
+                "⚠️ Ariza holati o'zgargan (hozir qabul qilingan emas) — arizani "
+                "qaytadan ochib ko'ring."
+            )
+            return
+        await message.answer(
+            "⚠️ Bu ariza allaqachon qabul qilingan.\n"
+            + handled_by_text("accepted", fresh.get("handled_by_name"),
+                              fresh.get("handled_at"))
         )
+        await _send_accepted_block(message, fresh)
+        return
+    pid, defer = res["pid"], res["defer"]
+    agreed_salary = res["agreed_salary"]
+    in_list_before = res["in_list"]
+    # Boshidan qabul — eski «Ishga keldi?» so'rov xabarlari endi kerak emas
+    for old_pid in res["old_pids"]:
+        await close_request_notices(bot, "prob_arrival", old_pid)
+    a = await q.get_application(aid) or a
+    await q.add_log(
+        message.from_user.id, me["full_name"],
+        "ariza_qayta_qabul" if reaccept else "ariza_qabul",
+        f"Ariza #{aid} · {kind}" + (f" · muddat #{pid}" if pid else ""),
+    )
 
     branch = await q.get_branch(branch_id) if branch_id else None
     branch_name = branch["name"] if branch else "—"
@@ -723,16 +837,23 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             f"<b>{iso_to_display(start_iso)} — {iso_to_display(end_iso)}</b> ({period_days} kun)"
         )
     salary_line = f"\n💰 Oylik: <b>{agreed_salary}</b>" if agreed_salary else ""
-    defer_line = (
-        "\n\n⏳ Xodim <b>hali ro'yxatga qo'shilmadi</b> — filial rahbari «✅ Ishga "
-        "keldi» ni bosgach xodimlar ro'yxatiga qo'shiladi."
-        if defer else ""
-    )
+    if defer:
+        state_line = (
+            "\n\n⏳ Xodim <b>hali ro'yxatga qo'shilmadi</b> — filial rahbari «✅ Ishga "
+            "keldi» ni bosgach xodimlar ro'yxatiga qo'shiladi. Rahbar javob bermasa: "
+            "«🧪 Sinov muddati» → «⏳ Ishga kelishi kutilmoqda» dan o'zingiz "
+            "tasdiqlay olasiz."
+        )
+    elif in_list_before:
+        state_line = "\n\n✅ Xodim ro'yxatda edi — ma'lumotlari yangilandi."
+    else:
+        state_line = "\n\n✅ Xodim <b>xodimlar ro'yxatiga qo'shildi</b>."
+    head = "🔄 Boshidan qabul: " if reaccept else ""
     await message.answer(
-        f"{meta['emoji']} Ariza #{aid} — <b>{meta['noun']}</b>ga qabul qilindi.\n"
+        f"{head}{meta['emoji']} Ariza #{aid} — <b>{meta['noun']}</b>ga qabul qilindi.\n"
         f"🎯 Rol: <b>{ROLE_LABELS.get(new_role, new_role)}</b>\n"
         f"🏢 Filial: <b>{branch_name}</b>"
-        f"{period_line}{salary_line}{defer_line}"
+        f"{period_line}{salary_line}{state_line}"
     )
 
     # Filial rahbariga xabar
@@ -755,20 +876,36 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             "shundagina u xodimlar ro'yxatiga qo'shiladi. Kelmagan bo'lsa "
             "«❌ Kelmadi» ni bosing."
         )
-        await broadcast_request(
+        sent = await broadcast_request(
             bot, "prob_arrival", pid, manager_ids, mgr_text,
             reply_markup=kb.probation_arrival_kb(pid),
         )
+        if not sent:
+            # Rahbarga yetib bormadi (botni bloklagan / ishga tushirmagan) — aks
+            # holda xodim abadiy «kutilmoqda»da qolib ketardi. HR o'zi tasdiqlaydi.
+            msg = await message.answer(
+                "⚠️ <b>Filial rahbariga xabar yetib bormadi</b> (botni bloklagan yoki "
+                "ishga tushirmagan bo'lishi mumkin).\n"
+                "Xodim ishga kelgach shu yerda o'zingiz tasdiqlang:",
+                reply_markup=kb.probation_arrival_kb(pid),
+            )
+            try:
+                await q.add_request_notice("prob_arrival", pid, message.chat.id,
+                                           msg.message_id)
+            except Exception:
+                pass
     else:
+        title = (f"🔄 <b>Xodim ma'lumoti yangilandi ({meta['noun']})</b>"
+                 if in_list_before else f"{meta['emoji']} <b>Yangi xodim ({meta['noun']})</b>")
         mgr_text = (
-            f"{meta['emoji']} <b>Yangi xodim ({meta['noun']})</b>\n\n"
+            f"{title}\n\n"
             f"👤 <b>{a.get('full_name')}</b>\n"
             f"💼 Lavozim: {a.get('position') or a.get('vacancy_title')}\n"
             f"🏢 Filial: {branch_name}\n"
             f"📅 Ishga chiqadi: <b>{iso_to_display(start_iso)}</b>\n"
             f"{period_info}"
-            f"📱 Telefon: {a.get('phone') or '-'}\n\n"
-            "Iltimos, shu kuni xodimni kutib oling."
+            f"📱 Telefon: {a.get('phone') or '-'}"
+            + ("" if in_list_before else "\n\nIltimos, shu kuni xodimni kutib oling.")
         )
         for tid in manager_ids:
             await safe_send(bot, tid, mgr_text)
@@ -777,9 +914,10 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
                 "ℹ️ Bu filialga rahbar biriktirilmagani uchun xabar yuborilmadi."
             )
 
-    # Maxfiy kanalga yuborish (admin panelda ulangan bo'lsa)
+    # Maxfiy kanalga yuborish (admin panelda ulangan bo'lsa). Boshidan qabulda
+    # qayta joylanmaydi — kanalda dublikat post bo'lmasin.
     secret_channel = await q.get_setting("secret_channel")
-    if secret_channel:
+    if secret_channel and not reaccept:
         period_hdr = ""
         if end_iso:
             period_hdr = (
@@ -813,7 +951,17 @@ async def _finalize_accept(bot: Bot, message: Message, me, aid, branch_id,
             f"({iso_to_display(start_iso)} — {iso_to_display(end_iso)})\n" if end_iso else ""
         )
         salary_cand = f"💰 Oylik: <b>{agreed_salary}</b>\n" if agreed_salary else ""
-        if defer:
+        if in_list_before:
+            await safe_send(
+                bot, a["applicant_tg"],
+                "ℹ️ <b>Ma'lumotlaringiz yangilandi</b>\n\n"
+                f"Maqom: <b>{meta['noun']}</b>\n"
+                f"🏢 Filial: <b>{branch_name}</b>\n"
+                f"{period_cand}{salary_cand}"
+                "Menyuni yangilash uchun /start bosing.",
+                reply_markup=kb.main_menu(new_role),
+            )
+        elif defer:
             # Rol/panel hali ochilmaydi — filial rahbari ishga kelganini
             # tasdiqlagach ochiladi.
             await safe_send(
@@ -859,6 +1007,22 @@ async def _can_confirm_arrival(user, prob):
     return False
 
 
+async def _prob_already_handled(call: CallbackQuery, bot: Bot, prob):
+    """Sinov yozuvi allaqachon ko'rib chiqilgan — kim/nima qilgani aytiladi."""
+    await close_request_notices(bot, "prob_arrival", prob["id"],
+                                keep_chat_id=call.from_user.id)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    who = prob.get("arrived_by_name") or prob.get("decided_by_name")
+    st = probation_state_label(prob)
+    msg = f"Bu xodim allaqachon ko'rib chiqilgan: {st}"
+    if who:
+        msg += f" — {who}"
+    await call.answer(msg[:200], show_alert=True)
+
+
 @router.callback_query(F.data.startswith("probarr:ok:"))
 async def probation_arrived(call: CallbackQuery, bot: Bot):
     pid = int(call.data.rsplit(":", 1)[1])
@@ -871,45 +1035,15 @@ async def probation_arrived(call: CallbackQuery, bot: Bot):
         await call.answer("⛔", show_alert=True)
         return
     if prob.get("status") != "awaiting":
-        await close_request_notices(bot, "prob_arrival", pid,
-                                    keep_chat_id=call.from_user.id)
-        try:
-            await call.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
+        await _prob_already_handled(call, bot, prob)
         return
-    # Atomik — faqat bitta rahbar tasdiqlaydi
-    if not await q.set_probation_status_if(pid, "active", "awaiting"):
-        await close_request_notices(bot, "prob_arrival", pid,
-                                    keep_chat_id=call.from_user.id)
-        try:
-            await call.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
-        return
-
     role = role_from_position(prob.get("position"))
-    if prob.get("employee_tg"):
-        await q.set_role(prob["employee_tg"], role, prob.get("branch_id"))
-    await q.upsert_employee_profile(
-        user_id=prob["user_id"],
-        application_id=prob.get("application_id"),
-        role=role,
-        position=prob.get("position"),
-        branch_id=prob.get("branch_id"),
-        uniform_status=prob.get("uniform_status") or "unknown",
-        monthly_salary=prob.get("agreed_salary"),
-        shift=prob.get("shift"),
-    )
-    # Endi kadrlar harakatida qayd etamiz (IT hisoboti)
-    await q.add_hr_event(
-        "hired", user_id=prob["user_id"], full_name=prob.get("full_name"),
-        branch_id=prob.get("branch_id"),
-        details=f"ariza #{prob.get('application_id')} · {prob.get('kind')} · ishga keldi",
-        created_by=user["id"],
-    )
+    # ATOMIK — status, rol, profil va kadrlar harakati bitta tranzaksiyada;
+    # faqat bitta rahbar/HR tasdiqlay oladi.
+    res = await q.confirm_probation_arrival(pid, user["id"], role)
+    if not res:
+        await _prob_already_handled(call, bot, await q.get_probation(pid) or prob)
+        return
     await q.add_log(call.from_user.id, user.get("full_name"),
                     "sinov_ishga_keldi", f"muddat #{pid}")
 
@@ -934,17 +1068,22 @@ async def probation_arrived(call: CallbackQuery, bot: Bot):
             "Menyuni ko'rish uchun /start bosing.",
             reply_markup=kb.main_menu(role),
         )
+    notice = (
+        f"✅ <b>Ishga keldi</b> — {prob.get('full_name')} "
+        f"({prob.get('branch_name') or '-'}) xodimlar ro'yxatiga qo'shildi.\n"
+        f"Tasdiqladi: {user.get('full_name') or '-'}"
+    )
     # HR/Adminга xabar
     hr_ids = set(await q.all_user_tg_ids(role=ROLE_HR)) | \
         set(await q.all_user_tg_ids(role=ROLE_ADMIN))
     hr_ids.discard(call.from_user.id)
     for tid in hr_ids:
-        await safe_send(
-            bot, tid,
-            f"✅ <b>Ishga keldi</b> — {prob.get('full_name')} "
-            f"({prob.get('branch_name') or '-'}) xodimlar ro'yxatiga qo'shildi.\n"
-            f"Tasdiqladi: {user.get('full_name') or '-'}",
-        )
+        await safe_send(bot, tid, notice)
+    # HR tasdiqlagan bo'lsa — rahbarning so'rov xabari o'chdi, unga ham aytamiz
+    if user["role"] in (ROLE_HR, ROLE_ADMIN):
+        for tid in await q.branch_manager_tg_ids(prob.get("branch_id")):
+            if tid != call.from_user.id and tid not in hr_ids:
+                await safe_send(bot, tid, notice)
 
 
 @router.callback_query(F.data.startswith("probarr:no:"))
@@ -958,18 +1097,10 @@ async def probation_no_show(call: CallbackQuery, bot: Bot):
     if not await _can_confirm_arrival(user, prob):
         await call.answer("⛔", show_alert=True)
         return
-    if not await q.set_probation_status_if(pid, "no_show", "awaiting"):
-        await close_request_notices(bot, "prob_arrival", pid,
-                                    keep_chat_id=call.from_user.id)
-        try:
-            await call.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await call.answer("Bu xodim allaqachon ko'rib chiqilgan.", show_alert=True)
+    # Ishga chiqmadi — profil yaratilmagan, rol nomzodga qaytadi (ATOMIK)
+    if not await q.mark_probation_no_show(pid, user["id"]):
+        await _prob_already_handled(call, bot, await q.get_probation(pid) or prob)
         return
-    # Ishga chiqmadi — profil yaratilmagan, rolni nomzodga qaytaramiz
-    if prob.get("employee_tg"):
-        await q.set_role(prob["employee_tg"], ROLE_CANDIDATE, None)
     await q.add_log(call.from_user.id, user.get("full_name"),
                     "sinov_kelmadi", f"muddat #{pid}")
 
@@ -1106,29 +1237,89 @@ async def hr_salary_counter(call: CallbackQuery, state: FSMContext):
 
 
 # ------- Sinov muddati paneli -------
+# Toifalar (ko'rsatish tartibi bilan): yaqinda tugaydi / hozir sinovda /
+# ishga kelishi kutilmoqda / muddati tugagan (HR qarori kutilmoqda).
+PROBATION_SECTIONS = [
+    ("soon", "⚠️", "Yaqinda tugaydi",
+     f"{PROBATION_SOON_DAYS} kun yoki kamroq qoldi — qaror qabul qilish vaqti"),
+    ("active", "🟢", "Hozir sinovda", "muddati davom etmoqda"),
+    ("awaiting", "⏳", "Ishga kelishi kutilmoqda",
+     "qabul qilingan, filial rahbari «✅ Ishga keldi» ni hali bosmagan"),
+    ("ended", "🏁", "Muddati tugagan — qaror kutilmoqda",
+     "doimiy qilish, uzaytirish yoki bo'shatishni tanlang"),
+]
+
+
+async def _probation_buckets():
+    rows = await q.list_probations(statuses=("awaiting", "active", "finished"),
+                                   limit=1000)
+    buckets = {key: [] for key, *_ in PROBATION_SECTIONS}
+    for p in rows:
+        bucket = probation_bucket(p)
+        if bucket not in buckets:
+            continue
+        # Faol/tugagan, lekin xodim ro'yxatda yo'q — bo'shatilgan (eski yozuv)
+        if bucket != "awaiting" and not p.get("has_profile"):
+            continue
+        buckets[bucket].append(p)
+    buckets["awaiting"].sort(key=lambda p: (p.get("start_date") or "", p["id"]))
+    # Eng oxirgi tugaganlari birinchi — yangi «tugadi» xabari kelgan xodim tepada
+    buckets["ended"].sort(key=lambda p: (p.get("end_date") or "", p["id"]), reverse=True)
+    return buckets
+
+
 @router.message(F.text == "🧪 Sinov muddati")
 async def probation_panel(message: Message):
     if not await is_staff(message.from_user.id):
         return
-    active = await q.list_active_probations()
-    finished = await q.list_probations(status="finished", limit=10)
-    if not active and not finished:
-        await message.answer(
-            "🧪 Hozircha sinov muddatidagi xodimlar yo'q.\n"
-            "Ariza qabul qilinganda sinov muddati avtomatik ochiladi."
+    buckets = await _probation_buckets()
+    total = sum(len(v) for v in buckets.values())
+    lines = ["🧪 <b>Sinov / o'rganish muddati</b>", "━━━━━━━━━━━━"]
+    for key, icon, title, _ in PROBATION_SECTIONS:
+        lines.append(f"{icon} {title}: <b>{len(buckets[key])}</b>")
+    if not total:
+        lines.append(
+            "\nHozircha sinov muddatidagi xodim yo'q. Arizani «🧪 Sinovga qabul» "
+            "yoki «🎓 O'rganuvchi» qilib qabul qilganingizda shu yerda chiqadi."
         )
+    else:
+        lines.append("\nXodimni tanlang — kartochkada amallar (doimiy qilish, "
+                     "uzaytirish, ishga keldi) bor.")
+    await message.answer("\n".join(lines), reply_markup=kb.probation_panel_kb())
+    for key, icon, title, hint in PROBATION_SECTIONS:
+        rows = buckets[key]
+        if not rows:
+            continue
+        shown = rows[:50]
+        more = f"\n… va yana {len(rows) - 50} ta" if len(rows) > 50 else ""
+        await message.answer(
+            f"{icon} <b>{title}</b> — {len(rows)} ta\n<i>{hint}</i>{more}",
+            reply_markup=kb.probations_list_kb(shown, mark=icon),
+        )
+
+
+@router.callback_query(F.data == "probarch")
+async def probation_archive(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
         return
-    if active:
-        await message.answer(
-            f"🧪 <b>Sinov muddatidagilar</b> (faol: {len(active)} ta)\n"
-            "Batafsil va statistikani ko'rish uchun tanlang:",
-            reply_markup=kb.probations_list_kb(active),
-        )
-    if finished:
-        await message.answer(
-            "🏁 <b>Yaqinda tugaganlar</b>:",
-            reply_markup=kb.probations_list_kb(finished),
-        )
+    rows = await q.list_probations(
+        statuses=("passed", "no_show", "dismissed", "replaced"),
+        limit=25, newest_first=True,
+    )
+    await call.answer()
+    if not rows:
+        await call.message.answer("🗂 Arxiv bo'sh — yakunlangan sinov muddati yo'q.")
+        return
+    await call.message.answer(
+        "🗂 <b>Yakunlangan sinov / o'rganish muddatlari</b> (oxirgi 25 ta)\n"
+        "✅ doimiy · ❌ kelmadi · 🚫 bo'shatilgan · 🔄 qayta qabul",
+        reply_markup=kb.probations_list_kb(rows, mark="🗂"),
+    )
+
+
+async def _send_probation_card(target, p):
+    await target.answer(probation_text(p), reply_markup=kb.probation_actions_kb(p))
 
 
 @router.callback_query(F.data.startswith("probview:"))
@@ -1141,8 +1332,193 @@ async def probation_view(call: CallbackQuery):
     if not p:
         await call.answer("Topilmadi.", show_alert=True)
         return
-    await call.message.answer(probation_text(p))
+    await _send_probation_card(call.message, p)
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("probnudge:"))
+async def probation_nudge_manager(call: CallbackQuery, bot: Bot):
+    """«🔔 Rahbarga qayta yuborish» — «Ishga keldi?» so'rovini rahbarga qayta jo'natadi."""
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    pid = int(call.data.split(":")[1])
+    p = await q.get_probation(pid)
+    if not p or p.get("status") != "awaiting":
+        await call.answer("Bu xodim endi kutilayotganlar ro'yxatida emas.", show_alert=True)
+        return
+    manager_ids = await q.branch_manager_tg_ids(p.get("branch_id"))
+    if not manager_ids:
+        await call.answer(
+            "Bu filialga rahbar biriktirilmagan — «✅ Ishga keldi (HR tasdiqlaydi)» "
+            "tugmasi bilan o'zingiz tasdiqlang.", show_alert=True,
+        )
+        return
+    # Eski so'rov xabarlarini yopib, yangisini yuboramiz (HR dagi xabar qoladi)
+    await close_request_notices(bot, "prob_arrival", pid, keep_chat_id=call.from_user.id)
+    noun = "o'rganuvchi" if p.get("kind") == "learner" else "sinov muddati"
+    sent = await broadcast_request(
+        bot, "prob_arrival", pid, manager_ids,
+        f"🔔 <b>Eslatma: {noun} xodimi ishga keldimi?</b>\n\n"
+        f"👤 <b>{p.get('full_name') or '-'}</b>\n"
+        f"💼 Lavozim: {p.get('position') or '-'}\n"
+        f"🏢 Filial: {p.get('branch_name') or '-'}\n"
+        f"📅 Ishga chiqishi kerak edi: <b>{iso_to_display(p.get('start_date'))}</b>\n\n"
+        "Kelgan bo'lsa «✅ Ishga keldi» ni bosing — shundagina u xodimlar "
+        "ro'yxatiga qo'shiladi. Kelmagan bo'lsa «❌ Kelmadi» ni bosing.",
+        reply_markup=kb.probation_arrival_kb(pid),
+    )
+    if sent:
+        await call.answer(f"Rahbarga qayta yuborildi ✅ ({sent} ta)", show_alert=True)
+    else:
+        await call.answer(
+            "Rahbarga yetib bormadi (botni bloklagan bo'lishi mumkin) — o'zingiz "
+            "tasdiqlang.", show_alert=True,
+        )
+
+
+@router.callback_query(F.data.startswith("probpass:"))
+async def probation_pass_ask(call: CallbackQuery):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    pid = int(call.data.split(":")[1])
+    p = await q.get_probation(pid)
+    if not p or p.get("status") not in ("active", "finished"):
+        await call.answer("Bu yozuv uchun amal endi mavjud emas.", show_alert=True)
+        return
+    noun = "o'rganish" if p.get("kind") == "learner" else "sinov"
+    await call.message.answer(
+        f"✅ <b>{p.get('full_name') or '-'}</b> — {noun} muvaffaqiyatli o'tdimi?\n\n"
+        "Tasdiqlasangiz xodim <b>doimiy xodim</b> bo'ladi (maqomi «🟢 Doimiy xodim»), "
+        "sinov yozuvi yopiladi va xodimga xabar boradi.",
+        reply_markup=kb.probation_pass_confirm_kb(pid),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("probpassok:"))
+async def probation_pass_confirm(call: CallbackQuery, bot: Bot):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    pid = int(call.data.split(":")[1])
+    me = await actor(call.from_user.id)
+    if not await q.probation_make_permanent(pid, me["id"]):
+        p = await q.get_probation(pid)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        who = (p or {}).get("decided_by_name")
+        st = probation_state_label(p) if p else "topilmadi"
+        await call.answer(
+            (f"Allaqachon ko'rib chiqilgan: {st}" + (f" — {who}" if who else ""))[:200],
+            show_alert=True,
+        )
+        return
+    p = await q.get_probation(pid)
+    await q.add_log(call.from_user.id, me["full_name"], "sinov_doimiy",
+                    f"muddat #{pid} · {p.get('full_name')}")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"✅ <b>{p.get('full_name')}</b> endi <b>doimiy xodim</b>.\n"
+        f"🏢 Filial: {p.get('branch_name') or '-'}"
+    )
+    await call.answer("Doimiy xodim ✅")
+    if p.get("employee_tg"):
+        await safe_send(
+            bot, p["employee_tg"],
+            "🎉 <b>Tabriklaymiz!</b>\n\n"
+            f"Siz {'o`rganish' if p.get('kind') == 'learner' else 'sinov'} muddatini "
+            "muvaffaqiyatli o'tdingiz va <b>doimiy xodim</b> sifatida qabul "
+            "qilindingiz. Omad! 🌿",
+        )
+    for tid in await q.branch_manager_tg_ids(p.get("branch_id")):
+        await safe_send(
+            bot, tid,
+            f"✅ <b>{p.get('full_name')}</b> sinov muddatini o'tdi va doimiy xodim "
+            f"qilindi (HR: {me['full_name']}).",
+        )
+
+
+@router.callback_query(F.data.startswith("probext:"))
+async def probation_extend_start(call: CallbackQuery, state: FSMContext):
+    if not await is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    pid = int(call.data.split(":")[1])
+    p = await q.get_probation(pid)
+    if not p or p.get("status") not in ("active", "finished"):
+        await call.answer("Bu yozuv uchun amal endi mavjud emas.", show_alert=True)
+        return
+    await state.set_state(ProbationExtendForm.days)
+    await state.update_data(ext_pid=pid)
+    await call.message.answer(
+        f"🔁 <b>Muddatni uzaytirish</b> — {p.get('full_name') or '-'}\n"
+        f"🏁 Hozirgi tugash sanasi: <b>{iso_to_display(p.get('end_date'))}</b>\n\n"
+        "Necha <b>kun</b>ga uzaytiramiz? Faqat son yuboring (masalan: <b>7</b>).\n"
+        "Muddat tugagan bo'lsa — bugundan boshlab hisoblanadi."
+    )
+    await call.answer()
+
+
+@router.message(ProbationExtendForm.days, F.text)
+async def probation_extend_finish(message: Message, state: FSMContext, bot: Bot):
+    if not await is_staff(message.from_user.id):
+        await state.clear()
+        return
+    raw = message.text.strip()
+    if not raw.isdigit() or not (1 <= int(raw) <= 365):
+        await message.answer("❗️ 1 dan 365 gacha son yuboring (masalan: 7).")
+        return
+    n = int(raw)
+    data = await state.get_data()
+    await state.clear()
+    pid = data.get("ext_pid")
+    p = await q.get_probation(pid) if pid else None
+    if not p:
+        await message.answer("Yozuv topilmadi.")
+        return
+    # Tugash sanasidan (yoki muddat o'tib ketgan bo'lsa — kechadan) N kun keyin
+    yesterday = add_days_iso(today_tk().isoformat(), -1)
+    base = max(p.get("end_date") or yesterday, yesterday)
+    new_end = add_days_iso(base, n)
+    try:
+        new_days = days_between_iso(p.get("start_date"), new_end) + 1
+    except Exception:
+        new_days = (p.get("days") or 15) + n
+    me = await actor(message.from_user.id)
+    if not await q.probation_extend(pid, new_end, new_days, me["id"]):
+        await message.answer("⚠️ Bu yozuv endi uzaytirib bo'lmaydigan holatda.")
+        return
+    await q.add_log(message.from_user.id, me["full_name"], "sinov_uzaytirildi",
+                    f"muddat #{pid} · +{n} kun · {new_end}")
+    p = await q.get_probation(pid)
+    await message.answer(
+        f"🔁 Muddat uzaytirildi: <b>+{n} kun</b>\n"
+        f"🏁 Yangi tugash sanasi: <b>{iso_to_display(new_end)}</b>"
+    )
+    await _send_probation_card(message, p)
+    noun = "O'rganish" if p.get("kind") == "learner" else "Sinov"
+    if p.get("employee_tg"):
+        await safe_send(
+            bot, p["employee_tg"],
+            f"ℹ️ <b>{noun} muddatingiz uzaytirildi</b>\n\n"
+            f"🏁 Yangi tugash sanasi: <b>{iso_to_display(new_end)}</b>",
+        )
+
+
+@router.callback_query(F.data.startswith("probpassno:"))
+async def probation_pass_cancel(call: CallbackQuery):
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Bekor qilindi")
 
 
 # ------- Rad etish -------
@@ -2268,22 +2644,9 @@ async def fine_save(message: Message, state: FSMContext, bot: Bot):
             f"💸 Sizga jarima yozildi.\n\n💰 Summa: <b>{amount}</b>\n✍️ Sabab: {reason}"
             "\n\nBu summa oyligingizdan ayiriladi."
         )
-    # Moliya bo'limiga xabar — «HR bo'limi shu filialdagi shu xodimga jarima yozdi»
-    branch = await q.get_branch(branch_id) if branch_id else None
-    fin_text = (
-        "💸 <b>HR bo'limidan yangi jarima</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"👤 Xodim: <b>{(profile or {}).get('full_name') or uid}</b>\n"
-        f"💼 Lavozim: {(profile or {}).get('position') or '-'}\n"
-        f"🏢 Filial: {branch['name'] if branch else '-'}\n"
-        f"💰 Summa: <b>{amount}</b>\n"
-        f"✍️ Sabab: {reason}\n"
-        f"👔 Yozdi: {me['full_name']} (HR)\n\n"
-        "Bu jarima yakuniy oylikdan avtomatik ayiriladi. Bekor qilish uchun "
-        "moliya panelidagi «🚫 Jarimani bekor qilish» dan foydalaning."
-    )
-    for tid in set(await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)):
-        await safe_send(bot, tid, fin_text)
+    # Moliya bo'limiga xabar — «✅ Ijro etildi» / «🚫 Bekor qilish» tugmalari bilan
+    from handlers.fines import notify_finance_new_fine
+    await notify_finance_new_fine(bot, fid, "HR bo'limi")
 
 
 @router.callback_query(F.data.startswith("phfines:"))
@@ -2292,10 +2655,10 @@ async def pharmacist_fines(call: CallbackQuery):
         await call.answer("⛔", show_alert=True)
         return
     uid = int(call.data.split(":")[1])
-    fines = await q.list_fines(uid)
+    fines = await q.list_fines(uid, include_cancelled=True)
     await call.answer()
     if not fines:
-        await call.message.answer("Bu farmatsevtga jarima yozilmagan.")
+        await call.message.answer("Bu xodimga jarima yozilmagan.")
         return
     await call.message.answer(
         f"💸 <b>Jarimalar</b>\n\nJami: <b>{len(fines)}</b> ta\n"
@@ -2349,16 +2712,25 @@ async def manager_request_view(call: CallbackQuery):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     markup = kb.manager_request_actions_kb(req["id"], req["kind"]) if req["status"] == "new" else None
-    await call.message.answer(manager_request_text(req), reply_markup=markup)
+    text = manager_request_text(req)
+    if req["status"] != "new":
+        info = await q.request_handler_info("manager_requests", rid) or {}
+        text += "\n" + handled_by_text(info.get("status"), info.get("handler_name"))
+    await call.message.answer(text, reply_markup=markup)
     await call.answer()
 
 
-async def _already_handled(call: CallbackQuery, who=None):
-    """So'rov allaqachon ko'rib chiqilgan — tugmalarni olib tashlab, xabar beramiz."""
+async def _already_handled(call: CallbackQuery, who=None, table=None, rid=None):
+    """So'rov allaqachon ko'rib chiqilgan — tugmalarni olib tashlab, KIM va qanday
+    ko'rib chiqqanini aytamiz."""
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+    if table and rid:
+        info = await q.request_handler_info(table, rid)
+        await call.answer(handled_alert_text(info), show_alert=True)
+        return
     suffix = f" ({who})" if who else ""
     await call.answer(
         f"Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan{suffix}.",
@@ -2449,7 +2821,7 @@ async def manager_request_accept(call: CallbackQuery, bot: Bot):
     me = await actor(call.from_user.id)
     # ATOMIK egallash — faqat bitta HR/admin qabul qila oladi
     if not await q.claim_request("manager_requests", rid, "accepted", me["id"], "new"):
-        await _already_handled(call)
+        await _already_handled(call, table="manager_requests", rid=rid)
         return
     # Qolgan HR/adminlardagi shu so'rov xabarini o'chiramiz
     await close_request_notices(bot, "manager_request", rid,
@@ -2524,7 +2896,7 @@ async def manager_request_close(call: CallbackQuery, bot: Bot):
         return
     me = await actor(call.from_user.id)
     if not await q.claim_request("manager_requests", rid, "closed", me["id"], "new"):
-        await _already_handled(call)
+        await _already_handled(call, table="manager_requests", rid=rid)
         return
     await close_request_notices(bot, "manager_request", rid,
                                 keep_chat_id=call.from_user.id)
@@ -2556,12 +2928,12 @@ async def termination_accept(call: CallbackQuery, bot: Bot):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     if req.get("status") != "new":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await _already_handled(call, table="termination_requests", rid=rid)
         return
     me = await actor(call.from_user.id)
     # ATOMIK egallash — bir marta tasdiqlanadi
     if not await q.claim_request("termination_requests", rid, "approved", me["id"], "new"):
-        await _already_handled(call)
+        await _already_handled(call, table="termination_requests", rid=rid)
         return
     await close_request_notices(bot, "termination", rid, keep_chat_id=call.from_user.id)
     # Kadrlar harakati (IT hisoboti): ishdan ketdi — profil o'chishidan oldin yozamiz
@@ -2619,7 +2991,7 @@ async def termination_reject_start(call: CallbackQuery, state: FSMContext):
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
     if req.get("status") != "new":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await _already_handled(call, table="termination_requests", rid=rid)
         return
     await state.set_state(TerminationRejectForm.reason)
     await state.update_data(trej_rid=rid)
@@ -2894,7 +3266,11 @@ async def vac_new_start(call: CallbackQuery, state: FSMContext):
         await call.answer("⛔", show_alert=True)
         return
     await state.set_state(VacancyForm.title)
-    await call.message.answer("➕ <b>Yangi vakansiya</b>\n\n1️⃣ Lavozim nomi (masalan: Farmatsevt):")
+    positions = [p["name"] for p in await q.list_positions()]
+    await call.message.answer(
+        "➕ <b>Yangi vakansiya</b>\n\n1️⃣ Lavozim nomini tanlang yoki yozing:",
+        reply_markup=kb.vacancy_options_kb(positions) if positions else None,
+    )
     await call.answer()
 
 
@@ -2914,7 +3290,10 @@ async def vac_new_branch_cb(call: CallbackQuery, state: FSMContext):
     bid = int(call.data.split(":")[1])
     await state.update_data(branch_id=bid if bid else None)
     await state.set_state(VacancyForm.job_type)
-    await call.message.answer("3️⃣ Ish turi (masalan: To'liq stavka / Yarim stavka):")
+    await call.message.answer(
+        "3️⃣ Ish turini tanlang yoki yozing:",
+        reply_markup=kb.vacancy_options_kb(kb.VACANCY_JOB_TYPES),
+    )
     await call.answer()
 
 
@@ -2922,35 +3301,45 @@ async def vac_new_branch_cb(call: CallbackQuery, state: FSMContext):
 async def vac_new_branch_text(message: Message, state: FSMContext):
     await state.update_data(branch_id=None)
     await state.set_state(VacancyForm.job_type)
-    await message.answer("3️⃣ Ish turi (masalan: To'liq stavka / Yarim stavka):")
+    await message.answer(
+        "3️⃣ Ish turini tanlang yoki yozing:",
+        reply_markup=kb.vacancy_options_kb(kb.VACANCY_JOB_TYPES),
+    )
 
 
 @router.message(VacancyForm.job_type, F.text)
 async def vac_new_jobtype(message: Message, state: FSMContext):
     await state.update_data(job_type=message.text.strip())
     await state.set_state(VacancyForm.shift)
-    await message.answer("4️⃣ Smena (masalan: Ertalab / Kechqurun):")
+    await message.answer(
+        "4️⃣ Smenani tanlang yoki yozing:",
+        reply_markup=kb.vacancy_options_kb(kb.VACANCY_SHIFTS),
+    )
 
 
 @router.message(VacancyForm.shift, F.text)
 async def vac_new_shift(message: Message, state: FSMContext):
     await state.update_data(shift=message.text.strip())
     await state.set_state(VacancyForm.salary)
-    await message.answer("5️⃣ Oylik (masalan: 4 500 000 so'm):")
+    await message.answer("5️⃣ Oylik (masalan: 4 500 000 so'm):",
+                         reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(VacancyForm.salary, F.text)
 async def vac_new_salary(message: Message, state: FSMContext):
     await state.update_data(salary=message.text.strip())
     await state.set_state(VacancyForm.work_time)
-    await message.answer("6️⃣ Ish vaqti (masalan: 08:00-16:00):")
+    await message.answer(
+        "6️⃣ Ish vaqtini tanlang yoki yozing:",
+        reply_markup=kb.vacancy_options_kb(kb.VACANCY_WORK_TIMES),
+    )
 
 
 @router.message(VacancyForm.work_time, F.text)
 async def vac_new_worktime(message: Message, state: FSMContext):
     await state.update_data(work_time=message.text.strip())
     await state.set_state(VacancyForm.requirements)
-    await message.answer("7️⃣ Talablar:")
+    await message.answer("7️⃣ Talablar:", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(VacancyForm.requirements, F.text)
@@ -2983,7 +3372,9 @@ async def vac_new_active(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await q.add_log(call.from_user.id, me["full_name"], "vakansiya_yaratildi", f"#{vid} {data.get('title')}")
     v = await q.get_vacancy(vid)
-    await call.message.answer("✅ <b>Vakansiya yaratildi!</b>\n\n" + vacancy_text(v))
+    menu = kb.admin_menu() if me and me["role"] == ROLE_ADMIN else kb.hr_menu()
+    await call.message.answer("✅ <b>Vakansiya yaratildi!</b>\n\n" + vacancy_text(v),
+                              reply_markup=menu)
     await call.answer("Yaratildi ✅")
 
 
@@ -3320,18 +3711,20 @@ async def rejected_staff_reg_view(call: CallbackQuery):
     if not reg:
         await call.answer("So'rov topilmadi.", show_alert=True)
         return
-    text = staff_reg_text(reg)
-    if reg.get("reject_reason"):
-        text += f"\n\n✍️ <b>Rad etish sababi:</b> {reg['reject_reason']}"
+    text = staff_reg_text(reg) + "\n" + handled_by_text(
+        reg.get("status"), reg.get("handled_by_name"), reg.get("handled_at"))
+    # Rad etilgan so'rovni ham «🔄 Boshidan tasdiqlash» mumkin
+    markup = kb.staff_reg_handled_kb(
+        rid, can_reapprove=reg.get("status") in ("approved", "rejected"))
     photo = reg.get("photo_file_id")
-    if photo:
+    if photo and len(text) <= 1024:
         try:
-            await call.message.answer_photo(photo, caption=text[:1024])
+            await call.message.answer_photo(photo, caption=text, reply_markup=markup)
             await call.answer()
             return
         except Exception:
             pass
-    await call.message.answer(text)
+    await call.message.answer(text, reply_markup=markup)
     await call.answer()
 
 
@@ -3608,9 +4001,12 @@ async def app_favorite_toggle(call: CallbackQuery):
         return
     aid = int(call.data.split(":")[1])
     fav = await q.toggle_favorite(aid)
+    a = await q.get_application(aid) or {}
     try:
         await call.message.edit_reply_markup(
-            reply_markup=kb.application_actions_kb(aid, favorite=fav)
+            reply_markup=kb.application_actions_kb(
+                aid, favorite=fav, accepted=a.get("status") == ST_ACCEPTED,
+            )
         )
     except Exception:
         pass

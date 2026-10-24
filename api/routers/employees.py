@@ -168,6 +168,96 @@ async def employee_photo(employee_id: int = Path(..., gt=0),
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
+_DOC_COLS = {"passport_front": "passport_front", "passport_back": "passport_back",
+             "diploma": "diploma_file", "photo": "photo_file_id"}
+
+
+@router.get("/{employee_id}/documents/{kind}",
+            summary="Xodim hujjati: pasport (oldi/orqa), diplom (Telegram fayl proksi)")
+async def employee_document(employee_id: int = Path(..., gt=0),
+                            kind: str = Path(..., pattern="^(passport_front|passport_back|diploma|photo)$"),
+                            p: Principal = Depends(require("employees:sensitive"))):
+    fid = await fetch_val(f"SELECT {_DOC_COLS[kind]} FROM employee_profiles WHERE user_id=?",
+                          (employee_id,))
+    if not fid:
+        raise not_found("Hujjat", employee_id)
+    from api import telegram
+    try:
+        content, name = await telegram.download_file(fid)
+    except Exception:
+        raise ApiError(502, "telegram_unavailable", "Hujjatni Telegram dan olib bo'lmadi.")
+    low = name.lower()
+    media = ("image/png" if low.endswith(".png") else "application/pdf" if low.endswith(".pdf")
+             else "image/jpeg" if low.endswith((".jpg", ".jpeg")) else "application/octet-stream")
+    return Response(content=content, media_type=media,
+                    headers={"Cache-Control": "private, no-store",
+                             "Content-Disposition": f'inline; filename="{kind}_{employee_id}_{name}"'})
+
+
+@router.get("/{employee_id}/finance",
+            summary="Xodim oyligi va moliyaviy tafsilot (jarima, avans, dori, KPI, to'lovlar)")
+async def employee_finance(employee_id: int = Path(..., gt=0),
+                           period: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$",
+                                                         description="YYYY-MM (standart: joriy oy)"),
+                           p: Principal = Depends(require("employees:salary"))):
+    row = await repo.get_employee_row(employee_id)
+    if not row:
+        raise not_found("Xodim", employee_id)
+    period = period or repo.current_period()
+    fin = (await repo.finance_summary([employee_id], period))[employee_id]
+    salary = (await repo.serialize_employees([row], include_salary=True))[0]["salary"]
+    salary = repo._salary_block({"monthly_salary": salary["monthly_salary"]}, fin) | {
+        "source": salary["source"]}
+    money = repo.parse_amount
+
+    fines = await fetch_all(
+        "SELECT id, amount, reason, source, status, cancelled, cancel_reason, created_at, executed_at "
+        "FROM fines WHERE employee_user_id=? AND substr(created_at,1,7)=? ORDER BY id",
+        (employee_id, period))
+    advances = await fetch_all(
+        "SELECT id, amount, status, created_at FROM advance_requests WHERE user_id=? AND period=? "
+        "ORDER BY id", (employee_id, period))
+    meds = await fetch_all(
+        "SELECT id, amount, reason, created_at FROM staff_medicines WHERE employee_user_id=? "
+        "AND period=? ORDER BY id", (employee_id, period))
+    kpi = await fetch_all(
+        "SELECT id, kind, percent, base_amount, amount, created_at FROM salary_deductions "
+        "WHERE employee_user_id=? AND period=? ORDER BY id", (employee_id, period))
+    payments = await fetch_all(
+        "SELECT id, period, amount, status, note, created_at FROM salary_payments "
+        "WHERE employee_user_id=? ORDER BY id DESC LIMIT 24", (employee_id,))
+    raises = await fetch_all(
+        "SELECT id, current_salary, requested_amount, offered_amount, final_amount, status, "
+        "created_at, updated_at FROM salary_raise_requests WHERE user_id=? ORDER BY id DESC LIMIT 20",
+        (employee_id,))
+    return ok({
+        "employee": {"id": employee_id, "full_name": row.get("full_name")},
+        "salary": salary,
+        "fines": [{"id": f["id"], "amount": money(f["amount"]), "reason": f["reason"],
+                   "source": f["source"],
+                   "status": "cancelled" if f["cancelled"] else (f["status"] or "pending"),
+                   "cancel_reason": f["cancel_reason"], "created_at": iso(f["created_at"]),
+                   "executed_at": iso(f["executed_at"])} for f in fines],
+        "advances": [{"id": a["id"], "amount": a["amount"], "status": a["status"],
+                      "created_at": iso(a["created_at"])} for a in advances],
+        "medicines": [{"id": m["id"], "amount": m["amount"], "reason": m["reason"],
+                       "created_at": iso(m["created_at"])} for m in meds],
+        "kpi_deductions": [{"id": k["id"], "kind": k["kind"], "percent": k["percent"],
+                            "base_amount": k["base_amount"], "amount": k["amount"],
+                            "created_at": iso(k["created_at"])} for k in kpi],
+        "payments": [{"id": x["id"], "period": x["period"], "amount": money(x["amount"]),
+                      "status": x["status"], "note": x["note"],
+                      "created_at": iso(x["created_at"])} for x in payments],
+        "salary_raise_requests": [{
+            "id": s["id"], "current_salary": money(s["current_salary"]),
+            "requested_amount": money(s["requested_amount"]),
+            "offered_amount": money(s["offered_amount"]),
+            "final_amount": money(s["final_amount"]), "status": s["status"],
+            "created_at": iso(s["created_at"]), "updated_at": iso(s["updated_at"])}
+            for s in raises],
+    }, {"period": period})
+
+
 def _payload(body, p: Principal):
     data = body.model_dump(exclude_unset=True, exclude={"first_name", "last_name"})
     if body.full_name:

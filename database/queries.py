@@ -2,7 +2,9 @@
 import json
 import aiosqlite
 from config import DB_PATH, SUPER_ADMINS
-from database.db import ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER, ROLE_HR, ROLE_IT
+from database.db import (
+    ROLE_CANDIDATE, ROLE_ADMIN, ROLE_MANAGER, ROLE_HR, ROLE_IT, ROLE_EMPLOYEE,
+)
 
 
 _CLAIMABLE_TABLES = {
@@ -11,6 +13,31 @@ _CLAIMABLE_TABLES = {
     "work_hour_requests", "branch_transfer_requests",
 }
 
+# handled_at ustuni bor jadvallar (kim + qachon ko'rib chiqqani ko'rsatiladi)
+_HANDLED_AT_TABLES = {"staff_regs"}
+
+
+async def request_handler_info(table, rid):
+    """So'rov holati va uni kim ko'rib chiqqani: {status, handled_by,
+    handler_name, handled_at} yoki None. «Allaqachon ko'rib chiqilgan» xabarida
+    kim tasdiqlagani/rad etgani ko'rsatilishi uchun."""
+    if table not in _CLAIMABLE_TABLES:
+        return None
+    stamp = "r.handled_at" if table in _HANDLED_AT_TABLES else "NULL"
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            f"""SELECT r.status, r.handled_by, u.full_name AS handler_name,
+                       {stamp} AS handled_at
+                FROM {table} r LEFT JOIN users u ON u.id=r.handled_by
+                WHERE r.id=?""",
+            (rid,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
 
 async def claim_request(table, rid, new_status, handled_by=None, expected="new"):
     """So'rovni ATOMIK ravishda «egallaydi»: faqat status hali `expected` bo'lsa
@@ -18,10 +45,12 @@ async def claim_request(table, rid, new_status, handled_by=None, expected="new")
     ko'rib chiqqan. Bir so'rov ikki marta tasdiqlanishining oldini oladi."""
     if table not in _CLAIMABLE_TABLES:
         raise ValueError("Ruxsat etilmagan jadval")
+    # Qachon ko'rib chiqilgani saqlanadigan jadvallar
+    stamp = ", handled_at=datetime('now','+5 hours')" if table in _HANDLED_AT_TABLES else ""
     db = await _conn()
     try:
         cur = await db.execute(
-            f"UPDATE {table} SET status=?, handled_by=? WHERE id=? AND status=?",
+            f"UPDATE {table} SET status=?, handled_by=?{stamp} WHERE id=? AND status=?",
             (new_status, handled_by, rid, expected),
         )
         await db.commit()
@@ -210,7 +239,8 @@ async def accept_application_once(aid, handled_by=None, kind=None):
     db = await _conn()
     try:
         cur = await db.execute(
-            "UPDATE applications SET status='accepted', accept_kind=?, handled_by=? "
+            "UPDATE applications SET status='accepted', accept_kind=?, handled_by=?, "
+            "handled_at=datetime('now','+5 hours') "
             "WHERE id=? AND status!='accepted'",
             (kind, handled_by, aid),
         )
@@ -686,11 +716,13 @@ async def get_application(aid):
     try:
         cur = await db.execute(
             """SELECT a.*, COALESCE(v.title, a.position) AS vacancy_title,
-                      b.name AS branch_name, u.tg_id AS applicant_tg
+                      b.name AS branch_name, u.tg_id AS applicant_tg,
+                      h.full_name AS handled_by_name
                FROM applications a
                LEFT JOIN vacancies v ON v.id=a.vacancy_id
                LEFT JOIN branches b ON b.id=COALESCE(a.branch_id, v.branch_id)
                LEFT JOIN users u ON u.id=a.user_id
+               LEFT JOIN users h ON h.id=a.handled_by
                WHERE a.id=?""",
             (aid,),
         )
@@ -810,7 +842,8 @@ async def set_application_status(aid, status, handled_by=None):
     db = await _conn()
     try:
         await db.execute(
-            "UPDATE applications SET status=?, handled_by=? WHERE id=?",
+            "UPDATE applications SET status=?, handled_by=?, "
+            "handled_at=datetime('now','+5 hours') WHERE id=?",
             (status, handled_by, aid),
         )
         await db.commit()
@@ -848,60 +881,86 @@ async def upsert_employee_profile(
     monthly_salary=None, birth_date=None, address=None, work_hours=None,
     rest_day=None, photo_file_id=None, extra_info=None, since=None,
     education=None, shift=None, parent_phone=None, passport_front=None,
-    passport_back=None, diploma_file=None,
+    passport_back=None, diploma_file=None, emp_status=None,
 ):
     """Xodim profilini yaratadi yoki yangilaydi.
-    None berilgan qo'shimcha maydonlar mavjud qiymatni o'zgartirmaydi (COALESCE)."""
+    None berilgan qo'shimcha maydonlar mavjud qiymatni o'zgartirmaydi (COALESCE).
+    Yangi profil yaratilgan bo'lsa True qaytaradi."""
     db = await _conn()
     try:
-        cur = await db.execute(
-            "SELECT id, uniform_status FROM employee_profiles WHERE user_id=?",
-            (user_id,),
+        created = await _upsert_profile_tx(
+            db, user_id, application_id, role, position, branch_id=branch_id,
+            uniform_status=uniform_status, monthly_salary=monthly_salary,
+            birth_date=birth_date, address=address, work_hours=work_hours,
+            rest_day=rest_day, photo_file_id=photo_file_id, extra_info=extra_info,
+            since=since, education=education, shift=shift,
+            parent_phone=parent_phone, passport_front=passport_front,
+            passport_back=passport_back, diploma_file=diploma_file,
+            emp_status=emp_status,
         )
-        row = await cur.fetchone()
-        status = uniform_status or (row["uniform_status"] if row else "unknown")
-        if row:
-            await db.execute(
-                """UPDATE employee_profiles
-                   SET application_id=?, role=?, position=?, branch_id=?,
-                       uniform_status=?,
-                       monthly_salary=COALESCE(?, monthly_salary),
-                       birth_date=COALESCE(?, birth_date),
-                       address=COALESCE(?, address),
-                       work_hours=COALESCE(?, work_hours),
-                       rest_day=COALESCE(?, rest_day),
-                       photo_file_id=COALESCE(?, photo_file_id),
-                       extra_info=COALESCE(?, extra_info),
-                       since=COALESCE(?, since),
-                       education=COALESCE(?, education),
-                       shift=COALESCE(?, shift),
-                       parent_phone=COALESCE(?, parent_phone),
-                       passport_front=COALESCE(?, passport_front),
-                       passport_back=COALESCE(?, passport_back),
-                       diploma_file=COALESCE(?, diploma_file),
-                       updated_at=datetime('now','+5 hours')
-                   WHERE user_id=?""",
-                (application_id, role, position, branch_id, status,
-                 monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education, shift,
-                 parent_phone, passport_front, passport_back, diploma_file, user_id),
-            )
-        else:
-            await db.execute(
-                """INSERT INTO employee_profiles
-                   (user_id, application_id, role, position, branch_id, uniform_status,
-                    monthly_salary, birth_date, address, work_hours, rest_day,
-                    photo_file_id, extra_info, since, education, shift,
-                    parent_phone, passport_front, passport_back, diploma_file)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (user_id, application_id, role, position, branch_id, status,
-                 monthly_salary, birth_date, address, work_hours, rest_day,
-                 photo_file_id, extra_info, since, education, shift,
-                 parent_phone, passport_front, passport_back, diploma_file),
-            )
         await db.commit()
+        return created
     finally:
         await db.close()
+
+
+async def _upsert_profile_tx(
+    db, user_id, application_id, role, position, branch_id=None, uniform_status=None,
+    monthly_salary=None, birth_date=None, address=None, work_hours=None,
+    rest_day=None, photo_file_id=None, extra_info=None, since=None,
+    education=None, shift=None, parent_phone=None, passport_front=None,
+    passport_back=None, diploma_file=None, emp_status=None,
+):
+    """upsert_employee_profile ning ichki qismi — ochiq `db` ulanishida ishlaydi
+    (commit chaqiruvchida). Yangi profil yaratilsa True, mavjudi yangilansa False."""
+    cur = await db.execute(
+        "SELECT id, uniform_status FROM employee_profiles WHERE user_id=?",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    status = uniform_status or (row["uniform_status"] if row else "unknown")
+    if row:
+        await db.execute(
+            """UPDATE employee_profiles
+               SET application_id=COALESCE(?, application_id), role=?, position=?,
+                   branch_id=?, uniform_status=?,
+                   monthly_salary=COALESCE(?, monthly_salary),
+                   birth_date=COALESCE(?, birth_date),
+                   address=COALESCE(?, address),
+                   work_hours=COALESCE(?, work_hours),
+                   rest_day=COALESCE(?, rest_day),
+                   photo_file_id=COALESCE(?, photo_file_id),
+                   extra_info=COALESCE(?, extra_info),
+                   since=COALESCE(?, since),
+                   education=COALESCE(?, education),
+                   shift=COALESCE(?, shift),
+                   parent_phone=COALESCE(?, parent_phone),
+                   passport_front=COALESCE(?, passport_front),
+                   passport_back=COALESCE(?, passport_back),
+                   diploma_file=COALESCE(?, diploma_file),
+                   emp_status=COALESCE(?, emp_status),
+                   updated_at=datetime('now','+5 hours')
+               WHERE user_id=?""",
+            (application_id, role, position, branch_id, status,
+             monthly_salary, birth_date, address, work_hours, rest_day,
+             photo_file_id, extra_info, since, education, shift,
+             parent_phone, passport_front, passport_back, diploma_file,
+             emp_status, user_id),
+        )
+        return False
+    await db.execute(
+        """INSERT INTO employee_profiles
+           (user_id, application_id, role, position, branch_id, uniform_status,
+            monthly_salary, birth_date, address, work_hours, rest_day,
+            photo_file_id, extra_info, since, education, shift,
+            parent_phone, passport_front, passport_back, diploma_file, emp_status)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?,'regular'))""",
+        (user_id, application_id, role, position, branch_id, status,
+         monthly_salary, birth_date, address, work_hours, rest_day,
+         photo_file_id, extra_info, since, education, shift,
+         parent_phone, passport_front, passport_back, diploma_file, emp_status),
+    )
+    return True
 
 
 async def get_employee_profile(user_id):
@@ -1508,23 +1567,104 @@ def _period_now_str():
     return (now_utc + timedelta(hours=5)).strftime("%Y-%m")
 
 
-async def cancel_fine(fid, cancelled_by):
-    """Jarimani bekor qiladi (cancelled=1). Bekor qilingan jarima yakuniy
-    oylikdan ayirilmaydi — ya'ni oylikdan kesilgani avtomatik qaytariladi.
+async def cancel_fine(fid, cancelled_by, reason=None):
+    """Jarimani bekor qiladi (status='cancelled', cancelled=1) va sababini
+    saqlaydi. Bekor qilingan jarima yakuniy oylikdan ayirilmaydi — ya'ni
+    oylikdan kesilgani avtomatik qaytariladi.
 
     True qaytadi — agar shu chaqiruvda haqiqatan bekor qilingan bo'lsa
-    (allaqachon bekor qilingan bo'lsa False — takroriy qaytarishning oldini oladi)."""
+    (allaqachon bekor qilingan bo'lsa False — takroriy qaytarishning oldini oladi).
+    Kutilayotgan ham, ijro etilgan jarima ham bekor qilinishi mumkin."""
     db = await _conn()
     try:
         cur = await db.execute(
             """UPDATE fines
-               SET cancelled=1, cancelled_by=?,
-                   cancelled_at=datetime('now','+5 hours')
+               SET cancelled=1, status='cancelled', cancelled_by=?,
+                   cancel_reason=?, cancelled_at=datetime('now','+5 hours')
                WHERE id=? AND cancelled=0""",
-            (cancelled_by, fid),
+            (cancelled_by, reason, fid),
         )
         await db.commit()
         return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def execute_fine(fid, executed_by):
+    """Moliya jarimani «✅ Ijro etildi» deb belgilaydi.
+
+    Faqat kutilayotgan (pending) jarima uchun ishlaydi — atomik: ikki moliya
+    xodimi bir vaqtda bossa ham faqat bittasi True oladi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            """UPDATE fines
+               SET status='executed', executed_by=?,
+                   executed_at=datetime('now','+5 hours')
+               WHERE id=? AND cancelled=0 AND status='pending'""",
+            (executed_by, fid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()
+
+
+_FINE_LIST_SELECT = """SELECT f.*, owner.full_name AS employee_name,
+                      owner.tg_id AS employee_tg, ep.position,
+                      COALESCE(b.name, b2.name) AS branch_name,
+                      cb.full_name AS created_by_name,
+                      xb.full_name AS executed_by_name,
+                      kb.full_name AS cancelled_by_name
+               FROM fines f
+               LEFT JOIN users owner ON owner.id=f.employee_user_id
+               LEFT JOIN employee_profiles ep ON ep.user_id=f.employee_user_id
+               LEFT JOIN branches b ON b.id=f.branch_id
+               LEFT JOIN branches b2 ON b2.id=ep.branch_id
+               LEFT JOIN users cb ON cb.id=f.created_by
+               LEFT JOIN users xb ON xb.id=f.executed_by
+               LEFT JOIN users kb ON kb.id=f.cancelled_by"""
+
+
+async def list_fines_by_status(status, period=None, branch_id=None, limit=30,
+                               offset=0):
+    """Jarimalar holat bo'yicha: pending / executed / cancelled.
+
+    period — 'YYYY-MM' (jarima oyi); None bo'lsa barcha oylar."""
+    db = await _conn()
+    try:
+        sql = _FINE_LIST_SELECT + " WHERE f.status=?"
+        params = [status]
+        if period:
+            sql += " AND f.period=?"
+            params.append(period)
+        if branch_id:
+            sql += " AND COALESCE(f.branch_id, ep.branch_id)=?"
+            params.append(branch_id)
+        sql += (f" GROUP BY f.id ORDER BY f.id DESC"
+                f" LIMIT {int(limit)} OFFSET {int(offset)}")
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def fines_status_counts(period=None):
+    """{'pending': (soni, summa), 'executed': ..., 'cancelled': ...}."""
+    db = await _conn()
+    try:
+        sql = "SELECT status, amount FROM fines"
+        params = []
+        if period:
+            sql += " WHERE period=?"
+            params.append(period)
+        cur = await db.execute(sql, params)
+        out = {k: [0, 0] for k in ("pending", "executed", "cancelled")}
+        for r in await cur.fetchall():
+            st = r["status"] if r["status"] in out else "pending"
+            out[st][0] += 1
+            out[st][1] += _digits_to_int(r["amount"])
+        return {k: tuple(v) for k, v in out.items()}
     finally:
         await db.close()
 
@@ -1539,6 +1679,7 @@ async def fines_report(since, until="9999-12-31"):
         cur = await db.execute(
             """SELECT f.id, f.employee_user_id, f.period, f.amount, f.reason,
                       f.source, f.cancelled, f.cancelled_at, f.created_at,
+                      f.status, f.cancel_reason, f.executed_at,
                       owner.full_name AS employee_name, owner.phone,
                       ep.position, COALESCE(ep.role, owner.role) AS emp_role,
                       COALESCE(b.name, b2.name) AS branch_name,
@@ -1788,13 +1929,23 @@ async def get_fine(fid):
     try:
         cur = await db.execute(
             """SELECT f.*, u.full_name AS created_by_name,
-                      ep.user_id AS profile_user_id, owner.tg_id AS employee_tg,
-                      owner.full_name AS employee_name
+                      u.tg_id AS created_by_tg,
+                      ep.user_id AS profile_user_id, ep.position,
+                      owner.tg_id AS employee_tg,
+                      owner.full_name AS employee_name,
+                      COALESCE(b.name, b2.name) AS branch_name,
+                      xb.full_name AS executed_by_name,
+                      kb.full_name AS cancelled_by_name
                FROM fines f
                LEFT JOIN users u ON u.id=f.created_by
                LEFT JOIN employee_profiles ep ON ep.user_id=f.employee_user_id
                LEFT JOIN users owner ON owner.id=f.employee_user_id
-               WHERE f.id=?""",
+               LEFT JOIN branches b ON b.id=f.branch_id
+               LEFT JOIN branches b2 ON b2.id=ep.branch_id
+               LEFT JOIN users xb ON xb.id=f.executed_by
+               LEFT JOIN users kb ON kb.id=f.cancelled_by
+               WHERE f.id=?
+               LIMIT 1""",
             (fid,),
         )
         row = await cur.fetchone()
@@ -2582,7 +2733,7 @@ async def _cancel_user_probations(db, user_id):
     Shu ochiq `db` ulanishida ishlaydi (commit chaqiruvchida qilinadi)."""
     await db.execute(
         "UPDATE probations SET status='dismissed' "
-        "WHERE user_id=? AND status IN ('awaiting','active')",
+        "WHERE user_id=? AND status IN ('awaiting','active','finished')",
         (user_id,),
     )
 
@@ -3344,10 +3495,12 @@ async def get_staff_reg(rid):
     db = await _conn()
     try:
         cur = await db.execute(
-            """SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_db_name
+            """SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_db_name,
+                      h.full_name AS handled_by_name
                FROM staff_regs sr
                JOIN users u ON u.id=sr.user_id
                LEFT JOIN branches b ON b.id=sr.branch_id
+               LEFT JOIN users h ON h.id=sr.handled_by
                WHERE sr.id=?""",
             (rid,),
         )
@@ -3357,18 +3510,23 @@ async def get_staff_reg(rid):
         await db.close()
 
 
-async def list_staff_regs(status=None, limit=30):
+async def list_staff_regs(status=None, limit=30, statuses=None):
     db = await _conn()
     try:
-        sql = """SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_db_name
+        sql = """SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_db_name,
+                        h.full_name AS handled_by_name
                  FROM staff_regs sr
                  JOIN users u ON u.id=sr.user_id
                  LEFT JOIN branches b ON b.id=sr.branch_id
+                 LEFT JOIN users h ON h.id=sr.handled_by
                  WHERE 1=1"""
         params = []
         if status:
             sql += " AND sr.status=?"
             params.append(status)
+        if statuses:
+            sql += f" AND sr.status IN ({','.join('?' for _ in statuses)})"
+            params += list(statuses)
         sql += " ORDER BY sr.id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -3383,10 +3541,462 @@ async def set_staff_reg_status(rid, status, handled_by=None, reject_reason=None)
     try:
         await db.execute(
             "UPDATE staff_regs SET status=?, handled_by=?, "
+            "handled_at=datetime('now','+5 hours'), "
             "reject_reason=COALESCE(?, reject_reason) WHERE id=?",
             (status, handled_by, reject_reason, rid),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+# ---------------- XODIM QO'SHISH: BITTA TRANZAKSIYADA ----------------
+# Avval so'rov «tasdiqlangan» deb belgilanib, xodim profili KEYIN alohida
+# ulanishda yaratilardi. O'rtada xato (masalan «database is locked») bo'lsa so'rov
+# «✅ Tasdiqlangan» bo'lib qolar, xodim esa ro'yxatga qo'shilmasdi. Endi status,
+# rol, profil va kadrlar harakati bitta tranzaksiyada yoziladi: yo hammasi, yo
+# hech narsa.
+async def _begin_write(db):
+    """Yozish qulfini darhol oladi — tekshirish va yozish orasiga boshqa ulanish
+    aralasha olmaydi (ikki HR bir vaqtda bosganda ham)."""
+    await db.execute("BEGIN IMMEDIATE")
+
+
+async def _mark_user_rehired_tx(db, user_id):
+    """Xodim yana ro'yxatga qo'shildi — ochiq «ishdan bo'shagan» arxiv yozuvlarini
+    «qayta olingan» deb belgilaydi (aks holda u «Ishdan bo'shaganlar»da qolaverardi)."""
+    await db.execute(
+        "UPDATE dismissed_employees SET rehired=1, "
+        "rehired_at=datetime('now','+5 hours') WHERE user_id=? AND rehired=0",
+        (user_id,),
+    )
+
+
+async def _hr_event_tx(db, event_type, user_id=None, full_name=None, branch_id=None,
+                       details=None, created_by=None):
+    await db.execute(
+        """INSERT INTO hr_events
+           (event_type, user_id, full_name, branch_id, details, created_by)
+           VALUES (?,?,?,?,?,?)""",
+        (event_type, user_id, full_name, branch_id, details, created_by),
+    )
+
+
+async def _set_user_role_tx(db, user_id, role, branch_id, full_name=None):
+    await db.execute(
+        "UPDATE users SET role=?, branch_id=? WHERE id=?", (role, branch_id, user_id)
+    )
+    name = (full_name or "").strip()
+    if name:
+        await db.execute(
+            "UPDATE users SET full_name=?, name_locked=1 WHERE id=?", (name, user_id)
+        )
+
+
+async def approve_staff_reg(rid, handled_by, allowed=("new",)):
+    """Xodim so'rovini tasdiqlaydi va xodimni ro'yxatga qo'shadi — ATOMIK.
+
+    `allowed` — qaysi holatdagi so'rovni tasdiqlash mumkin. Birinchi tasdiq:
+    ("new",). «🔄 Boshidan tasdiqlash»: ("approved", "rejected").
+    Natija: {"reg", "role", "created", "prev_status"} yoki None (holat mos emas —
+    boshqa HR allaqachon ko'rib chiqqan)."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute(
+                "SELECT sr.*, u.tg_id AS user_tg FROM staff_regs sr "
+                "JOIN users u ON u.id=sr.user_id WHERE sr.id=?",
+                (rid,),
+            )
+            row = await cur.fetchone()
+            if not row or row["status"] not in allowed:
+                await db.rollback()
+                return None
+            reg = dict(row)
+            uid = reg["user_id"]
+            role = reg.get("role") or ROLE_EMPLOYEE
+            prev_status = reg["status"]
+            await db.execute(
+                "UPDATE staff_regs SET status='approved', handled_by=?, "
+                "handled_at=datetime('now','+5 hours'), reject_reason=NULL "
+                "WHERE id=?",
+                (handled_by, rid),
+            )
+            await _set_user_role_tx(db, uid, role, reg.get("branch_id"),
+                                    reg.get("full_name"))
+            created = await _upsert_profile_tx(
+                db, uid, None, role, reg.get("position"),
+                branch_id=reg.get("branch_id"),
+                uniform_status=reg.get("uniform_status") or "unknown",
+                monthly_salary=reg.get("salary"), birth_date=reg.get("birth_date"),
+                address=reg.get("address"), work_hours=reg.get("work_hours"),
+                rest_day=reg.get("rest_day"), photo_file_id=reg.get("photo_file_id"),
+                extra_info=reg.get("extra_info"), since=reg.get("since"),
+                education=reg.get("education"), parent_phone=reg.get("parent_phone"),
+                passport_front=reg.get("passport_front"),
+                passport_back=reg.get("passport_back"),
+                diploma_file=reg.get("diploma_file"),
+            )
+            await _mark_user_rehired_tx(db, uid)
+            if created:
+                details = f"hodim ro'yxati #{rid}"
+                if prev_status != "new":
+                    details += " · boshidan tasdiqlandi"
+                await _hr_event_tx(db, "hired", uid, reg.get("full_name"),
+                                   reg.get("branch_id"), details, handled_by)
+            await db.commit()
+            return {"reg": reg, "role": role, "created": created,
+                    "prev_status": prev_status}
+        except Exception:
+            await db.rollback()
+            raise
+    finally:
+        await db.close()
+
+
+async def employee_presence(user_id):
+    """Xodim hozir ro'yxatdami — tasdiqlangan so'rov/ariza kartochkasi uchun.
+
+    {"user", "profile", "dismissed" (oxirgi, qayta olinmagan arxiv yozuvi),
+     "probation" (oxirgi sinov/o'rganish yozuvi)}"""
+    db = await _conn()
+    try:
+        cur = await db.execute("SELECT * FROM users WHERE id=?", (user_id,))
+        user = await cur.fetchone()
+        cur = await db.execute(
+            """SELECT ep.*, b.name AS branch_name FROM employee_profiles ep
+               LEFT JOIN branches b ON b.id=ep.branch_id WHERE ep.user_id=?""",
+            (user_id,),
+        )
+        profile = await cur.fetchone()
+        cur = await db.execute(
+            "SELECT * FROM dismissed_employees WHERE user_id=? AND rehired=0 "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        )
+        dismissed = await cur.fetchone()
+        cur = await db.execute(
+            """SELECT p.*, b.name AS branch_name FROM probations p
+               LEFT JOIN branches b ON b.id=p.branch_id
+               WHERE p.user_id=? ORDER BY p.id DESC LIMIT 1""",
+            (user_id,),
+        )
+        prob = await cur.fetchone()
+        return {
+            "user": dict(user) if user else None,
+            "profile": dict(profile) if profile else None,
+            "dismissed": dict(dismissed) if dismissed else None,
+            "probation": dict(prob) if prob else None,
+        }
+    finally:
+        await db.close()
+
+
+async def list_staff_regs_missing_profile(limit=30):
+    """«✅ Tasdiqlangan», lekin xodim ro'yxatida YO'Q xodim so'rovlari.
+
+    Ishdan bo'shatilganlar bu yerga kirmaydi (ular «Ishdan bo'shaganlar»da).
+    Har bir foydalanuvchining faqat oxirgi tasdiqlangan so'rovi olinadi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            f"""SELECT sr.*, u.tg_id AS user_tg, b.name AS branch_db_name,
+                       h.full_name AS handled_by_name
+                FROM staff_regs sr
+                JOIN users u ON u.id=sr.user_id
+                LEFT JOIN branches b ON b.id=sr.branch_id
+                LEFT JOIN users h ON h.id=sr.handled_by
+                WHERE sr.status='approved'
+                  AND sr.id=(SELECT MAX(s2.id) FROM staff_regs s2
+                             WHERE s2.user_id=sr.user_id AND s2.status='approved')
+                  AND NOT EXISTS (SELECT 1 FROM employee_profiles ep
+                                  WHERE ep.user_id=sr.user_id)
+                  AND NOT EXISTS (SELECT 1 FROM dismissed_employees d
+                                  WHERE d.user_id=sr.user_id AND d.rehired=0)
+                ORDER BY sr.id DESC LIMIT {int(limit)}"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def list_accepted_apps_missing_profile(limit=30):
+    """Qabul qilingan, lekin xodim ro'yxatida YO'Q arizalar — xatolik tufayli
+    qolib ketganlar. Rahbar tasdig'ini kutayotgan / «kelmadi» deb belgilangan
+    sinov xodimlari va ishdan bo'shatilganlar bu yerga kirmaydi."""
+    db = await _conn()
+    try:
+        cur = await db.execute(
+            f"""SELECT a.*, COALESCE(v.title, a.position) AS vacancy_title,
+                       b.name AS branch_name
+                FROM applications a
+                LEFT JOIN vacancies v ON v.id=a.vacancy_id
+                LEFT JOIN branches b ON b.id=COALESCE(a.branch_id, v.branch_id)
+                WHERE a.status='accepted'
+                  AND a.id=(SELECT MAX(a2.id) FROM applications a2
+                            WHERE a2.user_id=a.user_id AND a2.status='accepted')
+                  AND NOT EXISTS (SELECT 1 FROM employee_profiles ep
+                                  WHERE ep.user_id=a.user_id)
+                  AND NOT EXISTS (SELECT 1 FROM dismissed_employees d
+                                  WHERE d.user_id=a.user_id AND d.rehired=0)
+                  AND NOT EXISTS (SELECT 1 FROM probations p
+                                  WHERE p.user_id=a.user_id
+                                    AND p.status IN ('awaiting','no_show'))
+                ORDER BY a.id DESC LIMIT {int(limit)}"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def accept_application_tx(aid, handled_by, kind, role, branch_id, *,
+                                start_iso=None, end_iso=None, days=None, shift=None,
+                                want_defer=False, reaccept=False):
+    """Arizani qabul qiladi — status, rol, profil, sinov yozuvi va kadrlar
+    harakati BITTA tranzaksiyada.
+
+    kind: hire / trial / learner. `want_defer` — sinov/o'rganuvchi va filialda
+    rahbar bor: xodim rahbar «✅ Ishga keldi» ni bosgachgina ro'yxatga qo'shiladi.
+    Lekin xodim allaqachon ro'yxatda bo'lsa (boshidan qabul) — kechiktirilmaydi.
+    `reaccept=True` — «🔄 Boshidan qabul qilish»: ariza hozir qabul qilingan
+    bo'lishi shart; eski ochiq sinov yozuvlari «replaced» bo'ladi.
+
+    Natija: {"pid", "defer", "created", "in_list", "old_pids", "app",
+    "agreed_salary", "shift"} yoki None (ariza allaqachon qabul qilingan /
+    holati mos emas)."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute("SELECT * FROM applications WHERE id=?", (aid,))
+            row = await cur.fetchone()
+            if not row:
+                await db.rollback()
+                return None
+            app = dict(row)
+            if (app["status"] == "accepted") != bool(reaccept):
+                await db.rollback()
+                return None
+            uid = app["user_id"]
+            await db.execute(
+                "UPDATE applications SET status='accepted', accept_kind=?, "
+                "handled_by=?, handled_at=datetime('now','+5 hours') WHERE id=?",
+                (kind, handled_by, aid),
+            )
+            name = (app.get("full_name") or "").strip()
+            if name:
+                await db.execute(
+                    "UPDATE users SET full_name=?, name_locked=1 WHERE id=?", (name, uid)
+                )
+            # Bir xodimda bir vaqtda faqat bitta ochiq sinov/o'rganish bo'ladi
+            cur = await db.execute(
+                "SELECT id FROM probations WHERE user_id=? "
+                "AND status IN ('awaiting','active','finished')",
+                (uid,),
+            )
+            old_pids = [r["id"] for r in await cur.fetchall()]
+            if old_pids:
+                marks = ",".join("?" for _ in old_pids)
+                await db.execute(
+                    "UPDATE probations SET status='replaced', decided_by=?, "
+                    f"decided_at=datetime('now','+5 hours') WHERE id IN ({marks})",
+                    (handled_by, *old_pids),
+                )
+            cur = await db.execute(
+                "SELECT 1 FROM employee_profiles WHERE user_id=?", (uid,)
+            )
+            in_list = await cur.fetchone() is not None
+            defer = bool(want_defer) and kind in ("trial", "learner") and not in_list
+            agreed_salary = (app.get("offered_salary")
+                             if app.get("salary_status") == "agreed" else None)
+            eff_shift = shift or app.get("shift")
+            uniform = app.get("uniform_status") or "unknown"
+            position = app.get("position")
+            if not position and app.get("vacancy_id"):
+                cur = await db.execute(
+                    "SELECT title FROM vacancies WHERE id=?", (app["vacancy_id"],)
+                )
+                v = await cur.fetchone()
+                position = v["title"] if v else None
+            created = False
+            if not defer:
+                await _set_user_role_tx(db, uid, role, branch_id)
+                created = await _upsert_profile_tx(
+                    db, uid, aid, role, position, branch_id=branch_id,
+                    uniform_status=uniform, monthly_salary=agreed_salary,
+                    shift=eff_shift,
+                    emp_status=kind if kind in ("trial", "learner") else "regular",
+                )
+                await _mark_user_rehired_tx(db, uid)
+                if created:
+                    details = f"ariza #{aid} · {kind}"
+                    if reaccept:
+                        details += " · boshidan qabul"
+                    await _hr_event_tx(db, "hired", uid, app.get("full_name"),
+                                       branch_id, details, handled_by)
+            pid = None
+            if kind in ("trial", "learner"):
+                cur = await db.execute(
+                    """INSERT INTO probations
+                       (application_id, user_id, branch_id, full_name, position,
+                        start_date, end_date, days, kind, status,
+                        shift, agreed_salary, uniform_status, created_by)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (aid, uid, branch_id, app.get("full_name"), position,
+                     start_iso, end_iso, days or 15, kind,
+                     "awaiting" if defer else "active",
+                     eff_shift, agreed_salary, uniform, handled_by),
+                )
+                pid = cur.lastrowid
+            await db.commit()
+            return {"pid": pid, "defer": defer, "created": created,
+                    "in_list": in_list, "old_pids": old_pids, "app": app,
+                    "agreed_salary": agreed_salary, "shift": eff_shift}
+        except Exception:
+            await db.rollback()
+            raise
+    finally:
+        await db.close()
+
+
+# ---------------- SINOV MUDDATI: ISHGA KELDI / QAROR (ATOMIK) ----------------
+async def confirm_probation_arrival(pid, by_user_id, role):
+    """«✅ Ishga keldi» — sinov yozuvi faollashadi va xodim ro'yxatga qo'shiladi
+    (rol, profil, kadrlar harakati) BITTA tranzaksiyada.
+
+    Faqat status='awaiting' bo'lsa ishlaydi. Natija: {"prob", "created"} yoki None."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute("SELECT * FROM probations WHERE id=?", (pid,))
+            row = await cur.fetchone()
+            if not row or row["status"] != "awaiting":
+                await db.rollback()
+                return None
+            p = dict(row)
+            uid = p["user_id"]
+            await db.execute(
+                "UPDATE probations SET status='active', arrived_by=?, "
+                "arrived_at=datetime('now','+5 hours') WHERE id=?",
+                (by_user_id, pid),
+            )
+            await _set_user_role_tx(db, uid, role, p.get("branch_id"))
+            created = await _upsert_profile_tx(
+                db, uid, p.get("application_id"), role, p.get("position"),
+                branch_id=p.get("branch_id"),
+                uniform_status=p.get("uniform_status") or "unknown",
+                monthly_salary=p.get("agreed_salary"), shift=p.get("shift"),
+                emp_status=p.get("kind") or "trial",
+            )
+            await _mark_user_rehired_tx(db, uid)
+            if created:
+                await _hr_event_tx(
+                    db, "hired", uid, p.get("full_name"), p.get("branch_id"),
+                    f"ariza #{p.get('application_id')} · {p.get('kind')} · ishga keldi",
+                    by_user_id,
+                )
+            await db.commit()
+            return {"prob": p, "created": created}
+        except Exception:
+            await db.rollback()
+            raise
+    finally:
+        await db.close()
+
+
+async def mark_probation_no_show(pid, by_user_id):
+    """«❌ Kelmadi» — faqat status='awaiting' bo'lsa. Rol nomzodga qaytadi
+    (profil hali yaratilmagan). True — shu chaqiruv belgiladi."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute(
+                "UPDATE probations SET status='no_show', decided_by=?, "
+                "decided_at=datetime('now','+5 hours') WHERE id=? AND status='awaiting'",
+                (by_user_id, pid),
+            )
+            if cur.rowcount <= 0:
+                await db.rollback()
+                return False
+            await db.execute(
+                """UPDATE users SET role=?, branch_id=NULL
+                   WHERE id=(SELECT user_id FROM probations WHERE id=?)
+                     AND NOT EXISTS (SELECT 1 FROM employee_profiles ep
+                                     WHERE ep.user_id=users.id)""",
+                (ROLE_CANDIDATE, pid),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
+    finally:
+        await db.close()
+
+
+async def probation_make_permanent(pid, by_user_id):
+    """Sinov/o'rganish muvaffaqiyatli — xodim DOIMIY bo'ladi: status='passed',
+    profil maqomi 'regular'. Faqat active/finished bo'lsa. True/False."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute(
+                "UPDATE probations SET status='passed', decided_by=?, "
+                "decided_at=datetime('now','+5 hours') "
+                "WHERE id=? AND status IN ('active','finished')",
+                (by_user_id, pid),
+            )
+            if cur.rowcount <= 0:
+                await db.rollback()
+                return False
+            await db.execute(
+                """UPDATE employee_profiles SET emp_status='regular',
+                          updated_at=datetime('now','+5 hours')
+                   WHERE user_id=(SELECT user_id FROM probations WHERE id=?)""",
+                (pid,),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
+    finally:
+        await db.close()
+
+
+async def probation_extend(pid, new_end_iso, new_days, by_user_id):
+    """Muddatni uzaytiradi: yangi tugash sanasi, eslatmalar qaytadan yuboriladi,
+    holat yana 'active'. Faqat active/finished bo'lsa. True/False."""
+    db = await _conn()
+    try:
+        await _begin_write(db)
+        try:
+            cur = await db.execute(
+                "UPDATE probations SET status='active', end_date=?, days=?, "
+                "hr_3day_sent=0, hr_end_sent=0, decided_by=?, "
+                "decided_at=datetime('now','+5 hours') "
+                "WHERE id=? AND status IN ('active','finished')",
+                (new_end_iso, int(new_days), by_user_id, pid),
+            )
+            if cur.rowcount <= 0:
+                await db.rollback()
+                return False
+            await db.execute(
+                """UPDATE employee_profiles SET emp_status=(
+                          SELECT kind FROM probations WHERE id=?),
+                          updated_at=datetime('now','+5 hours')
+                   WHERE user_id=(SELECT user_id FROM probations WHERE id=?)""",
+                (pid, pid),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
     finally:
         await db.close()
 
@@ -3680,39 +4290,51 @@ async def add_probation(data):
         await db.close()
 
 
+_PROBATION_SELECT = """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg,
+                   cu.full_name AS created_by_name,
+                   au.full_name AS arrived_by_name,
+                   du.full_name AS decided_by_name,
+                   EXISTS (SELECT 1 FROM employee_profiles ep
+                           WHERE ep.user_id=p.user_id) AS has_profile
+            FROM probations p
+            LEFT JOIN branches b ON b.id=p.branch_id
+            LEFT JOIN users u ON u.id=p.user_id
+            LEFT JOIN users cu ON cu.id=p.created_by
+            LEFT JOIN users au ON au.id=p.arrived_by
+            LEFT JOIN users du ON du.id=p.decided_by"""
+
+
 async def get_probation(pid):
     db = await _conn()
     try:
-        cur = await db.execute(
-            """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg
-               FROM probations p
-               LEFT JOIN branches b ON b.id=p.branch_id
-               LEFT JOIN users u ON u.id=p.user_id
-               WHERE p.id=?""",
-            (pid,),
-        )
+        cur = await db.execute(_PROBATION_SELECT + " WHERE p.id=?", (pid,))
         row = await cur.fetchone()
         return dict(row) if row else None
     finally:
         await db.close()
 
 
-async def list_probations(status=None, limit=30, kind=None):
+async def list_probations(status=None, limit=30, kind=None, statuses=None,
+                          newest_first=False):
+    """Sinov/o'rganish yozuvlari. `newest_first=True` — eng oxirgi tugaganlari
+    birinchi (aks holda eng yaqin tugaydiganlari birinchi)."""
     db = await _conn()
     try:
-        sql = """SELECT p.*, b.name AS branch_name, u.tg_id AS employee_tg
-                 FROM probations p
-                 LEFT JOIN branches b ON b.id=p.branch_id
-                 LEFT JOIN users u ON u.id=p.user_id
-                 WHERE 1=1"""
+        sql = _PROBATION_SELECT + " WHERE 1=1"
         params = []
         if status:
             sql += " AND p.status=?"
             params.append(status)
+        if statuses:
+            sql += f" AND p.status IN ({','.join('?' for _ in statuses)})"
+            params += list(statuses)
         if kind:
             sql += " AND p.kind=?"
             params.append(kind)
-        sql += " ORDER BY p.end_date ASC, p.id DESC"
+        if newest_first:
+            sql += " ORDER BY COALESCE(p.decided_at, p.end_date) DESC, p.id DESC"
+        else:
+            sql += " ORDER BY p.end_date ASC, p.id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
         cur = await db.execute(sql, params)
@@ -3722,7 +4344,7 @@ async def list_probations(status=None, limit=30, kind=None):
 
 
 async def list_active_probations(kind=None):
-    return await list_probations(status="active", limit=200, kind=kind)
+    return await list_probations(status="active", limit=500, kind=kind)
 
 
 async def mark_probation_flag(pid, flag):

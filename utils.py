@@ -483,15 +483,129 @@ def staff_reg_text(reg):
     return "\n".join(parts)
 
 
-def fine_text(fine):
-    return (
-        f"💸 <b>Jarima #{fine['id']}</b>\n"
-        "━━━━━━━━━━━━\n"
-        f"💰 Summa: {fine['amount']}\n"
-        f"✍️ Sabab: {_v(fine, 'reason')}\n"
-        f"🧑‍💼 Yozgan: {_v(fine, 'created_by_name')}\n"
-        f"🕐 Sana: {_v(fine, 'created_at')}"
+# So'rovni kim, qanday ko'rib chiqqani — «allaqachon ko'rib chiqilgan» holatlarida
+_HANDLED_VERBS = {
+    "approved": "✅ Tasdiqladi",
+    "accepted": "✅ Qabul qildi",
+    "agreed": "✅ Tasdiqladi",
+    "confirmed": "✅ Tasdiqladi",
+    "rejected": "❌ Rad etdi",
+    "closed": "🔒 Yopdi",
+    "cancelled": "🚫 Bekor qildi",
+    "waiting": "⏳ Kutuvga qo'shdi",
+    "interview": "📅 Suhbatga chaqirdi",
+}
+
+
+def handled_by_text(status, name=None, at=None):
+    """«✅ Tasdiqladi: Ali Valiyev · 2026-10-12 14:05» ko'rinishidagi qator.
+    Kim ekani noma'lum bo'lsa ham holat aniq aytiladi."""
+    if status == "updated":
+        return "✏️ Xodimning o'zi ma'lumotlarini yangilagan"
+    verb = _HANDLED_VERBS.get(status, "👤 Ko'rib chiqdi")
+    who = name or "noma'lum (eski yozuv)"
+    when = f" · {str(at)[:16]}" if at else ""
+    return f"{verb}: <b>{who}</b>{when}"
+
+
+def handled_alert_text(info):
+    """Callback alert uchun qisqa matn (200 belgidan oshmasin)."""
+    if not info:
+        return "Bu so'rov allaqachon ko'rib chiqilgan."
+    st = request_status_label(info.get("status"))
+    who = info.get("handler_name")
+    when = f" ({str(info['handled_at'])[:16]})" if info.get("handled_at") else ""
+    if who:
+        return f"Bu so'rov allaqachon ko'rib chiqilgan: {st} — {who}{when}."[:200]
+    return f"Bu so'rov allaqachon ko'rib chiqilgan: {st}."[:200]
+
+
+def employee_state(pres):
+    """Xodim hozir ro'yxatdami — (kalit, matn).
+
+    kalit: in_list / awaiting / no_show / dismissed / missing."""
+    from database.db import EMP_STATUS_LABELS, ES_REGULAR
+    pres = pres or {}
+    profile = pres.get("profile")
+    prob = pres.get("probation") or {}
+    if profile:
+        st = profile.get("emp_status") or ES_REGULAR
+        tag = "" if st == ES_REGULAR else f" · {EMP_STATUS_LABELS.get(st, st)}"
+        return "in_list", (
+            "✅ Xodimlar ro'yxatida <b>bor</b> — "
+            f"🏢 {profile.get('branch_name') or 'filialsiz'} · "
+            f"💼 {profile.get('position') or '-'}{tag}"
+        )
+    if prob.get("status") == "awaiting":
+        return "awaiting", (
+            "⏳ Hali ro'yxatda <b>yo'q</b> — filial rahbari «✅ Ishga keldi» ni "
+            "tasdiqlashi kutilmoqda."
+        )
+    if prob.get("status") == "no_show":
+        return "no_show", "❌ Rahbar «Ishga kelmadi» deb belgilagan — ro'yxatda <b>yo'q</b>."
+    dis = pres.get("dismissed")
+    if dis:
+        reason = f" · sabab: {dis['reason']}" if dis.get("reason") else ""
+        return "dismissed", (
+            f"🚫 Ishdan bo'shatilgan ({str(dis.get('dismissed_at') or '-')[:16]}){reason}"
+        )
+    return "missing", (
+        "⚠️ Xodimlar ro'yxatida <b>YO'Q</b> — tasdiqlash oxiriga yetmagan. "
+        "«🔄 Boshidan tasdiqlash» bilan ro'yxatga qo'shing."
     )
+
+
+FINE_SOURCE_LABELS = {
+    "finance": "Moliya bo'limi",
+    "hr": "HR bo'limi",
+    "director": "Direktor",
+    "manager": "Filial rahbari",
+}
+
+FINE_STATUS_LABELS = {
+    "pending": "⏳ Moliya ijrosini kutmoqda",
+    "executed": "✅ Ijro etildi",
+    "cancelled": "🚫 Bekor qilindi",
+}
+
+
+def fine_status(fine):
+    """'pending' / 'executed' / 'cancelled' (eski yozuvlar uchun ham)."""
+    if fine.get("cancelled") or fine.get("status") == "cancelled":
+        return "cancelled"
+    return "executed" if fine.get("status") == "executed" else "pending"
+
+
+def fine_status_lines(fine):
+    """Jarima holati qatorlari (kim, qachon, bekor qilish sababi)."""
+    st = fine_status(fine)
+    lines = [f"📌 Holat: <b>{FINE_STATUS_LABELS[st]}</b>"]
+    if st == "executed":
+        lines.append(f"   🧮 {_v(fine, 'executed_by_name')} · {_v(fine, 'executed_at')}")
+    elif st == "cancelled":
+        lines.append(f"   🧮 {_v(fine, 'cancelled_by_name')} · {_v(fine, 'cancelled_at')}")
+        lines.append(f"   📝 Bekor qilish sababi: <i>{_v(fine, 'cancel_reason')}</i>")
+    return lines
+
+
+def fine_text(fine):
+    who = _v(fine, "created_by_name")
+    src = FINE_SOURCE_LABELS.get(fine.get("source"))
+    if src:
+        who += f" ({src})"
+    lines = [f"💸 <b>Jarima #{fine['id']}</b>", "━━━━━━━━━━━━"]
+    if fine.get("employee_name"):
+        lines.append(f"👤 Xodim: <b>{fine['employee_name']}</b>")
+    if fine.get("branch_name"):
+        lines.append(f"🏢 Filial: {fine['branch_name']}")
+    lines += [
+        f"💰 Summa: <b>{fine['amount']}</b>",
+        f"✍️ Sabab: {_v(fine, 'reason')}",
+        f"🧑‍💼 Yozgan: {who}",
+        f"🕐 Sana: {_v(fine, 'created_at')}",
+    ]
+    lines += fine_status_lines(fine)
+    return "\n".join(lines)
 
 
 def manager_request_text(req):
@@ -1575,10 +1689,10 @@ def parse_date_input(text):
     """'kun.oy.yil' yoki 'bugun' -> (iso 'YYYY-MM-DD', display 'dd.mm.yyyy') yoki None."""
     text = (text or "").strip().lower()
     if text in ("bugun", "today", "hozir", "shu kun"):
-        d = date.today()
+        d = today_tk()
         return d.isoformat(), d.strftime("%d.%m.%Y")
     if text in ("erta", "ertaga", "tomorrow"):
-        d = date.today() + timedelta(days=1)
+        d = today_tk() + timedelta(days=1)
         return d.isoformat(), d.strftime("%d.%m.%Y")
     t = text.replace("/", ".").replace("-", ".")
     for fmt in ("%d.%m.%Y", "%d.%m.%y"):
@@ -1602,12 +1716,68 @@ def add_days_iso(iso, days):
     return (date.fromisoformat(iso) + timedelta(days=days)).isoformat()
 
 
+def today_tk():
+    """Bugungi sana — Toshkent vaqti bo'yicha (server boshqa zonada bo'lsa ham)."""
+    return now_tk().date()
+
+
+def days_between_iso(a_iso, b_iso):
+    """Ikki ISO sana orasidagi kunlar soni (b - a)."""
+    return (date.fromisoformat(b_iso) - date.fromisoformat(a_iso)).days
+
+
 def days_left_until(iso):
-    """Bugundan berilgan ISO sanagacha necha kun qolganini qaytaradi."""
+    """Bugundan (Toshkent) berilgan ISO sanagacha necha kun qolganini qaytaradi."""
     try:
-        return (date.fromisoformat(iso) - date.today()).days
+        return (date.fromisoformat(iso) - today_tk()).days
     except (ValueError, TypeError):
         return None
+
+
+# Sinov/o'rganish muddati shu kun yoki kamroq qolganda «yaqinda tugaydi» hisoblanadi
+PROBATION_SOON_DAYS = 3
+
+PROBATION_STATUS_LABELS = {
+    "awaiting": "⏳ Ishga kelishi kutilmoqda",
+    "finished": "🏁 Muddati tugadi — HR qarori kutilmoqda",
+    "passed": "✅ Doimiy xodim qilindi",
+    "no_show": "❌ Ishga kelmadi",
+    "dismissed": "🚫 Ishdan bo'shatilgan",
+    "replaced": "🔄 Boshidan qabul qilingan (eski yozuv)",
+}
+
+
+def probation_bucket(p):
+    """Panel uchun toifa: awaiting / soon / active / ended / closed."""
+    st = p.get("status")
+    if st == "awaiting":
+        return "awaiting"
+    if st == "finished":
+        return "ended"
+    if st == "active":
+        left = days_left_until(p.get("end_date"))
+        if left is not None and left < 0:
+            return "ended"      # eslatma tsikli hali yetib kelmagan
+        if left is not None and left <= PROBATION_SOON_DAYS:
+            return "soon"
+        return "active"
+    return "closed"
+
+
+def probation_state_label(p):
+    st = p.get("status")
+    if st in PROBATION_STATUS_LABELS:
+        return PROBATION_STATUS_LABELS[st]
+    left = days_left_until(p.get("end_date"))
+    if left is None:
+        return "🟢 Davom etmoqda"
+    if left < 0:
+        return "🏁 Muddati tugadi — HR qarori kutilmoqda"
+    if left == 0:
+        return "⚠️ Bugun tugaydi"
+    if left <= PROBATION_SOON_DAYS:
+        return f"⚠️ Yaqinda tugaydi ({left} kun qoldi)"
+    return f"🟢 Davom etmoqda ({left} kun qoldi)"
 
 
 def probation_text(p, stats=None):
@@ -1615,19 +1785,13 @@ def probation_text(p, stats=None):
 
     Eslatma: `stats` parametri eskilik uchun qoldirilgan, lekin endi ishlatilmaydi
     (kunlik davomat tizimi olib tashlangan)."""
-    left = days_left_until(p.get("end_date"))
-    if p.get("status") == "finished" or (left is not None and left < 0):
-        state = "🏁 Tugagan"
-    elif left == 0:
-        state = "⏳ Bugun tugaydi"
-    else:
-        state = f"🟢 Davom etmoqda ({left} kun qoldi)" if left is not None else "🟢 Davom etmoqda"
     if p.get("kind") == "learner":
         title = f"🎓 <b>O'rganuvchi #{p['id']}</b>"
     else:
         title = f"🧪 <b>Sinov muddati #{p['id']}</b>"
     lines = [
-        f"{title} — {state}",
+        title,
+        f"📌 Holati: <b>{probation_state_label(p)}</b>",
         "━━━━━━━━━━━━",
         f"👤 Xodim: <b>{p.get('full_name') or '-'}</b>",
         f"💼 Lavozim: {p.get('position') or '-'}",
@@ -1635,6 +1799,28 @@ def probation_text(p, stats=None):
         f"📅 Boshlanishi: {iso_to_display(p.get('start_date'))}",
         f"🏁 Tugashi: {iso_to_display(p.get('end_date'))} ({p.get('days', 15)} kun)",
     ]
+    if p.get("created_by_name"):
+        lines.append(f"🧑‍💼 Qabul qildi (HR): {p['created_by_name']}")
+    if p.get("arrived_by_name"):
+        at = f" · {p['arrived_at']}" if p.get("arrived_at") else ""
+        lines.append(f"✅ «Ishga keldi» ni tasdiqladi: {p['arrived_by_name']}{at}")
+    if p.get("decided_by_name") and p.get("status") in (
+            "passed", "no_show", "replaced", "active", "finished"):
+        at = f" · {p['decided_at']}" if p.get("decided_at") else ""
+        verb = {
+            "passed": "Doimiy qildi",
+            "no_show": "«Kelmadi» deb belgiladi",
+            "replaced": "Boshidan qabul qildi",
+        }.get(p.get("status"), "Muddatni o'zgartirdi")
+        lines.append(f"🖊 {verb}: {p['decided_by_name']}{at}")
+    if p.get("status") == "awaiting":
+        lines.append(
+            "\nℹ️ Xodim hali <b>xodimlar ro'yxatida emas</b> — filial rahbari "
+            "«✅ Ishga keldi» ni bosgach qo'shiladi. Rahbar javob bermasa, quyidagi "
+            "tugma bilan o'zingiz tasdiqlashingiz mumkin."
+        )
+    elif p.get("status") in ("active", "finished") and not p.get("has_profile", 1):
+        lines.append("\n⚠️ Xodim profili topilmadi (ishdan bo'shatilgan bo'lishi mumkin).")
     return "\n".join(lines)
 
 

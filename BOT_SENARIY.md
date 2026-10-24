@@ -133,9 +133,20 @@ Bekor qilish** (`sreg_cancel`).
 
 **HR/Admin tomoni** (🔘 «🧾 Xodim so'rovlari» yoki kartochkadan):
 - ⬜ **✅ Tasdiqlash** → xodimga rol beriladi, profil yaratiladi, «hired» hodisasi
-  yoziladi, xodimga «🎉 Tabriklaymiz!» xabari, maxfiy kanalga joylanadi.
+  yoziladi, xodimga «🎉 Tabriklaymiz!» xabari, maxfiy kanalga joylanadi. Status,
+  rol, profil va hodisa **bitta tranzaksiyada** yoziladi — xato bo'lsa hech narsa
+  o'zgarmaydi (so'rov «tasdiqlangan» bo'lib, xodim ro'yxatga tushmay qolmaydi).
 - ⬜ **❌ Rad etish** → HR sabab yozadi, so'rov rad etiladi, xodimga sabab bilan
   xabar boradi.
+- **Allaqachon ko'rib chiqilgan so'rov** ochilsa yoki eski xabardagi tugma
+  bosilsa — alertda **kim** va qachon ko'rib chiqqani, kartochkada esa xodim hozir
+  ro'yxatdami (✅ bor / ⚠️ yo'q / 🚫 bo'shatilgan) va ⬜ **🔄 Boshidan tasdiqlash**.
+- ⬜ **🔄 Boshidan tasdiqlash** (`sragain:` → tasdiq `sragok:`) — holatga qarab
+  tushuntiriladi: ro'yxatda yo'q → qo'shiladi; bo'shatilgan → ishga qayta olinadi
+  (arxivdan chiqadi); rad etilgan → tasdiqlanadi; ro'yxatda bor → profil so'rovdagi
+  ma'lumot bilan yangilanadi (rol o'zgarsa ogohlantiriladi).
+- «🧾 Xodim so'rovlari» da yangi so'rovlardan tashqari **⚠️ Tasdiqlangan, lekin
+  ro'yxatda yo'q** bo'limi va ⬜ **🗂 Ko'rib chiqilganlar** tarixi bor.
 
 ---
 
@@ -403,8 +414,22 @@ Arizalar oqimi, status, forma, filial va vakansiya kesimlari — bitta hisobot m
 - 🔘 **🛌 Dam olish so'rovlari** — yangi + tasdiqlangan; tasdiqlangan so'rovni
   ⬜ **✏️ Tahrirlash** (dam kunini o'zgartirish).
 - 🔘 **🛌 Kunlik dam olish** — bugungi Excel hisobot.
-- 🔘 **🧪 Sinov muddati** — faol/tugagan sinov-o'rganuvchilar (⬜ `probview:` →
-  statistika matn).
+- 🔘 **🧪 Sinov muddati** — 4 bo'lim (soni bilan): ⚠️ **Yaqinda tugaydi** (≤3 kun),
+  🟢 **Hozir sinovda**, ⏳ **Ishga kelishi kutilmoqda** (rahbar «✅ Ishga keldi» ni
+  bosmagan), 🏁 **Muddati tugagan — qaror kutilmoqda** (eng oxirgi tugagani tepada).
+  Bo'shatilgan xodimlarning eski yozuvlari chiqmaydi; ⬜ **🗂 Yakunlanganlar arxivi**.
+  Kartochka (`probview:`) — kim qabul qilgani, kim «ishga keldi» ni tasdiqlagani va
+  amallar: kutilayotganda ⬜ **✅ Ishga keldi (HR tasdiqlaydi)** / ⬜ **❌ Kelmadi** /
+  ⬜ **🔔 Rahbarga qayta yuborish**; faol/tugaganda ⬜ **✅ Doimiy xodim qilish** /
+  ⬜ **🔁 Muddatni uzaytirish** (N kun) / ⬜ **🚫 Ishdan bo'shatish**. «3 kun qoldi»
+  va «tugadi» eslatmalari ham shu tugmalar bilan keladi.
+
+**Ariza qabul qilingan bo'lsa** (`appview:`) — 3 ta qabul tugmasi o'rniga ⬜ **🔄
+Boshidan qabul qilish** (`appagain:` → maqom tanlash → filial/sana/smena) va kim
+qabul qilgani + xodim hozir ro'yxatdami ko'rsatiladi. Eski kartochkadagi qabul
+tugmasi bosilsa — oqim boshlanmaydi, darhol shu holat chiqadi. Rahbarga «Ishga
+keldi?» xabari yetib bormasa, HR ga o'sha tugmalar beriladi. «📥 Arizalar» da
+**⚠️ Qabul qilingan, lekin ro'yxatda yo'q** arizalar alohida chiqadi.
 
 ### 11.5. 🔘 💵 Avans / maosh (submenu)
 - 🔘 **💵 Avans**, 🔘 **💵 Avans sozlamalari**, 🔘 **🔄 Avans so'rovini boshidan

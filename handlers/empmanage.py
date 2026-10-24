@@ -326,6 +326,22 @@ async def emp_manage_field_ask(call: CallbackQuery, state: FSMContext):
         )
         await call.answer()
         return
+    # Dam olish kuni / ish vaqti / staj / lavozim — tugmalardan tanlanadi
+    if field in kb.EMP_EDIT_CHOICES or field == "position":
+        await state.clear()
+        profile = await q.get_employee_profile(uid) or {}
+        current = profile.get(field)
+        if field == "position":
+            markup = kb.emp_manage_position_kb(uid, await q.list_positions(), current)
+        else:
+            markup = kb.emp_manage_choice_kb(uid, field, current)
+        await call.message.answer(
+            f"{kb.EMP_EDIT_CHOICE_TITLES[field]}\n"
+            f"Hozirgi qiymat: <b>{current or '—'}</b>",
+            reply_markup=markup,
+        )
+        await call.answer()
+        return
     if field == "passport":
         await state.set_state(EmpEditForm.value)
         await state.update_data(edit_uid=uid, edit_field=field, passport_files=[])
@@ -365,6 +381,76 @@ async def emp_manage_set_education(call: CallbackQuery, state: FSMContext):
     await _log_edit(call, uid, "🎓 Ma'lumoti")
     await call.answer("Saqlandi ✅")
     await _show_card(call.message, uid, prefix=f"✅ Ma'lumoti yangilandi: <b>{value}</b>")
+
+
+async def _save_choice(call: CallbackQuery, bot: Bot, uid, field, value):
+    """Tugma orqali tanlangan qiymatni saqlaydi va kartochkani qayta ko'rsatadi."""
+    profile = await q.get_employee_profile(uid)
+    if not profile:
+        await call.answer("Xodim topilmadi.", show_alert=True)
+        return
+    old = profile.get(field)
+    await q.update_employee_field(uid, field, value)
+    label = dict((k, l) for k, l, _p in kb.EMP_EDIT_FIELDS).get(field, field)
+    await _log_edit(call, uid, label)
+    await call.answer("Saqlandi ✅")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _show_card(call.message, uid, prefix=f"✅ {label} yangilandi: <b>{value}</b>")
+    # Dam kuni / ish vaqti o'zgarsa — xodimning o'ziga xabar
+    if field in ("rest_day", "work_hours") and old != value and profile.get("tg_id"):
+        await safe_send(
+            bot, profile["tg_id"],
+            f"ℹ️ <b>{label} o'zgartirildi</b>\n\n"
+            f"Oldin: {old or '—'}\nEndi: <b>{value}</b>",
+        )
+
+
+@router.callback_query(F.data.startswith("emmopt:"))
+async def emp_manage_set_choice(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    _, uid_s, field, idx_s = call.data.split(":")
+    options = kb.EMP_EDIT_CHOICES.get(field) or []
+    idx = int(idx_s)
+    if not (0 <= idx < len(options)):
+        await call.answer("Noma'lum tanlov.", show_alert=True)
+        return
+    await _save_choice(call, bot, int(uid_s), field, options[idx])
+
+
+@router.callback_query(F.data.startswith("emmpos:"))
+async def emp_manage_set_position(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    await state.clear()
+    _, uid_s, pid_s = call.data.split(":")
+    pos = next((p for p in await q.list_positions() if p["id"] == int(pid_s)), None)
+    if not pos:
+        await call.answer("Bu lavozim ro'yxatdan o'chirilgan.", show_alert=True)
+        return
+    await _save_choice(call, bot, int(uid_s), "position", pos["name"])
+
+
+@router.callback_query(F.data.startswith("emmtype:"))
+async def emp_manage_type_value(call: CallbackQuery, state: FSMContext):
+    """Ro'yxatda yo'q qiymatni qo'lda yozish."""
+    if not await _is_staff(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    _, uid_s, field = call.data.split(":")
+    if field not in kb.EMP_EDIT_ALLOW_TYPING:
+        await call.answer("Bu maydon faqat tugmadan tanlanadi.", show_alert=True)
+        return
+    await state.set_state(EmpEditForm.value)
+    await state.update_data(edit_uid=int(uid_s), edit_field=field)
+    await call.message.answer(kb.EMP_EDIT_PROMPTS.get(field) or "Yangi qiymatni yozing:")
+    await call.answer()
 
 
 @router.message(EmpEditForm.value, F.photo | F.document)

@@ -310,6 +310,11 @@ class ProbationForm(StatesGroup):
     days = State()         # o'rganuvchi uchun — necha kun
 
 
+class ProbationExtendForm(StatesGroup):
+    """HR sinov/o'rganish muddatini uzaytiradi — necha kunga."""
+    days = State()
+
+
 class SalaryNegoForm(StatesGroup):
     """Oylik kelishuvi: HR taklif beradi, nomzod boshqa summa taklif qiladi."""
     hr_amount = State()         # HR taklif/qarshi taklif summasini yozadi
@@ -383,3 +388,14 @@ class DayoffNudgeForm(StatesGroup):
     """HR kunlik dam olishni tasdiqlamagan filial rahbariga xabar yozadi."""
     text = State()      # xabar matni
     confirm = State()   # ko'rib chiqib yuborish / bekor qilish
+
+
+class FineDecisionForm(StatesGroup):
+    """Moliya jarimani bekor qiladi — bekor qilish sababini yozadi."""
+    cancel_reason = State()
+
+
+class ManagerFineForm(StatesGroup):
+    """Filial rahbari o'z filiali xodimiga jarima qo'llaydi."""
+    amount = State()
+    reason = State()

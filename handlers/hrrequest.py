@@ -20,7 +20,7 @@ from database.db import ROLE_HR, ROLE_ADMIN, ROLE_CANDIDATE
 from states import WorkHoursForm, HRMessageForm
 import keyboards as kb
 from i18n import variants
-from utils import safe_send, broadcast_request, close_request_notices
+from utils import safe_send, broadcast_request, close_request_notices, handled_alert_text
 from handlers.salaryraise import start_raise_flow
 
 router = Router()
@@ -350,7 +350,10 @@ async def hr_work_hours_approve(call: CallbackQuery, bot: Bot):
     rid = int(call.data.split(":")[1])
     req = await q.get_work_hour_request(rid)
     if not req or req.get("status") != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("work_hour_requests", rid)),
+            show_alert=True,
+        )
         return
     me = await q.get_user(call.from_user.id)
     # ATOMIK — bir marta tasdiqlanadi
@@ -360,8 +363,10 @@ async def hr_work_hours_approve(call: CallbackQuery, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("work_hour_requests", rid)),
+            show_alert=True,
+        )
         return
     await close_request_notices(bot, "work_hours", rid, keep_chat_id=call.from_user.id)
     new_hours = merge_shift_prefix(req.get("current_hours"), req.get("requested_hours"))
@@ -397,7 +402,10 @@ async def hr_work_hours_reject_start(call: CallbackQuery, state: FSMContext):
     rid = int(call.data.split(":")[1])
     req = await q.get_work_hour_request(rid)
     if not req or req.get("status") != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("work_hour_requests", rid)),
+            show_alert=True,
+        )
         return
     await state.set_state(WorkHoursForm.reject_reason)
     await state.update_data(wh_rid=rid)
@@ -428,7 +436,9 @@ async def hr_work_hours_reject_reason(message: Message, state: FSMContext, bot: 
     me = await q.get_user(message.from_user.id)
     if not await q.claim_request("work_hour_requests", rid, "rejected",
                                  me["id"] if me else None, "pending"):
-        await message.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.")
+        await message.answer(
+            "⚠️ " + handled_alert_text(await q.request_handler_info("work_hour_requests", rid))
+        )
         return
     await close_request_notices(bot, "work_hours", rid, keep_chat_id=message.from_user.id)
     await q.close_work_hour_request(rid, "rejected", reason=reason,

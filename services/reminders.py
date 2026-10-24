@@ -110,6 +110,12 @@ async def _check_probations(bot: Bot):
         return
     hr_ids = await _hr_admin_ids()
     for p in probations:
+        # Xodim ro'yxatda yo'q (ishdan bo'shatilgan / o'chirilgan) — eski yozuv.
+        # Aks holda HR ga keraksiz «muddat tugadi» xabari borardi va yozuv
+        # «🧪 Sinov muddati» panelida osilib qolardi.
+        if not p.get("has_profile"):
+            await q.set_probation_status_if(p["id"], "dismissed", "active")
+            continue
         left = days_left_until(p.get("end_date"))
         if left is None:
             continue
@@ -124,20 +130,26 @@ async def _check_probations(bot: Bot):
                 f"🏢 Filial: {p.get('branch_name') or '-'}\n"
                 f"🏁 Tugash sanasi: <b>{iso_to_display(p.get('end_date'))}</b>\n"
                 f"📆 Qolgan: <b>{left} kun</b>\n\n"
-                "Sinov muddati tugashidan oldin xodim bo'yicha qaror qabul qiling."
+                "Muddat tugashidan oldin xodim bo'yicha qaror qabul qiling: doimiy "
+                "qilish, uzaytirish yoki bo'shatish («🧪 Sinov muddati» bo'limida ham bor)."
             )
+            markup = kb.probation_actions_kb(p)
             for tid in hr_ids:
-                await safe_send(bot, tid, text)
+                await safe_send(bot, tid, text, reply_markup=markup)
             await q.mark_probation_flag(p["id"], "hr_3day_sent")
 
-        # Sinov muddati tugadi — HR ga statistika bilan xabar
-        elif left <= 0 and not p.get("hr_end_sent"):
-            header = f"🏁 <b>{noun} tugadi</b>\n\n"
-            body = probation_text({**p, "status": "finished"})
-            for tid in hr_ids:
-                await safe_send(bot, tid, header + body)
-            await q.mark_probation_flag(p["id"], "hr_end_sent")
-            await q.set_probation_status(p["id"], "finished")
+        # Sinov muddati tugadi — HR ga xabar (qaror tugmalari bilan). Holat
+        # «finished» ga o'tadi va panelda «🏁 Muddati tugagan» bo'limida chiqadi.
+        elif left <= 0:
+            if not p.get("hr_end_sent"):
+                header = f"🏁 <b>{noun} tugadi</b>\n\n"
+                ended = {**p, "status": "finished"}
+                body = probation_text(ended)
+                markup = kb.probation_actions_kb(ended)
+                for tid in hr_ids:
+                    await safe_send(bot, tid, header + body, reply_markup=markup)
+                await q.mark_probation_flag(p["id"], "hr_end_sent")
+            await q.set_probation_status_if(p["id"], "finished", "active")
 
 
 async def probation_reminder_loop(bot: Bot, interval_seconds=3600):

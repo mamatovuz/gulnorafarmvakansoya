@@ -80,7 +80,7 @@ async def set_external_id(db, entity_type, entity_id, source, external_id):
 
 # ---------------- EMPLOYEE ----------------
 EMPLOYEE_SELECT = """
-SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone, u.lang,
+SELECT ep.*, u.tg_id, u.full_name, u.username, u.phone, u.lang, u.tg_name,
        COALESCE(u.blocked, 0) AS blocked, u.role AS user_role,
        b.name AS branch_name,
        m.department_id, d.name AS department_name,
@@ -113,19 +113,175 @@ async def _names(ids):
     return {r["id"]: r for r in rows}
 
 
+_MULTIPLIERS = (("mlrd", 1_000_000_000), ("milliard", 1_000_000_000),
+                ("million", 1_000_000), ("mln", 1_000_000), ("млн", 1_000_000),
+                ("ming", 1_000), ("тыс", 1_000), ("k", 1_000))
+
+
+def parse_amount(value):
+    """Bot oylikni erkin matn sifatida saqlaydi -> so'm (int):
+    «4 000 000 so'm» -> 4000000, «4 mln» -> 4000000, «4,5 mln» -> 4500000,
+    «800 ming» -> 800000, 3000000 -> 3000000."""
+    import re
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    for word, mult in _MULTIPLIERS:
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*" + re.escape(word) + r"(?![a-zа-я])", text)
+        if m:
+            return int(round(float(m.group(1).replace(",", ".")) * mult))
+    digits = re.sub(r"[.,]\d{1,2}(?!\d)", "", text)  # tiyin
+    digits = "".join(c for c in digits if c.isdigit())
+    return int(digits) if digits else None
+
+
+def split_name(full_name):
+    """«Familiya Ism Otasining ismi» -> {last_name, first_name, middle_name}."""
+    parts = (full_name or "").split()
+    return {
+        "last_name": parts[0] if len(parts) > 1 else None,
+        "first_name": parts[1] if len(parts) > 1 else (parts[0] if parts else None),
+        "middle_name": " ".join(parts[2:]) or None,
+    }
+
+
+def _in(ids):
+    ids = [int(i) for i in set(ids) if i is not None]
+    return ids, ",".join("?" * len(ids))
+
+
+async def _applications(rows):
+    """Xodim anketasi (ishga kirishda to'ldirgan ariza): user_id -> application row."""
+    app_ids, marks = _in([r.get("application_id") for r in rows])
+    uids, umarks = _in([r["user_id"] for r in rows])
+    out = {}
+    if uids:  # application_id bo'lmasa — xodimning oxirgi qabul qilingan arizasi
+        for a in await fetch_all(
+                f"SELECT * FROM applications WHERE user_id IN ({umarks}) "
+                f"ORDER BY (status='accepted') ASC, id ASC", tuple(uids)):
+            out[a["user_id"]] = a
+    if app_ids:
+        for a in await fetch_all(f"SELECT * FROM applications WHERE id IN ({marks})",
+                                 tuple(app_ids)):
+            out[a["user_id"]] = a
+    return out
+
+
+async def _probations(uids):
+    uids, marks = _in(uids)
+    if not uids:
+        return {}
+    out = {}
+    for p in await fetch_all(f"SELECT * FROM probations WHERE user_id IN ({marks}) ORDER BY id",
+                             tuple(uids)):
+        out[p["user_id"]] = p  # oxirgisi qoladi
+    return out
+
+
+def current_period():
+    from api.core import now_tk
+    return now_tk().strftime("%Y-%m")
+
+
+async def finance_summary(uids, period=None):
+    """Oylik hisob-kitobi — botdagi «🧮 Yakuniy oylik» formulasi bilan bir xil:
+    yakuniy = oylik - jarimalar - tasdiqlangan avans - dorilar - KPI kesimlar."""
+    period = period or current_period()
+    uids, marks = _in(uids)
+    if not uids:
+        return {}
+    res = {u: {"period": period, "fines": 0, "fines_count": 0, "advance": 0,
+               "medicines": 0, "medicines_count": 0, "kpi_deductions": 0,
+               "kpi_deductions_count": 0, "paid": 0, "last_payment": None} for u in uids}
+    for f in await fetch_all(
+            f"SELECT employee_user_id AS u, amount FROM fines WHERE employee_user_id IN ({marks}) "
+            f"AND substr(created_at,1,7)=? AND cancelled=0", (*uids, period)):
+        res[f["u"]]["fines"] += parse_amount(f["amount"]) or 0
+        res[f["u"]]["fines_count"] += 1
+    for a in await fetch_all(
+            f"SELECT user_id AS u, COALESCE(SUM(amount),0) s FROM advance_requests "
+            f"WHERE user_id IN ({marks}) AND period=? AND status='confirmed' GROUP BY user_id",
+            (*uids, period)):
+        res[a["u"]]["advance"] = int(a["s"] or 0)
+    for m in await fetch_all(
+            f"SELECT employee_user_id AS u, COALESCE(SUM(amount),0) s, COUNT(*) c FROM staff_medicines "
+            f"WHERE employee_user_id IN ({marks}) AND period=? GROUP BY employee_user_id",
+            (*uids, period)):
+        res[m["u"]].update(medicines=int(m["s"] or 0), medicines_count=m["c"])
+    for d in await fetch_all(
+            f"SELECT employee_user_id AS u, COALESCE(SUM(amount),0) s, COUNT(*) c FROM salary_deductions "
+            f"WHERE employee_user_id IN ({marks}) AND period=? GROUP BY employee_user_id",
+            (*uids, period)):
+        res[d["u"]].update(kpi_deductions=int(d["s"] or 0), kpi_deductions_count=d["c"])
+    for pmt in await fetch_all(
+            f"SELECT employee_user_id AS u, period, amount, status, created_at FROM salary_payments "
+            f"WHERE employee_user_id IN ({marks}) ORDER BY id", tuple(uids)):
+        if pmt["period"] == period and pmt["status"] == "paid":
+            res[pmt["u"]]["paid"] += parse_amount(pmt["amount"]) or 0
+        res[pmt["u"]]["last_payment"] = {
+            "period": pmt["period"], "amount": parse_amount(pmt["amount"]),
+            "status": pmt["status"], "created_at": iso(pmt["created_at"])}
+    return res
+
+
+def _salary_block(r, fin=None, fallback=None):
+    """fallback: profil oyligi bo'sh bo'lsa — kelishilgan oylik (sinov / ariza / qabul)."""
+    raw, source = r.get("monthly_salary"), "profile"
+    amount = parse_amount(raw)
+    if not amount and fallback:
+        raw, source = fallback
+        amount = parse_amount(raw)
+    out = {
+        "monthly_salary": raw if amount else (r.get("monthly_salary") or None),  # botdagi asl matn
+        "amount": amount,                             # raqam (so'm)
+        "currency": "UZS",
+        "is_set": bool(amount),
+        "source": source if amount else None,         # profile / probation / application / registration
+    }
+    if fin is not None:
+        deductions = fin["fines"] + fin["advance"] + fin["medicines"] + fin["kpi_deductions"]
+        out["current_month"] = {
+            **fin,
+            "base": amount or 0,
+            "total_deductions": deductions,
+            "final_amount": max(0, (amount or 0) - deductions),
+        }
+    return out
+
+
 async def serialize_employees(rows, include_salary=False, include_sensitive=False):
-    ext = await external_ids_map("employee", [r["user_id"] for r in rows])
+    uids = [r["user_id"] for r in rows]
+    ext = await external_ids_map("employee", uids)
     managers = await _names([r.get("manager_id") for r in rows])
+    apps = await _applications(rows)
+    probs = await _probations(uids)
+    fin = await finance_summary(uids) if include_salary else {}
+    regs = {}
+    if include_salary and uids:
+        ids, marks = _in(uids)
+        for s in await fetch_all(  # xodim o'zi ro'yxatdan o'tgandagi (HR tasdiqlagan) oylik
+                f"SELECT user_id, salary FROM staff_regs WHERE user_id IN ({marks}) "
+                f"AND status='approved' AND COALESCE(salary,'')<>'' ORDER BY id", tuple(ids)):
+            regs[s["user_id"]] = s["salary"]
     out = []
     for r in rows:
         uid = r["user_id"]
         mgr = managers.get(r.get("manager_id"))
+        app = apps.get(uid) or {}
+        prob = probs.get(uid)
         item = {
             "id": uid,
             "telegram_id": r.get("tg_id"),
             "telegram_username": r.get("username"),
+            "telegram_name": r.get("tg_name"),
             "external_ids": ext.get(uid, {}),
             "full_name": r.get("full_name"),
+            **split_name(r.get("full_name")),
+            "gender": app.get("gender"),
             "phone": r.get("phone"),
             "birth_date": r.get("birth_date"),
             "address": r.get("address"),
@@ -162,13 +318,54 @@ async def serialize_employees(rows, include_salary=False, include_sensitive=Fals
                 "passport_back": bool(r.get("passport_back")),
                 "diploma": bool(r.get("diploma_file")),
             },
+            "questionnaire": {  # ishga kirish anketasi (bot arizasi)
+                "application_id": app.get("id"),
+                "city": app.get("city"),
+                "district": app.get("district"),
+                "marital_status": app.get("marital"),
+                "children": app.get("children"),
+                "languages": app.get("languages"),
+                "computer_level": app.get("computer_level"),
+                "experience_years": app.get("exp_years"),
+                "previous_job_years": app.get("prev_years"),
+                "desired_position": app.get("position"),
+                "position_extra": app.get("position_extra"),
+                "accepted_as": app.get("accept_kind"),
+                "applied_at": iso(app.get("created_at")),
+            } if app else None,
+            "probation": {
+                "kind": prob.get("kind"),
+                "status": prob.get("status"),
+                "start_date": prob.get("start_date"),
+                "end_date": prob.get("end_date"),
+                "days": prob.get("days"),
+            } if prob else None,
             "profile_update_required": bool(r.get("update_required")),
+            "updated_by_self_at": iso(r.get("updated_by_self_at")),
             "created_at": iso(r.get("created_at")),
             "updated_at": iso(r.get("updated_at")),
         }
         if include_salary:
-            item["salary"] = {"monthly_salary": r.get("monthly_salary"), "currency": "UZS"}
+            fallback = None
+            if prob and prob.get("agreed_salary"):
+                fallback = (prob["agreed_salary"], "probation")
+            elif app.get("offered_salary") and app.get("salary_status") == "agreed":
+                fallback = (app["offered_salary"], "application")
+            elif regs.get(uid):
+                fallback = (regs[uid], "registration")
+            item["salary"] = _salary_block(r, fin.get(uid), fallback)
+            item["monthly_salary"] = item["salary"]["amount"]
+            if app:
+                item["questionnaire"]["previous_salary"] = app.get("prev_salary")
+                item["questionnaire"]["expected_salary"] = app.get("expected_salary")
+                item["questionnaire"]["agreed_salary"] = app.get("offered_salary")
         if include_sensitive:
+            for kind, col in (("passport_front", "passport_front"),
+                              ("passport_back", "passport_back"), ("diploma", "diploma_file")):
+                item["documents"][f"{kind}_url"] = (
+                    f"/api/v1/employees/{uid}/documents/{kind}" if r.get(col) else None)
+            if app:
+                item["questionnaire"]["criminal_record"] = app.get("criminal")
             item["documents"]["telegram_file_ids"] = {
                 "photo": r.get("photo_file_id"),
                 "passport_front": r.get("passport_front"),

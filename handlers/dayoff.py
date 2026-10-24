@@ -13,7 +13,7 @@ from database.db import ROLE_HR, ROLE_ADMIN, ROLE_MANAGER, request_status_label
 from states import DayoffForm
 import keyboards as kb
 from i18n import tf
-from utils import safe_send, broadcast_request, close_request_notices
+from utils import safe_send, broadcast_request, close_request_notices, handled_alert_text
 from handlers.dayoff_plan import canonical_weekday
 
 router = Router()
@@ -318,8 +318,10 @@ async def dayoff_approve(call: CallbackQuery, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("dayoff_requests", rid)),
+            show_alert=True,
+        )
         return
     await close_request_notices(bot, "dayoff", rid, keep_chat_id=call.from_user.id)
     # Yangi dam olish kunini profilga yozamiz
@@ -359,8 +361,10 @@ async def dayoff_reject(call: CallbackQuery, bot: Bot):
             await call.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await call.answer("Bu so'rov allaqachon boshqa xodim tomonidan ko'rib chiqilgan.",
-                          show_alert=True)
+        await call.answer(
+            handled_alert_text(await q.request_handler_info("dayoff_requests", rid)),
+            show_alert=True,
+        )
         return
     await close_request_notices(bot, "dayoff", rid, keep_chat_id=call.from_user.id)
     await q.add_log(call.from_user.id, user["full_name"], "dam_olish_rad", f"#{rid}")

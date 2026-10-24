@@ -3,7 +3,7 @@ from aiogram import Dispatcher
 from handlers import (
     common, candidate, hr, admin, staff, staffreg, attendance, accountant,
     dayoff, positions, advance, it, salaryraise, dayoff_plan, hrrequest,
-    branchtransfer, empmanage, tech, reports,
+    branchtransfer, empmanage, tech, reports, fines,
 )
 
 
@@ -11,6 +11,8 @@ def register_all(dp: Dispatcher):
     dp.include_router(common.router)
     # Excel hisobotlar (aniq tugma matnlari + o'z FSM holati) — oldinroq
     dp.include_router(reports.router)
+    # Jarimalar nazorati (ijro/bekor) — o'z FSM holati va tugmalari bilan
+    dp.include_router(fines.router)
     dp.include_router(candidate.router)
     dp.include_router(hr.router)
     dp.include_router(admin.router)
