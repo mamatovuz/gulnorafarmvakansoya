@@ -7,6 +7,9 @@ Jarima holatlari (`fines.status`):
   executed  — moliya «ijro etildi» deb tasdiqladi (oylikdan ayiriladi)
   cancelled — moliya sabab bilan bekor qildi (oylikdan ayirilmaydi)
 """
+from datetime import timedelta
+from html import escape
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -19,6 +22,8 @@ from states import FineDecisionForm, ManagerFineForm
 import keyboards as kb
 from utils import (
     fine_text, fine_status, safe_send, now_tk, fmt_money, FINE_SOURCE_LABELS,
+    decade_start, decade_end, decade_prev, decade_next, decade_tag,
+    decade_from_tag, decade_label,
 )
 
 router = Router()
@@ -100,32 +105,41 @@ async def fine_execute(call: CallbackQuery, bot: Bot):
         await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
         return
     fid = int(call.data.split(":")[1])
-    fine = await q.get_fine(fid)
-    if not fine:
-        await call.answer("Jarima topilmadi.", show_alert=True)
+    ok, result = await _execute_one(bot, fid, me, call.from_user.id)
+    if not ok:
+        await call.answer(result, show_alert=True)
         return
-    if not await q.execute_fine(fid, me["id"]):
-        st = fine_status(fine)
-        msg = ("Bu jarima allaqachon bekor qilingan." if st == "cancelled"
-               else "Bu jarima allaqachon ijro etilgan.")
-        await call.answer(msg, show_alert=True)
-        return
-    await q.add_log(call.from_user.id, me["full_name"], "jarima_ijro",
-                    f"fine#{fid} user#{fine.get('employee_user_id')} {fine.get('amount')}")
-    fine = await q.get_fine(fid)
     try:
         await call.message.edit_reply_markup(reply_markup=kb.fine_decision_kb(fid, "executed"))
     except Exception:
         pass
     await call.message.answer(
-        "✅ <b>Jarima ijro etildi</b>\n\n" + fine_text(fine),
+        "✅ <b>Jarima ijro etildi</b>\n\n" + fine_text(result),
         reply_markup=kb.fine_decision_kb(fid, "executed"),
     )
     await call.answer("Ijro etildi ✅")
+
+
+async def _execute_one(bot: Bot, fid, me, actor_tg, employee_user_id=None):
+    """Jarimani «ijro etildi / amalga oshirildi» qiladi (atomik).
+
+    (True, yangilangan jarima) yoki (False, xato matni) qaytaradi. Jarima yozgan
+    shaxsga xabar boradi."""
+    fine = await q.get_fine(fid)
+    if not fine or (employee_user_id and fine.get("employee_user_id") != employee_user_id):
+        return False, "Jarima topilmadi."
+    if not await q.execute_fine(fid, me["id"]):
+        st = fine_status(fine)
+        return False, ("Bu jarima allaqachon bekor qilingan." if st == "cancelled"
+                       else "Bu jarima allaqachon amalga oshirilgan.")
+    await q.add_log(actor_tg, me["full_name"], "jarima_ijro",
+                    f"fine#{fid} user#{fine.get('employee_user_id')} {fine.get('amount')}")
+    fine = await q.get_fine(fid)
     await _notify_decision(
-        bot, fine, call.from_user.id,
+        bot, fine, actor_tg,
         "✅ <b>Siz yozgan jarima moliya tomonidan ijro etildi</b>\n\n" + fine_text(fine),
     )
+    return True, fine
 
 
 # ================= 🚫 BEKOR QILISH (sabab bilan) =================
@@ -135,9 +149,15 @@ async def fine_cancel_ask(call: CallbackQuery, state: FSMContext):
     if not await _is_finance(call.from_user.id):
         await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
         return
-    fid = int(call.data.split(":")[1])
+    await _ask_cancel(call, state, int(call.data.split(":")[1]))
+
+
+async def _ask_cancel(call: CallbackQuery, state: FSMContext, fid, back=None,
+                      employee_user_id=None):
+    """Bekor qilish sababini so'raydi. back — 10 kunlik kartochka konteksti
+    («davr:uid:sahifa»): sabab yozilgach kartochka o'sha xabarda yangilanadi."""
     fine = await q.get_fine(fid)
-    if not fine:
+    if not fine or (employee_user_id and fine.get("employee_user_id") != employee_user_id):
         await call.answer("Jarima topilmadi.", show_alert=True)
         return
     if fine_status(fine) == "cancelled":
@@ -148,6 +168,7 @@ async def fine_cancel_ask(call: CallbackQuery, state: FSMContext):
         fcancel_fid=fid,
         fcancel_chat=call.message.chat.id,
         fcancel_msg=call.message.message_id,
+        fcancel_back=back,
     )
     await call.message.answer(
         f"🚫 <b>Jarima #{fid}ni bekor qilish</b>\n"
@@ -195,8 +216,21 @@ async def fine_cancel_reason(message: Message, state: FSMContext, bot: Bot):
     await q.add_log(message.from_user.id, me["full_name"], "jarima_bekor",
                     f"fine#{fid} user#{fine.get('employee_user_id')} "
                     f"{fine.get('amount')} — {reason}")
-    # Asl xabardagi tugmalarni olib tashlaymiz
-    if data.get("fcancel_chat") and data.get("fcancel_msg"):
+    back = data.get("fcancel_back")
+    if back and data.get("fcancel_chat") and data.get("fcancel_msg"):
+        # 10 kunlik ro'yxatdagi xodim kartochkasini o'sha xabarda yangilaymiz
+        try:
+            tag, uid, page = back.split(":")
+            view = await _card_view(decade_from_tag(tag), int(uid), int(page))
+            if view:
+                await bot.edit_message_text(
+                    view[0], chat_id=data["fcancel_chat"],
+                    message_id=data["fcancel_msg"], reply_markup=view[1],
+                )
+        except Exception:
+            pass
+    elif data.get("fcancel_chat") and data.get("fcancel_msg"):
+        # Asl xabardagi tugmalarni olib tashlaymiz
         try:
             await bot.edit_message_reply_markup(
                 chat_id=data["fcancel_chat"], message_id=data["fcancel_msg"],
@@ -482,3 +516,344 @@ async def manager_fine_save(message: Message, state: FSMContext, bot: Bot):
     for tid in set(await q.all_user_tg_ids(role=ROLE_HR)):
         await safe_send(bot, tid, "ℹ️ <b>Filial rahbari jarima yozdi</b>\n\n" + fine_text(fine))
 
+
+
+# ================= 🗓 10 KUNLIK JARIMALAR (moliya) =================
+# Har 10 kunda (1–10, 11–20, 21–oy oxiri) moliyaga avtomatik ro'yxat keladi
+# (services/reminders.py::finance_loop). Xodim tugmasi bosilsa — ma'lumotlari,
+# jarima summasi va «✅ Amalga oshirildi» / «🚫 Bekor qilish» / «⬅️ Orqaga».
+DIGEST_PAGE_SIZE = 20
+_STATE_ORDER = {"pending": 0, "executed": 1, "cancelled": 2}
+
+
+def _decade_range(start):
+    """10 kunlik uchun [since, until) — 'YYYY-MM-DD'."""
+    return start.isoformat(), (decade_end(start) + timedelta(days=1)).isoformat()
+
+
+def digest_people(fines):
+    """Jarimalarni xodim bo'yicha guruhlaydi: kutilayotganlar birinchi."""
+    people = {}
+    for f in fines:
+        uid = f.get("employee_user_id")
+        p = people.setdefault(uid, {
+            "uid": uid, "name": f.get("employee_name") or "-",
+            "branch": f.get("branch_name"), "fines": [],
+        })
+        p["fines"].append(f)
+    for p in people.values():
+        sts = [fine_status(f) for f in p["fines"]]
+        p["state"] = ("pending" if "pending" in sts
+                      else "executed" if "executed" in sts else "cancelled")
+        p["active_sum"] = sum(q._digits_to_int(f.get("amount"))
+                              for f, st in zip(p["fines"], sts) if st != "cancelled")
+    return sorted(people.values(), key=lambda p: (
+        _STATE_ORDER[p["state"]], (p["branch"] or "").lower(), p["name"].lower()))
+
+
+def _status_totals(fines):
+    out = {k: [0, 0] for k in _STATE_ORDER}
+    for f in fines:
+        t = out[fine_status(f)]
+        t[0] += 1
+        t[1] += q._digits_to_int(f.get("amount"))
+    return out
+
+
+def digest_text(start, fines, people, older=(0, 0), today=None):
+    today = today or now_tk().date()
+    in_progress = decade_start(today) == start
+    t = _status_totals(fines)
+    period = f"📅 Davr: <b>{decade_label(start)}</b>"
+    if in_progress:
+        period += " <i>(davom etmoqda)</i>"
+    lines = ["🗓 <b>10 kunlik jarimalar</b>", "━━━━━━━━━━━━", period, ""]
+    if not fines:
+        lines.append("✅ Bu 10 kunlikda hech bir xodimga jarima qo'llanilmagan.")
+    else:
+        if t["pending"][0]:
+            lines.append("❗️ <b>Ushbu xodimlarga jarima qo'llangan — ularni amalga "
+                         "oshiring.</b>")
+        else:
+            lines.append("✅ Bu davrdagi barcha jarimalar ko'rib chiqilgan.")
+        total = t["pending"][1] + t["executed"][1]
+        lines += [
+            "",
+            f"👥 Xodimlar: <b>{len(people)}</b> nafar · 💸 Jarimalar: <b>{len(fines)}</b> ta",
+            f"💰 Jami (bekor qilinganlarsiz): <b>{fmt_money(total)}</b>",
+            "",
+            f"⏳ Kutilmoqda: <b>{t['pending'][0]}</b> ta · {fmt_money(t['pending'][1])}",
+            f"✅ Amalga oshirilgan: <b>{t['executed'][0]}</b> ta · "
+            f"{fmt_money(t['executed'][1])}",
+            f"🚫 Bekor qilingan: <b>{t['cancelled'][0]}</b> ta · "
+            f"{fmt_money(t['cancelled'][1])}",
+            "",
+            "👇 Xodimni tanlang — ma'lumotlari va jarima summasi chiqadi.",
+            "<i>⏳ kutilmoqda · ✅ amalga oshirilgan · 🚫 bekor qilingan</i>",
+        ]
+    if older[0]:
+        lines += ["", f"⚠️ Oldingi davrlardan ijro kutilayotgan: <b>{older[0]}</b> ta · "
+                      f"{fmt_money(older[1])}"]
+    return "\n".join(lines)
+
+
+async def _older_pending(start):
+    rows = await q.list_fines_by_status("pending", limit=5000)
+    rows = [f for f in rows if (f.get("created_at") or "") < start.isoformat()]
+    return len(rows), _sum(rows)
+
+
+async def digest_view(start, page=0, today=None):
+    """10 kunlik ro'yxat matni va tugmalari."""
+    today = today or now_tk().date()
+    fines = await q.fines_between(*_decade_range(start))
+    people = digest_people(fines)
+    pages = max(1, -(-len(people) // DIGEST_PAGE_SIZE))
+    page = min(max(page, 0), pages - 1)
+    chunk = people[page * DIGEST_PAGE_SIZE:(page + 1) * DIGEST_PAGE_SIZE]
+    older = await _older_pending(start)
+    nxt = decade_next(start)
+    markup = kb.fine_digest_kb(
+        decade_tag(start), chunk, page, pages,
+        prev_tag=decade_tag(decade_prev(start)),
+        next_tag=decade_tag(nxt) if nxt <= today else None,
+        older_pending=older[0],
+    )
+    return digest_text(start, fines, people, older, today), markup
+
+
+def _h(value, limit=None):
+    """Foydalanuvchi yozgan matn — HTML uchun xavfsiz (va kerak bo'lsa qisqartirilgan)."""
+    s = str(value or "-").strip() or "-"
+    if limit and len(s) > limit:
+        s = s[:limit - 1].rstrip() + "…"
+    return escape(s, quote=False)
+
+
+def _fine_block(i, f):
+    who = _h(f.get("created_by_name"))
+    src = FINE_SOURCE_LABELS.get(f.get("source"))
+    if src:
+        who += f" ({src})"
+    st = fine_status(f)
+    mark = kb.FINE_DIGEST_MARKS[st]
+    lines = [
+        f"{i}) {mark} <b>{fmt_money(q._digits_to_int(f.get('amount')))}</b> · "
+        f"🕐 {(f.get('created_at') or '')[:16]}",
+        f"   ✍️ Sabab: {_h(f.get('reason'), 150)}",
+        f"   🧑‍💼 Yozgan: {who}",
+    ]
+    if st == "executed":
+        lines.append(f"   ✅ Amalga oshirildi: {_h(f.get('executed_by_name'))} · "
+                     f"{(f.get('executed_at') or '')[:16]}")
+    elif st == "cancelled":
+        lines.append(f"   🚫 Bekor qilindi: {_h(f.get('cancelled_by_name'))} · "
+                     f"{(f.get('cancelled_at') or '')[:16]}")
+        lines.append(f"   📝 Sabab: <i>{_h(f.get('cancel_reason'), 150)}</i>")
+    return "\n".join(lines)
+
+
+CARD_MAX_FINES = 10      # kartochkada ko'rsatiladigan jarimalar (tugmalari bilan)
+CARD_MAX_CHARS = 3800    # Telegram xabar chegarasi 4096 — zaxira bilan
+
+
+async def _card_view(start, uid, page=0):
+    """Xodim kartochkasi (shu 10 kunlikdagi jarimalari bilan) yoki None."""
+    if not start:
+        return None
+    fines = await q.fines_between(*_decade_range(start), employee_user_id=uid)
+    if not fines:
+        return None
+    prof = await q.get_employee_profile(uid) or {}
+    user = await q.get_user_by_id(uid) or {}
+    first = fines[0]
+    name = prof.get("full_name") or user.get("full_name") or first.get("employee_name")
+    t = _status_totals(fines)
+    head = [
+        f"👤 <b>{_h(name)}</b>",
+        "━━━━━━━━━━━━",
+        f"🏢 Filial: <b>{_h(prof.get('branch_name') or first.get('branch_name'))}</b>",
+        f"💼 Lavozim: {_h(prof.get('position') or first.get('position'))}",
+        f"📞 Telefon: {_h(prof.get('phone') or user.get('phone'))}",
+        f"🆔 ID: <code>{uid}</code>",
+        f"📅 Davr: {decade_label(start)}",
+        "",
+        f"💸 <b>Jarimalar — {len(fines)} ta</b>",
+        "",
+    ]
+    foot = [
+        "",
+        "━━━━━━━━━━━━",
+        f"💰 Jarima summasi: <b>{fmt_money(t['pending'][1] + t['executed'][1])}</b>",
+    ]
+    if t["pending"][0]:
+        foot.append(f"⏳ Kutilmoqda: {fmt_money(t['pending'][1])}")
+    if t["executed"][0]:
+        foot.append(f"✅ Amalga oshirilgan: {fmt_money(t['executed'][1])}")
+    if t["cancelled"][0]:
+        foot.append(f"🚫 Bekor qilingan: {fmt_money(t['cancelled'][1])} "
+                    "<i>(oylikdan ayirilmaydi)</i>")
+
+    blocks = [_fine_block(i, f) for i, f in enumerate(fines[:CARD_MAX_FINES], start=1)]
+
+    def assemble(n):
+        body = "\n\n".join(blocks[:n])
+        rest = len(fines) - n
+        if rest > 0:
+            body += (f"\n\n<i>… yana {rest} ta jarima — «⚖️ Jarimalar nazorati» "
+                     "bo'limida.</i>")
+        return "\n".join(head + [body] + foot)
+
+    shown = len(blocks)
+    text = assemble(shown)
+    while len(text) > CARD_MAX_CHARS and shown > 1:
+        shown -= 1
+        text = assemble(shown)
+    pending_total = sum(1 for f in fines if fine_status(f) == "pending")
+    return text, kb.fine_digest_card_kb(decade_tag(start), uid, page, fines[:shown],
+                                        pending_total=pending_total)
+
+
+async def _edit_or_send(call: CallbackQuery, text, markup):
+    try:
+        await call.message.edit_text(text, reply_markup=markup)
+    except Exception as e:
+        if "not modified" not in str(e):
+            await call.message.answer(text, reply_markup=markup)
+
+
+async def send_fine_digest(bot: Bot, start, tg_ids=None):
+    """10 kunlik ro'yxatni moliya xodimlariga yuboradi. Yuborilganlar soni."""
+    text, markup = await digest_view(start)
+    targets = tg_ids if tg_ids is not None else await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)
+    sent = 0
+    for tid in set(targets):
+        if await safe_send(bot, tid, text, reply_markup=markup):
+            sent += 1
+    return sent
+
+
+@router.message(F.text == kb.FINE_DIGEST_BTN)
+async def fine_digest_menu(message: Message, state: FSMContext):
+    if not await _is_finance(message.from_user.id):
+        await message.answer("⛔ Bu bo'lim faqat moliya bo'limi uchun.")
+        return
+    await state.clear()
+    text, markup = await digest_view(decade_start(now_tk().date()))
+    await message.answer(text, reply_markup=markup)
+
+
+def _parse_tag(tag):
+    if tag == "cur":
+        return decade_start(now_tk().date())
+    return decade_from_tag(tag)
+
+
+@router.callback_query(F.data.startswith("fdl:"))
+async def fine_digest_list(call: CallbackQuery):
+    if not await _is_finance(call.from_user.id):
+        await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
+        return
+    try:
+        _, tag, page = call.data.split(":")
+        start, page = _parse_tag(tag), int(page)
+    except ValueError:
+        start = None
+    if not start:
+        await call.answer("Noto'g'ri tugma.", show_alert=True)
+        return
+    if start > now_tk().date():
+        await call.answer("Bu davr hali boshlanmagan.", show_alert=True)
+        return
+    text, markup = await digest_view(start, page)
+    await _edit_or_send(call, text, markup)
+    await call.answer()
+
+
+def _parse_card_cb(data, with_fid):
+    """«fdX:davr:uid[:fid]:sahifa» -> (start, uid, fid, page) yoki None."""
+    parts = data.split(":")
+    try:
+        start = decade_from_tag(parts[1])
+        uid = int(parts[2])
+        fid = int(parts[3]) if with_fid else None
+        page = int(parts[4 if with_fid else 3])
+    except (IndexError, ValueError):
+        return None
+    return (start, uid, fid, page) if start else None
+
+
+@router.callback_query(F.data.startswith("fdu:"))
+async def fine_digest_card(call: CallbackQuery):
+    if not await _is_finance(call.from_user.id):
+        await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
+        return
+    parsed = _parse_card_cb(call.data, with_fid=False)
+    view = await _card_view(parsed[0], parsed[1], parsed[3]) if parsed else None
+    if not view:
+        await call.answer("Bu xodimning shu davrda jarimasi topilmadi.", show_alert=True)
+        return
+    await _edit_or_send(call, *view)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("fdx:"))
+async def fine_digest_execute(call: CallbackQuery, bot: Bot):
+    me = await _is_finance(call.from_user.id)
+    if not me:
+        await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
+        return
+    parsed = _parse_card_cb(call.data, with_fid=True)
+    if not parsed:
+        await call.answer("Noto'g'ri tugma.", show_alert=True)
+        return
+    start, uid, fid, page = parsed
+    ok, result = await _execute_one(bot, fid, me, call.from_user.id, employee_user_id=uid)
+    view = await _card_view(start, uid, page)
+    if view:
+        await _edit_or_send(call, *view)
+    if ok:
+        await call.answer("✅ Jarima amalga oshirildi")
+    else:
+        await call.answer(result, show_alert=True)
+
+
+@router.callback_query(F.data.startswith("fdxa:"))
+async def fine_digest_execute_all(call: CallbackQuery, bot: Bot):
+    me = await _is_finance(call.from_user.id)
+    if not me:
+        await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
+        return
+    parsed = _parse_card_cb(call.data, with_fid=False)
+    if not parsed:
+        await call.answer("Noto'g'ri tugma.", show_alert=True)
+        return
+    start, uid, _, page = parsed
+    fines = await q.fines_between(*_decade_range(start), employee_user_id=uid)
+    done = 0
+    for f in fines:
+        if fine_status(f) == "pending":
+            ok, _ = await _execute_one(bot, f["id"], me, call.from_user.id,
+                                       employee_user_id=uid)
+            done += int(ok)
+    view = await _card_view(start, uid, page)
+    if view:
+        await _edit_or_send(call, *view)
+    if done:
+        await call.answer(f"✅ {done} ta jarima amalga oshirildi")
+    else:
+        await call.answer("Kutilayotgan jarima qolmagan.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("fdc:"))
+async def fine_digest_cancel(call: CallbackQuery, state: FSMContext):
+    if not await _is_finance(call.from_user.id):
+        await call.answer("⛔ Faqat moliya bo'limi uchun.", show_alert=True)
+        return
+    parsed = _parse_card_cb(call.data, with_fid=True)
+    if not parsed:
+        await call.answer("Noto'g'ri tugma.", show_alert=True)
+        return
+    start, uid, fid, page = parsed
+    await _ask_cancel(call, state, fid, back=f"{decade_tag(start)}:{uid}:{page}",
+                      employee_user_id=uid)

@@ -12,7 +12,7 @@ from states import (
     BranchForm, ChannelForm, RoleForm, UserManageForm, SettingsForm,
 )
 import keyboards as kb
-from utils import safe_send, PROFILE_UPDATE_NOTICE
+from utils import safe_send, PROFILE_UPDATE_NOTICE, now_tk
 
 router = Router()
 
@@ -978,7 +978,8 @@ async def admin_settings(message: Message):
         f"{tech_line} — texnik ish yakunlanib baholangach, uning to'liq statistikasi "
         "shu kanalga tushadi.\n"
         f"🎯 <b>Moslik chegarasi</b> — {threshold}%. Oddiy ariza shu foizdan yuqori mos "
-        "kelsa, HR ga avtomatik tavsiya beriladi.",
+        "kelsa, HR ga avtomatik tavsiya beriladi.\n"
+        f"🧮 <b>Moliya oylik hisoboti</b> — {await _finance_days_text()}",
         reply_markup=kb.admin_settings_kb(require_sub, secret_channel, threshold,
                                           vacancy_channel, candidate_channel,
                                           interview_channel, tech_channel),
@@ -1418,6 +1419,74 @@ async def match_threshold_save(message: Message, state: FSMContext):
     me = await actor(message.from_user.id)
     await q.add_log(message.from_user.id, me["full_name"], "sozlama_moslik", value)
     await message.answer(f"✅ Moslik chegarasi <b>{int(value)}%</b> qilib belgilandi.")
+
+
+# ---------------- MOLIYA OYLIK HISOBOTI SANASI ----------------
+async def _finance_days_text():
+    from handlers.reports import finance_report_days, finance_report_day
+    n = await finance_report_days()
+    now = now_tk()
+    day = finance_report_day(now.year, now.month, n)
+    when = "oyning oxirgi kuni" if n == 0 else f"oy oxiridan <b>{n}</b> kun oldin"
+    return (f"{when} Excel hisobot moliyaga keladi (bu oy: "
+            f"<b>{day:02d}.{now:%m.%Y}</b>).")
+
+
+@router.callback_query(F.data == "setfinrep")
+async def finance_report_days_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        await call.answer("⛔", show_alert=True)
+        return
+    from handlers.reports import FINANCE_REPORT_DAYS_MAX
+    await state.set_state(SettingsForm.finance_report_days)
+    await call.message.answer(
+        "🧮 <b>Moliya oylik hisoboti sanasi</b>\n\n"
+        f"Hozir: {await _finance_days_text()}\n\n"
+        "Oy oxiriga <b>necha kun qolganda</b> moliya bo'limiga oylik Excel hisobot "
+        "(jarimalar: amalga oshirilgan / kutilmoqda / bekor qilingan, xodimlar va "
+        "filiallar bo'yicha) kelsin?\n\n"
+        f"Sonni yozing (0–{FINANCE_REPORT_DAYS_MAX}). Masalan:\n"
+        "• <b>10</b> — 31 kunlik oyda 21-sana\n"
+        "• <b>4</b> — 31 kunlik oyda 27-sana\n"
+        "• <b>0</b> — oyning oxirgi kuni"
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.finance_report_days, F.text)
+async def finance_report_days_save(message: Message, state: FSMContext):
+    from handlers.reports import (
+        FINANCE_REPORT_DAYS_KEY, FINANCE_REPORT_DAYS_MAX, finance_report_day,
+    )
+    value = message.text.strip().split()[0] if message.text.strip() else ""
+    if not value.isdigit() or not (0 <= int(value) <= FINANCE_REPORT_DAYS_MAX):
+        await message.answer(
+            f"❗️ 0 dan {FINANCE_REPORT_DAYS_MAX} gacha butun son yozing. Masalan: <b>4</b>")
+        return
+    n = int(value)
+    await state.clear()
+    await q.set_setting(FINANCE_REPORT_DAYS_KEY, str(n))
+    me = await actor(message.from_user.id)
+    await q.add_log(message.from_user.id, me["full_name"], "sozlama_moliya_hisobot",
+                    f"{n} kun oldin")
+    now = now_tk()
+    day = finance_report_day(now.year, now.month, n)
+    sent = str(await q.get_setting(f"finance_report_sent:{now:%Y-%m}", "0")) == "1"
+    if sent:
+        this_month = "Bu oy hisobot allaqachon yuborilgan."
+    elif now.day >= day:
+        this_month = "Bu oyning sanasi o'tgan — hisobot bir necha daqiqada yuboriladi."
+    else:
+        this_month = f"Bu oy: <b>{day:02d}.{now:%m.%Y}</b>."
+    ny, nm = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    nday = finance_report_day(ny, nm, n)
+    await message.answer(
+        "✅ Saqlandi: moliya oylik hisoboti "
+        + ("<b>oyning oxirgi kuni</b>" if n == 0 else f"oy oxiridan <b>{n}</b> kun oldin")
+        + " keladi.\n\n"
+        f"📅 {this_month}\n"
+        f"📅 Keyingi oy: <b>{nday:02d}.{nm:02d}.{ny}</b>."
+    )
 
 
 # ---------------- EKSPORT ----------------

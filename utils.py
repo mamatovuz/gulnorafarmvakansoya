@@ -608,6 +608,74 @@ def fine_text(fine):
     return "\n".join(lines)
 
 
+# ---------------- 10 KUNLIK DAVR (moliya jarimalar ro'yxati) ----------------
+# Oy uchta 10 kunlikka bo'linadi: 1–10, 11–20, 21–oy oxiri.
+def decade_start(d):
+    """Sana qaysi 10 kunlikka tegishli — o'sha davrning birinchi kuni."""
+    return d.replace(day=1 if d.day <= 10 else 11 if d.day <= 20 else 21)
+
+
+def decade_end(start):
+    """10 kunlikning oxirgi kuni (3-davr — oyning oxirgi kuni)."""
+    from calendar import monthrange
+    if start.day >= 21:
+        return start.replace(day=monthrange(start.year, start.month)[1])
+    return start.replace(day=start.day + 9)
+
+
+def decade_prev(start):
+    return decade_start(start - timedelta(days=1))
+
+
+def decade_next(start):
+    return decade_end(start) + timedelta(days=1)
+
+
+def last_finished_decade(today):
+    """Bugungi kunga qadar to'liq tugagan oxirgi 10 kunlik (boshlanish sanasi)."""
+    return decade_prev(decade_start(today))
+
+
+def decade_tag(start):
+    """Callback uchun qisqa belgi: 2026-10-11 -> '261011'."""
+    return start.strftime("%y%m%d")
+
+
+def decade_from_tag(tag):
+    """'261011' -> date(2026, 10, 11); noto'g'ri bo'lsa None."""
+    try:
+        d = datetime.strptime(tag, "%y%m%d").date()
+    except (TypeError, ValueError):
+        return None
+    return d if d.day in (1, 11, 21) else None
+
+
+def decade_label(start):
+    return f"{start:%d.%m.%Y} — {decade_end(start):%d.%m.%Y}"
+
+
+def short_person_name(full_name, limit=18):
+    """Tugma uchun ism: qisqa bo'lsa to'liq, aks holda «Familiya I.»."""
+    parts = (full_name or "").split()
+    if not parts:
+        return "-"
+    full = " ".join(parts)
+    if len(full) <= limit or len(parts) == 1:
+        return full[:limit + 6]
+    return f"{parts[0]} {parts[1][0].upper()}."
+
+
+_BRANCH_WORD_RE = re.compile(r"\b(filiali|filial|филиали|филиал)\b", re.IGNORECASE)
+
+
+def short_branch_name(name):
+    """«Asaka filiali» -> «Asaka f.», «Yangi bozor filiali №2» -> «Yangi bozor f. №2»."""
+    s = " ".join(str(name or "").split())
+    if not s:
+        return "filialsiz"
+    return _BRANCH_WORD_RE.sub("f.", s)
+
+
 def manager_request_text(req):
     is_vacancy = req.get("kind") == "vacancy"
     kind = "➕ Xodim kerak" if is_vacancy else "🔧 Texnik nosozlik"

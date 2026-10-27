@@ -295,6 +295,7 @@ class SettingsForm(StatesGroup):
     avans_prompt_text = State()  # avans so'rovi matnini o'zgartirish
     avans_yes_label = State()    # «Ha» tugmasi matni
     avans_no_label = State()     # «Yo'q» tugmasi matni
+    finance_report_days = State()  # moliya oylik hisoboti: oy oxiridan necha kun oldin
 
 
 class BranchChangeForm(StatesGroup):

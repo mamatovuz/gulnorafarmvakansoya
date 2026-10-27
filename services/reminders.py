@@ -367,6 +367,70 @@ async def _run_monthly_reports(bot: Bot):
     logger.info("Oy oxiri Excel hisobotlari yuborildi: %s ta fayl (%s)", sent, period)
 
 
+# ---------------- MOLIYA: 10 KUNLIK JARIMALAR + OYLIK EXCEL ----------------
+FINE_DIGEST_CATCHUP_DAYS = 3  # bot o'chiq bo'lsa — davr tugagach shuncha kungacha yuboriladi
+
+
+async def _run_fine_digest(bot: Bot, now=None):
+    """Har 10 kunda (1–10, 11–20, 21–oy oxiri) tugagan davr jarimalarini moliyaga
+    yuboradi: keyingi kuni `fine_digest_time` (standart 09:00) da. True — yuborildi."""
+    from utils import last_finished_decade, decade_end
+    now = now or now_tk()
+    today = now.date()
+    start = last_finished_decade(today)
+    late = (today - decade_end(start)).days  # 1 — davrdan keyingi kun
+    if late > FINE_DIGEST_CATCHUP_DAYS:
+        return False
+    if late == 1 and not _time_reached(
+            now, await q.get_setting("fine_digest_time", "09:00"), "09:00"):
+        return False
+    flag_key = f"fine_digest_sent:{start.isoformat()}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return False
+    # Avval bayroq — qayta ishga tushishda ikki marta yuborilmasin
+    await q.set_setting(flag_key, "1")
+    from handlers.fines import send_fine_digest
+    sent = await send_fine_digest(bot, start)
+    logger.info("10 kunlik jarimalar ro'yxati %s ta moliya xodimiga yuborildi (%s)",
+                sent, start)
+    return True
+
+
+async def _run_finance_month_report(bot: Bot, now=None):
+    """Oy oxiridan admin belgilagan kun oldin (`finance_report_days_before`)
+    moliyaga Excel hisobot. Bot o'chiq bo'lgan bo'lsa — keyingi kunlarda yuboriladi."""
+    from handlers.reports import (
+        finance_report_days, finance_report_day, send_finance_month_report,
+    )
+    now = now or now_tk()
+    day = finance_report_day(now.year, now.month, await finance_report_days())
+    if now.day < day:
+        return False
+    if now.day == day and not _time_reached(
+            now, await q.get_setting("finance_report_time", "09:00"), "09:00"):
+        return False
+    flag_key = f"finance_report_sent:{now:%Y-%m}"
+    if str(await q.get_setting(flag_key, "0")) == "1":
+        return False
+    await q.set_setting(flag_key, "1")
+    sent = await send_finance_month_report(bot)
+    logger.info("Moliya oylik Excel hisoboti yuborildi: %s ta (%s)", sent, f"{now:%Y-%m}")
+    return True
+
+
+async def finance_loop(bot: Bot, interval_seconds=300):
+    while True:
+        for job, name in ((_run_fine_digest, "10 kunlik jarimalar"),
+                          (_run_finance_month_report, "moliya oylik hisoboti")):
+            try:
+                await job(bot)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Moliya: %s yuborishda xatolik", name)
+        await asyncio.sleep(interval_seconds)
+
+
 async def monthly_reports_loop(bot: Bot, interval_seconds=300):
     while True:
         try:

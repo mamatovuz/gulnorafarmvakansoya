@@ -1649,6 +1649,29 @@ async def list_fines_by_status(status, period=None, branch_id=None, limit=30,
         await db.close()
 
 
+async def fines_between(since, until, employee_user_id=None):
+    """[since, until) sanalari ('YYYY-MM-DD') oralig'ida yozilgan jarimalar —
+    barcha holatlarda (kutilmoqda / ijro etilgan / bekor qilingan).
+
+    10 kunlik moliya ro'yxati va moliya oylik Excel hisoboti uchun."""
+    db = await _conn()
+    try:
+        sql = (_FINE_LIST_SELECT.replace(
+                   "owner.tg_id AS employee_tg,",
+                   "owner.tg_id AS employee_tg, owner.phone AS employee_phone,"
+                   " COALESCE(ep.role, owner.role) AS emp_role,")
+               + " WHERE f.created_at>=? AND f.created_at<?")
+        params = [since, until]
+        if employee_user_id:
+            sql += " AND f.employee_user_id=?"
+            params.append(employee_user_id)
+        sql += " GROUP BY f.id ORDER BY f.created_at, f.id"
+        cur = await db.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
 async def fines_status_counts(period=None):
     """{'pending': (soni, summa), 'executed': ..., 'cancelled': ...}."""
     db = await _conn()

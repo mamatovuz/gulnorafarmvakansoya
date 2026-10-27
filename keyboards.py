@@ -39,6 +39,8 @@ FINES_CONTROL_BTN = "⚖️ Jarimalar nazorati"
 FINES_STATUS_BTN = "📋 Jarimalar holati"
 # Filial rahbari: o'z filiali xodimiga jarima qo'llash
 MANAGER_FINE_BTN = "💸 Jarima qo'llash"
+# Moliya: har 10 kunda keladigan jarimalar ro'yxati (qo'lda ham ochiladi)
+FINE_DIGEST_BTN = "🗓 10 kunlik jarimalar"
 
 # Admin panelidagi «Ma'lumotlarni yangilash» kampaniyasi tugmasi
 PROFILE_UPDATE_BTN = "🔄 Ma'lumotlarni yangilash"
@@ -63,6 +65,7 @@ MENU_ESCAPE_BUTTONS = {
     EMP_MANAGE_BTN, "🔀 Filial almashtirish", "🧑‍💼 Ishdan bo'shaganlar",
     FINES_REPORT_BTN, DIRECTOR_REPORTS_BTN, "📑 Hisobot (Excel)",
     FINES_CONTROL_BTN, FINES_STATUS_BTN, MANAGER_FINE_BTN, "🚫 Jarimani bekor qilish",
+    FINE_DIGEST_BTN,
     "📋 Kunlik dam olish tasdiqlari", "🛌 Kunlik dam olish",
     "🛌 Dam olish / sinov",
 }
@@ -2150,6 +2153,7 @@ def admin_settings_kb(require_sub=True, secret_channel=None, match_threshold=60,
         b.button(text="🔧 Texnik ishlar kanali: 🔴 ULANMAGAN (ulash)",
                  callback_data="settech")
     b.button(text=f"🎯 Moslik chegarasi: {match_threshold}%", callback_data="setmatch")
+    b.button(text="🧮 Moliya oylik hisoboti sanasi", callback_data="setfinrep")
     b.adjust(1)
     return b.as_markup()
 
@@ -2748,11 +2752,12 @@ def accountant_menu():
     b.button(text="👥 Xodimlar (oylik/jarima)")
     b.button(text="✂️ Oylik kesish")
     b.button(text=FINES_CONTROL_BTN)
+    b.button(text=FINE_DIGEST_BTN)
     b.button(text="🛌 Dam olish so'rovlari")
     b.button(text="💵 Avans oluvchilar")
     b.button(text=FINES_REPORT_BTN)
     b.button(text="🏠 Asosiy menyu")
-    b.adjust(2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 1)
     return b.as_markup(resize_keyboard=True)
 
 
@@ -3018,6 +3023,99 @@ def fine_cancel_abort_kb():
     return b.as_markup()
 
 
+# ---------------- 🗓 10 KUNLIK JARIMALAR (moliya) ----------------
+# Callbacklar: fdl:{davr}:{sahifa} — ro'yxat, fdu:{davr}:{uid}:{sahifa} — xodim,
+# fdx:{davr}:{uid}:{fid}:{sahifa} — amalga oshirildi, fdxa:{davr}:{uid}:{sahifa} —
+# barchasi, fdc:{davr}:{uid}:{fid}:{sahifa} — bekor qilish. {davr} = YYMMDD.
+FINE_DIGEST_MARKS = {"pending": "⏳", "executed": "✅", "cancelled": "🚫"}
+
+
+def _num(n):
+    return f"{int(n or 0):,}".replace(",", " ")
+
+
+def fine_digest_kb(tag, people, page, pages, prev_tag=None, next_tag=None,
+                   older_pending=0):
+    """10 kunlik ro'yxat: har bir xodim — «⏳ Familiya I. · Asaka f. · 200 000»."""
+    from utils import short_person_name, short_branch_name
+    b = InlineKeyboardBuilder()
+    sizes = []
+    for p in people:
+        amount = (_num(p["active_sum"]) if p["state"] != "cancelled" else "bekor")
+        b.button(
+            text=(f"{FINE_DIGEST_MARKS[p['state']]} {short_person_name(p['name'])} · "
+                  f"{short_branch_name(p['branch'])} · {amount}"),
+            callback_data=f"fdu:{tag}:{p['uid']}:{page}",
+        )
+        sizes.append(1)
+    if pages > 1:
+        nav = 0
+        if page > 0:
+            b.button(text="⬅️", callback_data=f"fdl:{tag}:{page - 1}")
+            nav += 1
+        b.button(text=f"📄 {page + 1}/{pages}", callback_data=f"fdl:{tag}:{page}")
+        nav += 1
+        if page < pages - 1:
+            b.button(text="➡️", callback_data=f"fdl:{tag}:{page + 1}")
+            nav += 1
+        sizes.append(nav)
+    dec = 0
+    if prev_tag:
+        b.button(text="⏪ Oldingi 10 kun", callback_data=f"fdl:{prev_tag}:0")
+        dec += 1
+    if next_tag:
+        b.button(text="Keyingi 10 kun ⏩", callback_data=f"fdl:{next_tag}:0")
+        dec += 1
+    if dec:
+        sizes.append(dec)
+    if older_pending:
+        b.button(text=f"⏳ Oldingi davrlardan kutilayotganlar ({older_pending})",
+                 callback_data="fst:pending:all:0")
+        sizes.append(1)
+    b.button(text="🔄 Yangilash", callback_data=f"fdl:{tag}:{page}")
+    sizes.append(1)
+    b.adjust(*sizes)
+    return b.as_markup()
+
+
+def fine_digest_card_kb(tag, uid, page, fines, pending_total=None):
+    """Xodim kartochkasi: har bir jarima uchun «✅ Amalga oshirildi» /
+    «🚫 Bekor qilish», bir nechta kutilayotgan bo'lsa — «Barchasini», «⬅️ Orqaga».
+
+    pending_total — davrdagi barcha kutilayotgan jarimalar soni (kartochkada
+    hammasi ko'rinmasa ham «Barchasini» ularning hammasini amalga oshiradi)."""
+    from utils import fine_status
+    b = InlineKeyboardBuilder()
+    sizes = []
+    single = len(fines) == 1 and not (pending_total or 0) > 1
+    pending = 0
+    for i, f in enumerate(fines, start=1):
+        st = fine_status(f)
+        num = "" if single else f"{i}) "
+        row = 0
+        if st == "pending":
+            pending += 1
+            b.button(text=f"✅ {num}Amalga oshirildi",
+                     callback_data=f"fdx:{tag}:{uid}:{f['id']}:{page}")
+            row += 1
+        if st in ("pending", "executed"):
+            b.button(text=f"🚫 {num}Bekor qilish",
+                     callback_data=f"fdc:{tag}:{uid}:{f['id']}:{page}")
+            row += 1
+        if row:
+            sizes.append(row)
+    if pending_total is not None:
+        pending = pending_total
+    if pending > 1:
+        b.button(text=f"✅ Barchasini amalga oshirish ({pending} ta)",
+                 callback_data=f"fdxa:{tag}:{uid}:{page}")
+        sizes.append(1)
+    b.button(text="⬅️ Orqaga", callback_data=f"fdl:{tag}:{page}")
+    sizes.append(1)
+    b.adjust(*sizes)
+    return b.as_markup()
+
+
 FINE_STATUS_TABS = (
     ("pending", "⏳ Ijro kutilayotganlar"),
     ("executed", "✅ Ijro etilganlar"),
@@ -3036,6 +3134,7 @@ def fines_status_home_kb(counts, scope, with_search=False):
     else:
         b.button(text="🗂 Barcha davr", callback_data="fsth:all")
     if with_search:
+        b.button(text=FINE_DIGEST_BTN, callback_data="fdl:cur:0")
         b.button(text="🔍 Xodim bo'yicha qidirish", callback_data="fcpeople")
     b.adjust(1)
     return b.as_markup()

@@ -217,6 +217,23 @@ belgilash, jarima yozish, dori (`staff_medicines`) yozish va **«🧮 Yakuniy
 oylik»** hisoblash (kunlik = oylik ÷ ish kunlari; jarima/avans/dori/kesim
 ayiriladi).
 
+**🗓 10 kunlik jarimalar** (`handlers/fines.py`): har 10 kunda (1–10, 11–20,
+21–oy oxiri) davr tugagach ertasi kuni 09:00 da (`fine_digest_time`) moliyaga
+«Ushbu xodimlarga jarima qo'llangan — ularni amalga oshiring» xabari keladi.
+Ostida har bir xodim tugmasi: `⏳ Karimov A. · Asaka f. · 300 000`
+(⏳ kutilmoqda / ✅ amalga oshirilgan / 🚫 bekor qilingan). Xodim bosilsa —
+ma'lumotlari, jarimalar va summa + **«✅ Amalga oshirildi»**, **«🚫 Bekor
+qilish»** (sabab so'raladi, jarima oylikdan ayirilmaydi), «✅ Barchasini amalga
+oshirish», **«⬅️ Orqaga»**. Menyudagi «🗓 10 kunlik jarimalar» tugmasi joriy
+davrni ochadi, «⏪ Oldingi / Keyingi 10 kun ⏩» bilan davrlar almashtiriladi.
+
+**Oylik Excel hisobot**: oy oxiridan admin belgilagan kun oldin (standart 4,
+«⚙️ Sozlamalar → 🧮 Moliya oylik hisoboti sanasi», 09:00 / `finance_report_time`)
+moliyaga avtomatik keladi; «📊 Hisobot olish» orqali qo'lda ham olinadi.
+3 varaq: «Umumiy» (KPI kartochkalar, 10 kunliklar, filiallar, holatlar +
+diagrammalar, imzo joyi), «Xodimlar» (oylikdan ushlanadigan summa),
+«Jarimalar ro'yxati» (batafsil, holati bilan).
+
 ### 4.8. IT xodim (`it`)
 «🖥 IT xodim panel»: 📊 Oylik hisobot (14-sana) — o'tgan 14 dan shu 14 gacha
 kadrlar harakati, 👥 Xodimlar (filial bo'yicha), ✏️ Ism o'zgartirishlar
@@ -233,7 +250,7 @@ boshqa texnikka o'tkazish. Tugagach rahbar 1..5 ⭐ baho beradi.
 📢 Kanallar, 👥 Adminlar, 🧑‍💼 HR xodimlari, 🎭 Rollar (rol berish, filial),
 👤 Foydalanuvchilar (qidiruv/bloklash), 💼 Vakansiyalar (Admin), 🏷 Lavozimlar,
 📢 Xabarnoma, 📤 Eksport, ⚙️ Sozlamalar (matnlar, maxfiy/vakansiya/nomzod/suhbat/
-texnik kanallar, moslik foizi), 💵 Avans sozlamalari, 🧾 Audit log,
+texnik kanallar, moslik foizi, moliya oylik hisoboti sanasi), 💵 Avans sozlamalari, 🧾 Audit log,
 🔄 Ma'lumotlarni yangilash (kampaniya), 🛠 Ma'lumotlarni o'zgartirish,
 🔀 Filial almashtirish, 🚫 Ishdan bo'shatish, ♻️ Dublikatlar (takror yozuvlarni
 o'chirish). Admin barcha boshqa panellarni ham ko'ra oladi.
@@ -282,6 +299,7 @@ Bot ishga tushganda `bot.py` quyidagi doimiy tsikllarni ishga tushiradi:
 | `dayoff_prompt_loop` | 60 s | 17:00 da rahbarlarga ertangi kunlik dam olish rejasi. |
 | `dayoff_report_loop` | 60 s | 08:30 da HR ga kunlik dam olish Excel hisoboti. |
 | `salary_report_loop` | 30 min | Oy oxiri (standart 19:00) xodimlarga oylik hisoboti. |
+| `finance_loop` | 5 min | Har 10 kunda moliyaga jarimalar ro'yxati + oy oxiridan N kun oldin moliya Excel hisoboti. |
 | `attendance_reminder_loop` | 60 s | Ish boshi/oxiri xabari **va Verifiks eslatmalari** (quyida). |
 
 Har bir eslatma bir marta yuboriladi — buning uchun `settings` jadvalida

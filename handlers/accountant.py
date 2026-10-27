@@ -31,7 +31,12 @@ async def accountant_panel(message: Message):
         await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
         return
     await message.answer(
-        "🧮 <b>Moliya bo'limi paneli</b>\nKerakli bo'limni tanlang:",
+        "🧮 <b>Moliya bo'limi paneli</b>\n\n"
+        "🗓 Har 10 kunda (1–10, 11–20, 21–oy oxiri) jarima qo'llangan xodimlar "
+        "ro'yxati avtomatik keladi — «🗓 10 kunlik jarimalar» orqali istalgan payt "
+        "ochish mumkin.\n"
+        "📊 Oy oxirida oylik Excel hisobot avtomatik keladi.\n\n"
+        "Kerakli bo'limni tanlang:",
         reply_markup=kb.accountant_menu(),
     )
 

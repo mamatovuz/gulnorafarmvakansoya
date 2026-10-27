@@ -31,7 +31,7 @@ async def _role(tg_id):
 def _allowed(role, kind):
     if role in (ROLE_DIRECTOR, ROLE_ADMIN):
         return True
-    return role == ROLE_ACCOUNTANT and kind == "fines"
+    return role == ROLE_ACCOUNTANT and kind in ("fines", "finance")
 
 
 async def send_report(bot: Bot, chat_id, kind, rng):
@@ -92,8 +92,8 @@ async def finance_fines_report(message: Message, state: FSMContext):
         await message.answer("⛔ Sizda moliya bo'limi paneli uchun ruxsat yo'q.")
         return
     await state.clear()
-    await message.answer(_period_prompt("fines"),
-                         reply_markup=kb.report_period_kb("fines", back=False))
+    await message.answer(_period_prompt("finance"),
+                         reply_markup=kb.report_period_kb("finance", back=False))
 
 
 # ---------------- HISOBOT TURI ----------------
@@ -236,17 +236,15 @@ async def report_by_dates_to(message: Message, state: FSMContext, bot: Bot):
 
 # ---------------- OY OXIRI AVTOMATIK YUBORISH ----------------
 async def send_monthly_reports(bot: Bot):
-    """Direktorlarga barcha hisobotlar, moliya bo'limiga jarimalar (joriy oy).
+    """Direktorlarga barcha hisobotlar (joriy oy).
 
-    Har bir fayl bir marta tayyorlanadi va barcha oluvchilarga yuboriladi."""
+    Moliya bo'limi o'z hisobotini alohida oladi — send_finance_month_report
+    (oy oxiridan admin belgilagan kun oldin). Har bir fayl bir marta tayyorlanadi."""
     rng = month_range(1)
     directors = await q.all_user_tg_ids(role=ROLE_DIRECTOR)
-    accountants = await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)
     sent = 0
     for kind, title, _ in DIRECTOR_REPORTS:
         targets = list(directors)
-        if kind == "fines":
-            targets += [t for t in accountants if t not in targets]
         if not targets:
             continue
         doc, summary = await make_report(kind, rng)
@@ -260,4 +258,54 @@ async def send_monthly_reports(bot: Bot):
                 sent += 1
             except Exception:
                 pass
+    return sent
+
+
+# ---------------- MOLIYA: OY OXIRIDAN N KUN OLDIN ----------------
+FINANCE_REPORT_DAYS_KEY = "finance_report_days_before"
+FINANCE_REPORT_DAYS_DEFAULT = 4
+FINANCE_REPORT_DAYS_MAX = 27
+
+
+async def finance_report_days():
+    """Admin belgilagan: oy oxiridan necha kun oldin (0 — oyning oxirgi kuni)."""
+    try:
+        n = int(await q.get_setting(FINANCE_REPORT_DAYS_KEY,
+                                    str(FINANCE_REPORT_DAYS_DEFAULT)))
+    except (TypeError, ValueError):
+        n = FINANCE_REPORT_DAYS_DEFAULT
+    return min(max(n, 0), FINANCE_REPORT_DAYS_MAX)
+
+
+def finance_report_day(year, month, days_before):
+    """Hisobot keladigan sana: oyning oxirgi kunidan days_before kun oldin."""
+    from calendar import monthrange
+    return max(1, monthrange(year, month)[1] - days_before)
+
+
+async def send_finance_month_report(bot: Bot, tg_ids=None):
+    """Moliya bo'limiga joriy oy (1-sanadan bugungacha) bo'yicha Excel hisobot."""
+    from services.reports import period_label
+    targets = tg_ids if tg_ids is not None else await q.all_user_tg_ids(role=ROLE_ACCOUNTANT)
+    targets = list(dict.fromkeys(targets))
+    if not targets:
+        return 0
+    rng = month_range(1)
+    doc, summary = await make_report("finance", rng)
+    days = await finance_report_days()
+    left = f"Oy oxiriga {days} kun qoldi." if days else "Bugun oyning oxirgi kuni."
+    caption = (
+        f"🧮 <b>Moliya bo'limi · oylik hisobot</b>\n"
+        f"🗓 {period_label(rng.periods[-1])} — {left}\n\n{summary}\n\n"
+        "<i>Excel: «Umumiy» (statistika va diagrammalar), «Xodimlar» (oylikdan "
+        "ushlanadigan summa), «Jarimalar ro'yxati».</i>"
+    )
+    sent = 0
+    for tid in targets:
+        try:
+            await bot.send_document(
+                tid, BufferedInputFile(doc.data, filename=doc.filename), caption=caption)
+            sent += 1
+        except Exception:
+            pass
     return sent

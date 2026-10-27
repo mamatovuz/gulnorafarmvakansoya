@@ -1042,6 +1042,351 @@ def build_summary_report(rng, *, profiles, hired, dismissed, apps, fines,
 
 # ================= MA'LUMOT YIG'ISH + TAYYOR FAYL =================
 # (kalit, tugma matni, davr tanlanadimi)
+# ================= MOLIYA: OYLIK JARIMALAR HISOBOTI =================
+# Moliya bo'limiga har oy oxiridan N kun oldin avtomatik keladi (admin sozlaydi)
+# va «📊 Hisobot olish» orqali qo'lda olinadi. 3 varaq:
+#   «Umumiy»   — KPI kartochkalar, 10 kunliklar, filiallar, holatlar + diagrammalar;
+#   «Xodimlar» — har bir xodim bo'yicha oylikdan ushlanadigan summa;
+#   «Jarimalar ro'yxati» — barcha jarimalar holati bilan.
+FIN_STATUS = {
+    "executed": ("Amalga oshirilgan", GREEN, "E8F5E9", GREEN_DARK),
+    "pending": ("Kutilmoqda", ORANGE, "FFF4E0", ORANGE),
+    "cancelled": ("Bekor qilingan", MUTED, "EEEEEE", GREY),
+}
+FIN_SOURCE_NAMES = {"hr": "HR", "finance": "Moliya", "director": "Direktor",
+                    "manager": "Filial rahbari"}
+
+
+def _fst(f):
+    if f.get("cancelled") or f.get("status") == "cancelled":
+        return "cancelled"
+    return "executed" if f.get("status") == "executed" else "pending"
+
+
+def finance_decades(rng):
+    """Davr ichidagi 10 kunliklar: [(boshi, oxiri), ...] (davr chegarasida kesiladi)."""
+    from datetime import timedelta
+    from utils import decade_start, decade_end
+    out, s = [], decade_start(rng.start)
+    while s <= rng.end:
+        e = decade_end(s)
+        out.append((max(s, rng.start), min(e, rng.end)))
+        s = e + timedelta(days=1)
+    return out
+
+
+def _decade_of(f, decades):
+    d = str(f.get("created_at") or "")[:10]
+    for a, b in decades:
+        if a.isoformat() <= d <= b.isoformat():
+            return f"{a:%d.%m} — {b:%d.%m}"
+    return "-"
+
+
+def _stacked_chart(ws, anchor, title, cat_col, first_val_col, colors, header_row,
+                   first, last):
+    chart = BarChart()
+    chart.type = "col"
+    chart.grouping = "stacked"
+    chart.overlap = 100
+    chart.title = title
+    chart.y_axis.numFmt = "#,##0"
+    chart.y_axis.majorGridlines = None
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+    chart.legend.position = "b"
+    chart.add_data(Reference(ws, min_col=first_val_col,
+                             max_col=first_val_col + len(colors) - 1,
+                             min_row=header_row, max_row=last), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=cat_col, min_row=first, max_row=last))
+    for s, color in zip(chart.series, colors):
+        s.graphicalProperties.solidFill = color
+        s.graphicalProperties.line.solidFill = color
+    chart.height = 7.5
+    chart.width = 16
+    ws.add_chart(chart, anchor)
+
+
+def _doughnut_chart(ws, anchor, title, cat_col, val_col, colors, header_row, first, last):
+    from openpyxl.chart import DoughnutChart
+    from openpyxl.chart.series import DataPoint
+    chart = DoughnutChart()
+    chart.title = title
+    chart.holeSize = 55
+    chart.add_data(Reference(ws, min_col=val_col, min_row=header_row, max_row=last),
+                   titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=cat_col, min_row=first, max_row=last))
+    s = chart.series[0]
+    for i, color in enumerate(colors):
+        pt = DataPoint(idx=i)
+        pt.graphicalProperties.solidFill = color
+        pt.graphicalProperties.line.solidFill = "FFFFFF"
+        s.dPt.append(pt)
+    s.dLbls = DataLabelList()
+    s.dLbls.showPercent = True
+    s.dLbls.showVal = False
+    s.dLbls.showCatName = False
+    s.dLbls.showSerName = False
+    s.dLbls.showLegendKey = False
+    chart.legend.position = "r"
+    chart.height = 7.5
+    chart.width = 12
+    ws.add_chart(chart, anchor)
+
+
+def _empty_row(ws, row, ncols, text):
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+    c = ws.cell(row=row, column=1, value=text)
+    c.font = Font(italic=True, color=GREY, size=12)
+    c.alignment = _CENTER
+    ws.row_dimensions[row].height = 30
+
+
+def _note(ws, row, ncols, text, color=GREY):
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+    c = ws.cell(row=row, column=1, value=text)
+    c.font = Font(italic=True, color=color, size=10)
+    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[row].height = 30
+
+
+def _status_badges():
+    return {label: (fill, font) for label, _c, fill, font in FIN_STATUS.values()}
+
+
+def build_finance_report(fines, rng, note=None):
+    from openpyxl.formatting.rule import DataBarRule
+
+    st = {f["id"]: _fst(f) for f in fines}
+    amt = {f["id"]: money(f.get("amount")) for f in fines}
+    by_st = {k: [f for f in fines if st[f["id"]] == k] for k in FIN_STATUS}
+    sums = {k: sum(amt[f["id"]] for f in v) for k, v in by_st.items()}
+    cnts = {k: len(v) for k, v in by_st.items()}
+    active = by_st["executed"] + by_st["pending"]
+    active_sum = sums["executed"] + sums["pending"]
+    people = {f.get("employee_user_id") for f in active}
+    done_ratio = pct(cnts["executed"], len(active))
+    decades = finance_decades(rng)
+
+    wb = Workbook()
+    # ---------------- 1) UMUMIY ----------------
+    ws = wb.active
+    ws.title = "Umumiy"
+    ws.sheet_properties.tabColor = GREEN_DARK
+    ws.sheet_view.showGridLines = False
+    ncols = 8
+    for i, w in enumerate([6, 26, 14, 20, 20, 20, 20, 14], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    _banner(ws, ncols, "GULNORA FARM — MOLIYA BO'LIMI · OYLIK JARIMALAR HISOBOTI",
+            size=16, height=44)
+    _subtitle(ws, ncols, _subtitle_text(rng))
+    _cards(ws, 4, ncols, [
+        ("Jami jarimalar", f"{len(active)} ta", GREEN_DARK),
+        ("Oylikdan ushlanadi", active_sum, RED, MONEY_FMT),
+        ("Jarimalangan xodimlar", f"{len(people)} nafar", BLUE),
+        ("Amalga oshirish darajasi", done_ratio, PURPLE, "0%"),
+    ])
+    _cards(ws, 7, ncols, [
+        ("Amalga oshirilgan", f"{cnts['executed']} ta · {som(sums['executed'])}", GREEN),
+        ("Kutilmoqda", f"{cnts['pending']} ta · {som(sums['pending'])}", ORANGE),
+        ("Bekor qilingan", f"{cnts['cancelled']} ta · {som(sums['cancelled'])}", GREY),
+        ("O'rtacha jarima",
+         round(active_sum / len(active)) if active else 0, TEAL, MONEY_FMT),
+    ])
+    r = 10
+    if note:
+        _note(ws, r, ncols, note, GREEN_DARK)
+        r += 2
+
+    # 10 kunliklar bo'yicha
+    _section_title(ws, r, ncols, "🗓 10 kunlik davrlar bo'yicha")
+    head = r + 1
+    _header(ws, head, ["№", "Davr", "Jarimalar", "Amalga oshirilgan", "Kutilmoqda",
+                       "Bekor qilingan", "Ushlanadi (jami)", "Xodimlar"])
+    drows = []
+    for i, (a, b) in enumerate(decades, start=1):
+        items = [f for f in fines
+                 if a.isoformat() <= str(f.get("created_at") or "")[:10] <= b.isoformat()]
+        s_ = {k: sum(amt[f["id"]] for f in items if st[f["id"]] == k) for k in FIN_STATUS}
+        act = [f for f in items if st[f["id"]] != "cancelled"]
+        drows.append([i, f"{a:%d.%m} — {b:%d.%m.%Y}", len(act), s_["executed"],
+                      s_["pending"], s_["cancelled"], s_["executed"] + s_["pending"],
+                      len({f.get("employee_user_id") for f in act})])
+    last = _data_rows(ws, head + 1, drows, money_cols=(4, 5, 6, 7),
+                      center_cols=(1, 2, 3, 8),
+                      money_color={4: GREEN, 5: ORANGE, 6: MUTED, 7: RED})
+    _total_line(ws, last + 1, ["", "JAMI", len(active), sums["executed"], sums["pending"],
+                               sums["cancelled"], active_sum, len(people)],
+                money_cols=(4, 5, 6, 7))
+    if active_sum:
+        _stacked_chart(ws, f"{get_column_letter(ncols + 2)}{r}",
+                       "10 kunliklar bo'yicha jarimalar (so'm)", 2, 4, [GREEN, ORANGE],
+                       head, head + 1, last)
+    r = max(last + 4, r + 17 if active_sum else 0)
+
+    # Filiallar bo'yicha
+    _section_title(ws, r, ncols, "🏢 Filiallar bo'yicha")
+    head = r + 1
+    _header(ws, head, ["№", "Filial", "Jarimalar", "Xodimlar", "Amalga oshirilgan",
+                       "Kutilmoqda", "Ushlanadi (jami)", "Ulushi"])
+    branches = defaultdict(lambda: {"cnt": 0, "people": set(), "executed": 0, "pending": 0})
+    for f in active:
+        g = branches[f.get("branch_name") or "Filialsiz"]
+        g["cnt"] += 1
+        g["people"].add(f.get("employee_user_id"))
+        g[st[f["id"]]] += amt[f["id"]]
+    brows = []
+    for i, (name, g) in enumerate(sorted(
+            branches.items(), key=lambda kv: -(kv[1]["executed"] + kv[1]["pending"])),
+            start=1):
+        tot = g["executed"] + g["pending"]
+        brows.append([i, name, g["cnt"], len(g["people"]), g["executed"], g["pending"],
+                      tot, pct(tot, active_sum)])
+    if brows:
+        last = _data_rows(ws, head + 1, brows, money_cols=(5, 6, 7), pct_cols=(8,),
+                          center_cols=(1, 3, 4),
+                          money_color={5: GREEN, 6: ORANGE, 7: RED})
+        _total_line(ws, last + 1, ["", "JAMI", len(active), len(people), sums["executed"],
+                                   sums["pending"], active_sum, 1 if active_sum else 0],
+                    money_cols=(5, 6, 7), pct_cols=(8,))
+        _bar_chart(ws, f"{get_column_letter(ncols + 2)}{r}",
+                   "Filiallar bo'yicha ushlanadigan summa (so'm)", 2, 7, head,
+                   head + 1, last, color=RED, horizontal=len(brows) > 5)
+        r = max(last + 4, r + 17)
+    else:
+        _empty_row(ws, head + 1, ncols, "Bu davrda jarima yo'q")
+        r = head + 4
+
+    # Holat bo'yicha
+    _section_title(ws, r, 5, "📌 Holat bo'yicha")
+    head = r + 1
+    _header(ws, head, ["№", "Holat", "Soni", "Summa", "Ulushi"])
+    whole = sum(sums.values())
+    srows = [[i, FIN_STATUS[k][0], cnts[k], sums[k], pct(sums[k], whole)]
+             for i, k in enumerate(("executed", "pending", "cancelled"), start=1)]
+    last = _data_rows(ws, head + 1, srows, money_cols=(4,), pct_cols=(5,),
+                      center_cols=(1, 3), badge_col=2, badges=_status_badges(),
+                      money_color=INK)
+    _total_line(ws, last + 1, ["", "JAMI", len(fines), whole, 1 if whole else 0],
+                money_cols=(4,), pct_cols=(5,))
+    if whole:
+        _doughnut_chart(ws, f"{get_column_letter(ncols + 2)}{r}",
+                        "Jarimalar holati (summa bo'yicha)", 2, 4,
+                        [FIN_STATUS[k][1] for k in ("executed", "pending", "cancelled")],
+                        head, head + 1, last)
+    r = max(last + 4, r + 17 if whole else 0)
+
+    # Imzo bloki
+    sign = Border(bottom=Side(style="thin", color=GREY))
+    for col, label in ((2, "Tayyorladi (Moliya bo'limi):"), (5, "Tasdiqladi (Direktor):")):
+        c = ws.cell(row=r, column=col, value=label)
+        c.font = Font(bold=True, color=GREEN_DARK)
+        for cc in range(col + 1, col + 3):
+            ws.cell(row=r, column=cc).border = sign
+    ws.row_dimensions[r].height = 26
+    _print_setup(ws, landscape=True)
+
+    # ---------------- 2) XODIMLAR ----------------
+    ew = wb.create_sheet("Xodimlar")
+    ew.sheet_properties.tabColor = RED
+    ew.sheet_view.showGridLines = False
+    ehead = ["№", "Ism-familiya", "Filial", "Lavozim", "Jarimalar", "Amalga oshirilgan",
+             "Kutilmoqda", "Bekor qilingan", "Oylikdan ushlanadi", "Holat"]
+    en = len(ehead)
+    for i, w in enumerate([6, 32, 24, 22, 12, 20, 18, 18, 22, 20], start=1):
+        ew.column_dimensions[get_column_letter(i)].width = w
+    _banner(ew, en, "XODIMLAR BO'YICHA — OYLIKDAN USHLANADIGAN JARIMALAR", size=15,
+            height=36)
+    _subtitle(ew, en, _subtitle_text(rng))
+    _note(ew, 3, en, "Oylikdan ushlanadi = Amalga oshirilgan + Kutilmoqda. Bekor qilingan "
+                     "jarimalar oylikdan ayirilmaydi.")
+    emps = {}
+    for f in fines:
+        e = emps.setdefault(f.get("employee_user_id"), {
+            "name": f.get("employee_name") or "-", "branch": f.get("branch_name") or "-",
+            "pos": position_of(f), "cnt": 0,
+            "executed": 0, "pending": 0, "cancelled": 0})
+        e[st[f["id"]]] += amt[f["id"]]
+        if st[f["id"]] != "cancelled":
+            e["cnt"] += 1
+    erows = []
+    for i, e in enumerate(sorted(emps.values(), key=lambda e: (
+            e["branch"].lower(), e["name"].lower())), start=1):
+        hold = e["executed"] + e["pending"]
+        state = ("pending" if e["pending"] else "executed" if e["executed"]
+                 else "cancelled")
+        erows.append([i, e["name"], e["branch"], e["pos"], e["cnt"], e["executed"],
+                      e["pending"], e["cancelled"], hold, FIN_STATUS[state][0]])
+    ehr = 5
+    _header(ew, ehr, ehead)
+    if erows:
+        elast = _data_rows(ew, ehr + 1, erows, money_cols=(6, 7, 8, 9),
+                           center_cols=(1, 5), badge_col=10, badges=_status_badges(),
+                           money_color={6: GREEN, 7: ORANGE, 8: MUTED, 9: RED})
+        _total_line(ew, elast + 1, ["JAMI:", "", "", "", len(active), sums["executed"],
+                                    sums["pending"], sums["cancelled"], active_sum,
+                                    f"{len(people)} nafar"],
+                    money_cols=(6, 7, 8, 9), label_span=4)
+        ew.auto_filter.ref = f"A{ehr}:{get_column_letter(en)}{elast}"
+        ew.conditional_formatting.add(
+            f"I{ehr + 1}:I{elast}",
+            DataBarRule(start_type="num", start_value=0, end_type="max",
+                        color="EF9A9A", showValue=True))
+    else:
+        _empty_row(ew, ehr + 1, en, "Bu davrda jarima qo'llangan xodim yo'q")
+    ew.freeze_panes = f"C{ehr + 1}"
+    _print_setup(ew, landscape=True, title_row=ehr)
+
+    # ---------------- 3) JARIMALAR RO'YXATI ----------------
+    lw = wb.create_sheet("Jarimalar ro'yxati")
+    lw.sheet_properties.tabColor = ORANGE
+    lw.sheet_view.showGridLines = False
+    lhead = ["№", "Sana", "10 kunlik", "Ism-familiya", "Filial", "Lavozim", "Summa",
+             "Jarima sababi", "Kim yozgan", "Holat", "Ko'rib chiqqan", "Ko'rib chiqilgan",
+             "Bekor qilish sababi"]
+    ln = len(lhead)
+    for i, w in enumerate([6, 17, 15, 28, 22, 20, 18, 40, 26, 19, 24, 17, 34], start=1):
+        lw.column_dimensions[get_column_letter(i)].width = w
+    _banner(lw, ln, "JARIMALAR RO'YXATI — BATAFSIL", size=15, height=36)
+    _subtitle(lw, ln, _subtitle_text(rng))
+    lrows, muted = [], []
+    for i, f in enumerate(fines, start=1):
+        k = st[f["id"]]
+        who = FIN_SOURCE_NAMES.get(f.get("source"), f.get("source") or "-")
+        if f.get("created_by_name"):
+            who += f": {f['created_by_name']}"
+        if k == "executed":
+            by, at = f.get("executed_by_name"), f.get("executed_at")
+        elif k == "cancelled":
+            by, at = f.get("cancelled_by_name"), f.get("cancelled_at")
+        else:
+            by, at = None, None
+        lrows.append([
+            i, fmt_date(f.get("created_at")), _decade_of(f, decades),
+            f.get("employee_name") or "-", f.get("branch_name") or "-", position_of(f),
+            amt[f["id"]], (f.get("reason") or "-").strip(), who, FIN_STATUS[k][0],
+            by or "—", fmt_date(at) if at else "—",
+            (f.get("cancel_reason") or "").strip() if k == "cancelled" else "",
+        ])
+        muted.append(k == "cancelled")
+    lhr = 4
+    _header(lw, lhr, lhead)
+    if lrows:
+        llast = _data_rows(lw, lhr + 1, lrows, money_cols=(7,),
+                           center_cols=(1, 2, 3, 12), muted=muted, strike=True,
+                           badge_col=10, badges=_status_badges())
+        _total_line(lw, llast + 1, ["JAMI (bekor qilinganlarsiz):", "", "", "", "", "",
+                                    active_sum, "", "", f"{len(active)} ta", "", "", ""],
+                    money_cols=(7,), label_span=6)
+        lw.auto_filter.ref = f"A{lhr}:{get_column_letter(ln)}{llast}"
+    else:
+        _empty_row(lw, lhr + 1, ln, "Bu davrda jarimalar yozilmagan")
+    lw.freeze_panes = f"E{lhr + 1}"
+    _print_setup(lw, landscape=True, title_row=lhr)
+
+    return _finish(wb, f"moliya_jarimalar_{rng.tag}")
+
+
 DIRECTOR_REPORTS = [
     ("summary", "📊 Umumiy statistika", True),
     ("hired", "🆕 Yangi ishga olinganlar", True),
@@ -1052,6 +1397,9 @@ DIRECTOR_REPORTS = [
 ]
 REPORT_TITLES = {k: t for k, t, _ in DIRECTOR_REPORTS}
 REPORT_NEEDS_PERIOD = {k: p for k, _, p in DIRECTOR_REPORTS}
+# Moliya bo'limi hisoboti (direktor menyusida ko'rinmaydi)
+REPORT_TITLES["finance"] = "🧮 Moliya: jarimalar hisoboti"
+REPORT_NEEDS_PERIOD["finance"] = True
 
 
 async def make_report(kind, rng):
@@ -1068,6 +1416,21 @@ async def make_report(kind, rng):
             f"💸 Jarimalar: <b>{len(active)}</b> ta · <b>{som(total)}</b>\n"
             f"👥 Jarimalangan: <b>{len({f.get('employee_user_id') for f in active})}</b> nafar\n"
             f"🚫 Bekor qilingan: <b>{len(fines) - len(active)}</b> ta\n{span}")
+    if kind == "finance":
+        fines = await q.fines_between(since, until)
+        st = [_fst(f) for f in fines]
+        tot = {k: [0, 0] for k in FIN_STATUS}
+        for f, k in zip(fines, st):
+            tot[k][0] += 1
+            tot[k][1] += money(f.get("amount"))
+        people = {f.get("employee_user_id") for f, k in zip(fines, st) if k != "cancelled"}
+        return build_finance_report(fines, rng), (
+            f"💸 Oylikdan ushlanadi: <b>{som(tot['executed'][1] + tot['pending'][1])}</b>"
+            f" · {tot['executed'][0] + tot['pending'][0]} ta\n"
+            f"✅ Amalga oshirilgan: <b>{tot['executed'][0]}</b> ta · {som(tot['executed'][1])}\n"
+            f"⏳ Kutilmoqda: <b>{tot['pending'][0]}</b> ta · {som(tot['pending'][1])}\n"
+            f"🚫 Bekor qilingan: <b>{tot['cancelled'][0]}</b> ta · {som(tot['cancelled'][1])}\n"
+            f"👥 Jarimalangan xodimlar: <b>{len(people)}</b> nafar\n{span}")
     if kind == "hired":
         hired = await q.report_hired(since, until)
         left = sum(1 for h in hired if h.get("has_left"))
